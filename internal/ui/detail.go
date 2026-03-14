@@ -25,6 +25,7 @@ type DetailView struct {
 
 	content *fyne.Container
 	current *store.Secret
+	fileOps *FileOps
 }
 
 // NewDetailView creates a new detail panel.
@@ -52,6 +53,11 @@ func (dv *DetailView) Content() *fyne.Container {
 // SetOnSave sets a callback invoked after a successful save.
 func (dv *DetailView) SetOnSave(fn func()) {
 	dv.onSave = fn
+}
+
+// SetFileOps sets the file operations handler for import/export.
+func (dv *DetailView) SetFileOps(fo *FileOps) {
+	dv.fileOps = fo
 }
 
 // ShowSecret renders the detail view for a secret.
@@ -335,10 +341,13 @@ func (dv *DetailView) confirmDelete(secret *store.Secret) {
 	)
 }
 
-// exportFile is a placeholder for file export functionality.
+// exportFile exports a file secret to disk via the file operations handler.
 func (dv *DetailView) exportFile(secret *store.Secret) {
-	// Will be implemented in Phase 3
-	dialog.ShowInformation("Export", "File export for "+secret.Name+" will be implemented in Phase 3", dv.window)
+	if dv.fileOps == nil {
+		dialog.ShowError(fmt.Errorf("file operations not available"), dv.window)
+		return
+	}
+	dv.fileOps.ExportFile(secret)
 }
 
 // copyToClipboard copies a value to the clipboard with TTL countdown.

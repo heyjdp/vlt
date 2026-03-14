@@ -104,6 +104,13 @@ func (a *App) showMainView() {
 	a.detailView = NewDetailView(a.window, a.store, a.config.ClipboardTTLs, a.statusBar, a.log)
 	a.secretList = NewSecretList(a.window, a.store, a.detailView, a.log)
 
+	// File operations handler
+	fileOps := NewFileOps(a.window, a.store, a.log)
+	fileOps.SetOnSave(func() {
+		a.secretList.Refresh(ctx)
+	})
+	a.detailView.SetFileOps(fileOps)
+
 	// Toolbar with actions
 	toolbar := container.NewHBox(
 		widget.NewButton("Add Password", func() {
@@ -119,6 +126,10 @@ func (a *App) showMainView() {
 			a.detailView.SetOnSave(func() {
 				a.secretList.Refresh(ctx)
 			})
+		}),
+		widget.NewButton("Import File", func() {
+			a.resetLockTimer()
+			fileOps.ImportFile()
 		}),
 		widget.NewButton("Lock", func() {
 			a.Lock()
