@@ -20,6 +20,12 @@ var ErrSecretNotFound = errors.New("secret not found")
 // ErrVaultLocked is returned when the vault identity is not available.
 var ErrVaultLocked = errors.New("vault is locked")
 
+// ErrWrongPassphrase is returned when the passphrase cannot decrypt the sentinel file.
+var ErrWrongPassphrase = errors.New("wrong passphrase")
+
+const sentinelFile = "vlt.age"
+const sentinelPlaintext = "unlocked"
+
 // Store manages secrets in an age-encrypted vault directory.
 // Secrets are stored at vault/<group>/<slug>.age.
 type Store struct {
@@ -49,6 +55,63 @@ func (s *Store) Init() error {
 		return fmt.Errorf("store.Init: %w", err)
 	}
 	return nil
+}
+
+// IsNew reports whether this is a fresh vault with no sentinel file.
+func (s *Store) IsNew() bool {
+	_, err := os.Stat(filepath.Join(s.dir, sentinelFile))
+	return os.IsNotExist(err)
+}
+
+// CreateSentinel writes the sentinel file (vlt.age) containing the word
+// "unlocked", encrypted with the current identity. This is called once
+// when the vault is first created.
+func (s *Store) CreateSentinel() error {
+	ciphertext, err := crypto.Encrypt(s.id, []byte(sentinelPlaintext))
+	if err != nil {
+		return fmt.Errorf("store.CreateSentinel: %w", err)
+	}
+
+	path := filepath.Join(s.dir, sentinelFile)
+	if err := os.WriteFile(path, ciphertext, 0o600); err != nil {
+		return fmt.Errorf("store.CreateSentinel: %w", err)
+	}
+
+	s.log.Info("sentinel file created", "path", path)
+	return nil
+}
+
+// Verify attempts to decrypt the sentinel file. Returns nil if the
+// passphrase is correct, ErrWrongPassphrase if it cannot decrypt, or
+// another error for I/O failures.
+func (s *Store) Verify() error {
+	path := filepath.Join(s.dir, sentinelFile)
+
+	ciphertext, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// No sentinel — treat as new vault (caller should create one)
+			return nil
+		}
+		return fmt.Errorf("store.Verify: %w", err)
+	}
+
+	plaintext, err := crypto.Decrypt(s.id, ciphertext)
+	if err != nil {
+		return ErrWrongPassphrase
+	}
+
+	if string(plaintext) != sentinelPlaintext {
+		return ErrWrongPassphrase
+	}
+
+	return nil
+}
+
+// RecreateSentinel re-encrypts the sentinel file with the current identity.
+// Called after a passphrase change.
+func (s *Store) RecreateSentinel() error {
+	return s.CreateSentinel()
 }
 
 // Save encrypts and writes a secret to the vault directory.

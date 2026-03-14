@@ -3,6 +3,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -86,6 +87,27 @@ func (a *App) onUnlock(passphrase string) {
 		id.Zero()
 		a.unlockScreen.ShowError("Failed to initialize vault: " + err.Error())
 		return
+	}
+
+	if s.IsNew() {
+		// First run — create the sentinel file with this passphrase
+		if err := s.CreateSentinel(); err != nil {
+			id.Zero()
+			a.unlockScreen.ShowError("Failed to initialize vault: " + err.Error())
+			return
+		}
+		a.log.Info("new vault created", "dir", a.config.VaultDir)
+	} else {
+		// Existing vault — verify the passphrase
+		if err := s.Verify(); err != nil {
+			id.Zero()
+			if errors.Is(err, store.ErrWrongPassphrase) {
+				a.unlockScreen.ShowError("Incorrect passphrase")
+				return
+			}
+			a.unlockScreen.ShowError("Verification failed: " + err.Error())
+			return
+		}
 	}
 
 	a.identity = id

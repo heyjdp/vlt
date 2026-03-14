@@ -372,6 +372,127 @@ func TestStore_CopyTo_CopiesAllSecrets(t *testing.T) {
 	}
 }
 
+func TestStore_IsNew_TrueForFreshVault(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	if !s.IsNew() {
+		t.Fatal("expected IsNew() == true for fresh vault")
+	}
+}
+
+func TestStore_CreateSentinel_MakesIsNewFalse(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+
+	if err := s.CreateSentinel(); err != nil {
+		t.Fatalf("CreateSentinel: %v", err)
+	}
+
+	if s.IsNew() {
+		t.Fatal("expected IsNew() == false after CreateSentinel")
+	}
+}
+
+func TestStore_Verify_SucceedsWithCorrectPassphrase(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+
+	if err := s.CreateSentinel(); err != nil {
+		t.Fatalf("CreateSentinel: %v", err)
+	}
+
+	if err := s.Verify(); err != nil {
+		t.Fatalf("Verify should succeed with correct passphrase: %v", err)
+	}
+}
+
+func TestStore_Verify_FailsWithWrongPassphrase(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	// Create sentinel with one passphrase
+	id1 := testutil.NewTestIdentity(t, "correct-passphrase")
+	s1 := store.New(id1, dir, log)
+	if err := s1.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s1.CreateSentinel(); err != nil {
+		t.Fatalf("CreateSentinel: %v", err)
+	}
+
+	// Try to verify with a different passphrase
+	id2 := testutil.NewTestIdentity(t, "wrong-passphrase")
+	s2 := store.New(id2, dir, log)
+
+	err := s2.Verify()
+	if err == nil {
+		t.Fatal("expected error verifying with wrong passphrase")
+	}
+	if !errors.Is(err, store.ErrWrongPassphrase) {
+		t.Fatalf("expected ErrWrongPassphrase, got: %v", err)
+	}
+}
+
+func TestStore_Verify_SucceedsWithNoSentinel(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+
+	// No sentinel created — Verify should return nil (new vault)
+	if err := s.Verify(); err != nil {
+		t.Fatalf("Verify should succeed when no sentinel exists: %v", err)
+	}
+}
+
+func TestStore_RecreateSentinel_AfterReEncrypt(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	// Create vault with old passphrase
+	oldID := testutil.NewTestIdentity(t, "old-pass")
+	s := store.New(oldID, dir, log)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.CreateSentinel(); err != nil {
+		t.Fatalf("CreateSentinel: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := s.Save(ctx, testutil.PasswordSecret("k1", "v1", "work")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Re-encrypt with new passphrase
+	newID := testutil.NewTestIdentity(t, "new-pass")
+	if err := s.ReEncryptAll(ctx, newID); err != nil {
+		t.Fatalf("ReEncryptAll: %v", err)
+	}
+	if err := s.RecreateSentinel(); err != nil {
+		t.Fatalf("RecreateSentinel: %v", err)
+	}
+
+	// New passphrase should verify
+	if err := s.Verify(); err != nil {
+		t.Fatalf("Verify with new passphrase failed: %v", err)
+	}
+
+	// Old passphrase should not verify
+	oldID2 := testutil.NewTestIdentity(t, "old-pass")
+	oldStore := store.New(oldID2, dir, log)
+	err := oldStore.Verify()
+	if !errors.Is(err, store.ErrWrongPassphrase) {
+		t.Fatalf("expected ErrWrongPassphrase for old passphrase, got: %v", err)
+	}
+}
+
 func TestStore_VaultStructure_GroupBasedPaths(t *testing.T) {
 	t.Parallel()
 

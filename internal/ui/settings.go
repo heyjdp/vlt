@@ -124,8 +124,7 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 			return
 		}
 
-		// Verify the current passphrase matches by trying to create an identity
-		// and checking it can decrypt existing secrets
+		// Verify the current passphrase via the sentinel file
 		verifyID, err := crypto.NewIdentity(current)
 		if err != nil {
 			errorLabel.SetText("Invalid current passphrase: " + err.Error())
@@ -133,15 +132,14 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 			return
 		}
 
-		// Quick check: try to list with the verify identity to confirm it works
 		verifyStore := store.New(verifyID, ss.config.VaultDir, ss.log)
-		_, err = verifyStore.List(context.Background())
-		verifyID.Zero()
-		if err != nil {
-			errorLabel.SetText("Current passphrase verification failed")
+		if err := verifyStore.Verify(); err != nil {
+			verifyID.Zero()
+			errorLabel.SetText("Current passphrase is incorrect")
 			errorLabel.Show()
 			return
 		}
+		verifyID.Zero()
 
 		// Create new identity
 		newID, err := crypto.NewIdentity(newPass)
@@ -151,10 +149,15 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 			return
 		}
 
-		// Re-encrypt all secrets
+		// Re-encrypt all secrets and recreate sentinel
 		if err := ss.store.ReEncryptAll(context.Background(), newID); err != nil {
 			newID.Zero()
 			errorLabel.SetText("Re-encryption failed: " + err.Error())
+			errorLabel.Show()
+			return
+		}
+		if err := ss.store.RecreateSentinel(); err != nil {
+			errorLabel.SetText("Failed to update sentinel: " + err.Error())
 			errorLabel.Show()
 			return
 		}
