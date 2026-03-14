@@ -1,0 +1,6 @@
+/vlt
+/vlt.exe
+coverage.out
+fyne-cross/
+*.app
+.DS_Store

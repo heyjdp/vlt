@@ -1,0 +1,21 @@
+pre-commit:
+  parallel: true
+  commands:
+    gofumpt:
+      glob: "*.go"
+      run: gofumpt -l {staged_files}
+    golangci-lint:
+      glob: "*.go"
+      run: golangci-lint run --fix
+    shellcheck:
+      glob: "*.sh"
+      run: shellcheck {staged_files}
+    detect-secrets:
+      run: detect-secrets-hook {staged_files}
+
+pre-push:
+  commands:
+    test-race:
+      run: go test -race ./...
+    govulncheck:
+      run: govulncheck ./...

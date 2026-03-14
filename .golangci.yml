@@ -1,0 +1,32 @@
+version: "2"
+
+linters:
+  enable-all: true
+  disable:
+    - depguard          # we manage deps manually
+    - exhaustruct       # too noisy for UI code
+    - gochecknoglobals  # Fyne requires some package-level vars
+    - wsl               # formatting — gofumpt handles this
+
+linters-settings:
+  govet:
+    enable-all: true
+  gofumpt:
+    module-path: github.com/yourorg/vlt
+    extra-rules: true
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+  gosec:
+    excludes:
+      - G115  # integer overflow — accept in known-safe contexts
+
+issues:
+  exclude-rules:
+    - path: "_test.go"
+      linters:
+        - gosec
+        - errcheck
+        - dupl
