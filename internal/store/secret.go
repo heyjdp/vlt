@@ -22,10 +22,12 @@ const (
 
 // Secret is the JSON envelope stored inside each .age file in the vault.
 // All secret types share this structure, differentiated by the Type field.
+// Secrets are stored at vault/<group>/<slug>.age.
 type Secret struct {
 	Version    int        `json:"version"`
 	Type       SecretType `json:"type"`
 	Name       string     `json:"name"`
+	Group      string     `json:"group"`
 	CreatedAt  time.Time  `json:"created_at"`
 	ModifiedAt time.Time  `json:"modified_at"`
 	Tags       []string   `json:"tags,omitempty"`
@@ -79,21 +81,19 @@ func Slugify(s string) string {
 	return s
 }
 
-// CategoryDir returns the subdirectory name for a secret type.
-func CategoryDir(t SecretType) string {
-	switch t {
-	case TypePassword:
-		return "passwords"
-	case TypeRecord:
-		return "records"
-	case TypeFile:
-		return "files"
-	default:
-		return "other"
-	}
-}
+// DefaultGroup is used when no group is specified.
+const DefaultGroup = "default"
 
 // ValidSecretTypes returns all valid secret types.
 func ValidSecretTypes() []SecretType {
 	return []SecretType{TypePassword, TypeRecord, TypeFile}
+}
+
+// NormalizeGroup returns the slugified group name, falling back to DefaultGroup.
+func NormalizeGroup(group string) string {
+	g := Slugify(group)
+	if g == "" {
+		return DefaultGroup
+	}
+	return g
 }

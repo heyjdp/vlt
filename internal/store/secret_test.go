@@ -206,25 +206,27 @@ func TestSecretName_Slug(t *testing.T) {
 	}
 }
 
-func TestCategoryDir(t *testing.T) {
+func TestNormalizeGroup(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		secretType store.SecretType
-		want       string
+		name  string
+		input string
+		want  string
 	}{
-		{store.TypePassword, "passwords"},
-		{store.TypeRecord, "records"},
-		{store.TypeFile, "files"},
-		{store.SecretType("unknown"), "other"},
+		{"simple", "work", "work"},
+		{"with spaces", "My Group", "my-group"},
+		{"empty", "", "default"},
+		{"whitespace only", "   ", "default"},
+		{"special chars", "Work@Home!", "work-home"},
 	}
 
 	for _, tt := range tests {
-		t.Run(string(tt.secretType), func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := store.CategoryDir(tt.secretType)
+			got := store.NormalizeGroup(tt.input)
 			if got != tt.want {
-				t.Fatalf("CategoryDir(%q) = %q, want %q", tt.secretType, got, tt.want)
+				t.Fatalf("NormalizeGroup(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}

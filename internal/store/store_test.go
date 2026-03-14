@@ -24,27 +24,25 @@ func newTestStore(t *testing.T) *store.Store {
 	return s
 }
 
-func TestStore_Init_CreatesDirectories(t *testing.T) {
+func TestStore_Init_CreatesVaultDir(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
+	vaultDir := filepath.Join(dir, "myvault")
 	id := testutil.NewTestIdentity(t, "test-init-passphrase")
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	s := store.New(id, dir, log)
+	s := store.New(id, vaultDir, log)
 
 	if err := s.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 
-	for _, sub := range []string{"passwords", "records", "files"} {
-		path := filepath.Join(dir, sub)
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatalf("expected directory %q to exist: %v", sub, err)
-		}
-		if !info.IsDir() {
-			t.Fatalf("expected %q to be a directory", sub)
-		}
+	info, err := os.Stat(vaultDir)
+	if err != nil {
+		t.Fatalf("expected vault directory to exist: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatal("expected vault path to be a directory")
 	}
 }
 
@@ -54,14 +52,14 @@ func TestStore_SaveAndGet_Password(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	secret := testutil.PasswordSecret("GitHub API Key", "ghp_xxxxxxxxxxxx")
+	secret := testutil.PasswordSecret("GitHub API Key", "ghp_xxxxxxxxxxxx", "work")
 	secret.Tags = []string{"github", "ci"}
 
 	if err := s.Save(ctx, secret); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	got, err := s.Get(ctx, "GitHub API Key", store.TypePassword)
+	got, err := s.Get(ctx, "GitHub API Key", "work")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -75,6 +73,9 @@ func TestStore_SaveAndGet_Password(t *testing.T) {
 	if got.Type != store.TypePassword {
 		t.Fatalf("type mismatch: got %q", got.Type)
 	}
+	if got.Group != "work" {
+		t.Fatalf("group mismatch: got %q", got.Group)
+	}
 	if len(got.Tags) != 2 || got.Tags[0] != "github" {
 		t.Fatalf("tags mismatch: got %v", got.Tags)
 	}
@@ -86,13 +87,13 @@ func TestStore_SaveAndGet_Record(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	secret := testutil.RecordSecret("Work Jira", "user@example.com", "secret", "https://jira.example.com")
+	secret := testutil.RecordSecret("Work Jira", "user@example.com", "secret", "https://jira.example.com", "work")
 
 	if err := s.Save(ctx, secret); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	got, err := s.Get(ctx, "Work Jira", store.TypeRecord)
+	got, err := s.Get(ctx, "Work Jira", "work")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -103,6 +104,32 @@ func TestStore_SaveAndGet_Record(t *testing.T) {
 	if got.URL != "https://jira.example.com" {
 		t.Fatalf("url mismatch: got %q", got.URL)
 	}
+	if got.Group != "work" {
+		t.Fatalf("group mismatch: got %q", got.Group)
+	}
+}
+
+func TestStore_SaveAndGet_DefaultGroup(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Empty group should normalize to "default"
+	secret := testutil.PasswordSecret("no-group", "val", "")
+
+	if err := s.Save(ctx, secret); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := s.Get(ctx, "no-group", "default")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.Group != "default" {
+		t.Fatalf("expected group %q, got %q", "default", got.Group)
+	}
 }
 
 func TestStore_Get_ReturnsErrNotFoundForMissing(t *testing.T) {
@@ -111,7 +138,7 @@ func TestStore_Get_ReturnsErrNotFoundForMissing(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	_, err := s.Get(ctx, "nonexistent", store.TypePassword)
+	_, err := s.Get(ctx, "nonexistent", "work")
 	if err == nil {
 		t.Fatal("expected error for missing secret")
 	}
@@ -126,16 +153,16 @@ func TestStore_Delete_RemovesSecret(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	secret := testutil.PasswordSecret("to-delete", "value")
+	secret := testutil.PasswordSecret("to-delete", "value", "personal")
 	if err := s.Save(ctx, secret); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	if err := s.Delete(ctx, "to-delete", store.TypePassword); err != nil {
+	if err := s.Delete(ctx, "to-delete", "personal"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	_, err := s.Get(ctx, "to-delete", store.TypePassword)
+	_, err := s.Get(ctx, "to-delete", "personal")
 	if !errors.Is(err, store.ErrSecretNotFound) {
 		t.Fatalf("expected ErrSecretNotFound after delete, got: %v", err)
 	}
@@ -147,7 +174,7 @@ func TestStore_Delete_ReturnsErrNotFoundForMissing(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	err := s.Delete(ctx, "nonexistent", store.TypePassword)
+	err := s.Delete(ctx, "nonexistent", "work")
 	if !errors.Is(err, store.ErrSecretNotFound) {
 		t.Fatalf("expected ErrSecretNotFound, got: %v", err)
 	}
@@ -160,9 +187,9 @@ func TestStore_List_ReturnsAllSecrets(t *testing.T) {
 	ctx := context.Background()
 
 	secrets := []*store.Secret{
-		testutil.PasswordSecret("key-1", "val1"),
-		testutil.PasswordSecret("key-2", "val2"),
-		testutil.RecordSecret("record-1", "user", "pass", "https://example.com"),
+		testutil.PasswordSecret("key-1", "val1", "work"),
+		testutil.PasswordSecret("key-2", "val2", "personal"),
+		testutil.RecordSecret("record-1", "user", "pass", "https://example.com", "work"),
 	}
 
 	for _, sec := range secrets {
@@ -203,7 +230,7 @@ func TestStore_Save_UpdatesExisting(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	secret := testutil.PasswordSecret("update-me", "original")
+	secret := testutil.PasswordSecret("update-me", "original", "work")
 	if err := s.Save(ctx, secret); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -213,7 +240,7 @@ func TestStore_Save_UpdatesExisting(t *testing.T) {
 		t.Fatalf("Save update: %v", err)
 	}
 
-	got, err := s.Get(ctx, "update-me", store.TypePassword)
+	got, err := s.Get(ctx, "update-me", "work")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -229,10 +256,35 @@ func TestStore_Save_RejectsEmptyName(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	secret := testutil.PasswordSecret("", "value")
+	secret := testutil.PasswordSecret("", "value", "work")
 	err := s.Save(ctx, secret)
 	if err == nil {
 		t.Fatal("expected error for empty name")
+	}
+}
+
+func TestStore_Groups_ReturnsAllGroups(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.Save(ctx, testutil.PasswordSecret("k1", "v1", "work")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := s.Save(ctx, testutil.PasswordSecret("k2", "v2", "personal")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := s.Save(ctx, testutil.PasswordSecret("k3", "v3", "work")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	groups := s.Groups()
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d: %v", len(groups), groups)
+	}
+	if groups[0] != "personal" || groups[1] != "work" {
+		t.Fatalf("expected [personal work], got %v", groups)
 	}
 }
 
@@ -249,22 +301,19 @@ func TestStore_ReEncryptAll_ChangesPassphrase(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Save some secrets with old passphrase
-	if err := s.Save(ctx, testutil.PasswordSecret("key-1", "val1")); err != nil {
+	if err := s.Save(ctx, testutil.PasswordSecret("key-1", "val1", "work")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := s.Save(ctx, testutil.RecordSecret("rec-1", "user", "pass", "https://example.com")); err != nil {
+	if err := s.Save(ctx, testutil.RecordSecret("rec-1", "user", "pass", "https://example.com", "personal")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	// Re-encrypt with new passphrase
 	newID := testutil.NewTestIdentity(t, "new-passphrase")
 	if err := s.ReEncryptAll(ctx, newID); err != nil {
 		t.Fatalf("ReEncryptAll: %v", err)
 	}
 
-	// Verify we can read with the new identity (store now uses newID)
-	got, err := s.Get(ctx, "key-1", store.TypePassword)
+	got, err := s.Get(ctx, "key-1", "work")
 	if err != nil {
 		t.Fatalf("Get after re-encrypt: %v", err)
 	}
@@ -272,10 +321,9 @@ func TestStore_ReEncryptAll_ChangesPassphrase(t *testing.T) {
 		t.Fatalf("value mismatch after re-encrypt: got %q", got.Value)
 	}
 
-	// Verify old identity can no longer decrypt
 	oldID2 := testutil.NewTestIdentity(t, "old-passphrase")
 	oldStore := store.New(oldID2, dir, log)
-	_, err = oldStore.Get(ctx, "key-1", store.TypePassword)
+	_, err = oldStore.Get(ctx, "key-1", "work")
 	if err == nil {
 		t.Fatal("expected error decrypting with old passphrase after re-encrypt")
 	}
@@ -287,10 +335,10 @@ func TestStore_CopyTo_CopiesAllSecrets(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.Save(ctx, testutil.PasswordSecret("copy-1", "v1")); err != nil {
+	if err := s.Save(ctx, testutil.PasswordSecret("copy-1", "v1", "work")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := s.Save(ctx, testutil.RecordSecret("copy-2", "u", "p", "https://example.com")); err != nil {
+	if err := s.Save(ctx, testutil.RecordSecret("copy-2", "u", "p", "https://example.com", "personal")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -299,14 +347,14 @@ func TestStore_CopyTo_CopiesAllSecrets(t *testing.T) {
 		t.Fatalf("CopyTo: %v", err)
 	}
 
-	// Verify files exist in destination
-	for _, sub := range []string{"passwords", "records"} {
-		entries, err := os.ReadDir(filepath.Join(destDir, sub))
+	// Verify group directories exist in destination
+	for _, group := range []string{"work", "personal"} {
+		entries, err := os.ReadDir(filepath.Join(destDir, group))
 		if err != nil {
-			t.Fatalf("ReadDir %q: %v", sub, err)
+			t.Fatalf("ReadDir %q: %v", group, err)
 		}
 		if len(entries) == 0 {
-			t.Fatalf("expected files in %q", sub)
+			t.Fatalf("expected files in %q", group)
 		}
 	}
 
@@ -315,11 +363,34 @@ func TestStore_CopyTo_CopiesAllSecrets(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	destStore := store.New(id, destDir, log)
 
-	got, err := destStore.Get(ctx, "copy-1", store.TypePassword)
+	got, err := destStore.Get(ctx, "copy-1", "work")
 	if err != nil {
 		t.Fatalf("Get from dest: %v", err)
 	}
 	if got.Value != "v1" {
 		t.Fatalf("value mismatch: got %q", got.Value)
+	}
+}
+
+func TestStore_VaultStructure_GroupBasedPaths(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	id := testutil.NewTestIdentity(t, "test-structure")
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	s := store.New(id, dir, log)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := s.Save(ctx, testutil.PasswordSecret("my-key", "val", "work")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Verify the file is at vault/work/my-key.age
+	expectedPath := filepath.Join(dir, "work", "my-key.age")
+	if _, err := os.Stat(expectedPath); err != nil {
+		t.Fatalf("expected file at %q: %v", expectedPath, err)
 	}
 }

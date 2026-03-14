@@ -12,6 +12,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/storage"
+	"fyne.io/fyne/v2/widget"
 
 	"github.com/yourorg/vlt/internal/store"
 )
@@ -88,35 +89,54 @@ func (fo *FileOps) processImport(reader fyne.URIReadCloser) {
 	// Base64 encode
 	encoded := base64.StdEncoding.EncodeToString(data)
 
-	now := time.Now().UTC()
-	secret := &store.Secret{
-		Version:          1,
-		Type:             store.TypeFile,
-		Name:             filename,
-		CreatedAt:        now,
-		ModifiedAt:       now,
-		OriginalFilename: filename,
-		MIMEType:         mimeType,
-		Encoding:         "base64",
-		Value:            encoded,
-	}
+	// Ask for group before saving
+	groups := fo.vaultStore.Groups()
+	groupEntry := widget.NewSelectEntry(groups)
+	groupEntry.SetPlaceHolder("Group (e.g. work, personal)")
 
-	ctx := context.Background()
-	if err := fo.vaultStore.Save(ctx, secret); err != nil {
-		dialog.ShowError(fmt.Errorf("failed to save file secret: %w", err), fo.window)
-		return
-	}
+	dialog.ShowForm("Import File — Select Group",
+		"Import", "Cancel",
+		[]*widget.FormItem{
+			widget.NewFormItem("Group", groupEntry),
+		},
+		func(confirmed bool) {
+			if !confirmed {
+				return
+			}
 
-	fo.log.Info("file imported", "name", filename, "size", totalRead, "mime", mimeType)
+			now := time.Now().UTC()
+			secret := &store.Secret{
+				Version:          1,
+				Type:             store.TypeFile,
+				Name:             filename,
+				Group:            groupEntry.Text,
+				CreatedAt:        now,
+				ModifiedAt:       now,
+				OriginalFilename: filename,
+				MIMEType:         mimeType,
+				Encoding:         "base64",
+				Value:            encoded,
+			}
 
-	dialog.ShowInformation("Import Complete",
-		fmt.Sprintf("Imported %q (%s, %d bytes)", filename, mimeType, totalRead),
+			ctx := context.Background()
+			if err := fo.vaultStore.Save(ctx, secret); err != nil {
+				dialog.ShowError(fmt.Errorf("failed to save file secret: %w", err), fo.window)
+				return
+			}
+
+			fo.log.Info("file imported", "name", filename, "group", secret.Group, "size", totalRead, "mime", mimeType)
+
+			dialog.ShowInformation("Import Complete",
+				fmt.Sprintf("Imported %q to group %q (%s, %d bytes)", filename, secret.Group, mimeType, totalRead),
+				fo.window,
+			)
+
+			if fo.onSave != nil {
+				fo.onSave()
+			}
+		},
 		fo.window,
 	)
-
-	if fo.onSave != nil {
-		fo.onSave()
-	}
 }
 
 // ExportFile decodes a file secret and saves it to a user-selected location.

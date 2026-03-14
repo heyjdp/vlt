@@ -48,7 +48,7 @@ func NewSecretList(window fyne.Window, s *store.Store, detail *DetailView, log *
 		},
 		func() fyne.CanvasObject {
 			return container.NewHBox(
-				widget.NewIcon(nil),
+				widget.NewLabel("group"),
 				widget.NewLabel("Secret Name"),
 				widget.NewLabel("type"),
 			)
@@ -59,6 +59,7 @@ func NewSecretList(window fyne.Window, s *store.Store, detail *DetailView, log *
 			}
 			sec := sl.filtered[id]
 			items := obj.(*fyne.Container).Objects
+			items[0].(*widget.Label).SetText(sec.Group)
 			items[1].(*widget.Label).SetText(sec.Name)
 			items[2].(*widget.Label).SetText(string(sec.Type))
 		},
@@ -112,6 +113,10 @@ func (sl *SecretList) filter(query string) {
 		sl.filtered = nil
 		for _, sec := range sl.secrets {
 			if strings.Contains(strings.ToLower(sec.Name), query) {
+				sl.filtered = append(sl.filtered, sec)
+				continue
+			}
+			if strings.Contains(strings.ToLower(sec.Group), query) {
 				sl.filtered = append(sl.filtered, sec)
 				continue
 			}

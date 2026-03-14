@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/yourorg/vlt/internal/crypto"
@@ -19,17 +20,8 @@ var ErrSecretNotFound = errors.New("secret not found")
 // ErrVaultLocked is returned when the vault identity is not available.
 var ErrVaultLocked = errors.New("vault is locked")
 
-// Encryptor encrypts plaintext data.
-type Encryptor interface {
-	Encrypt(plaintext []byte) ([]byte, error)
-}
-
-// Decryptor decrypts ciphertext data.
-type Decryptor interface {
-	Decrypt(ciphertext []byte) ([]byte, error)
-}
-
 // Store manages secrets in an age-encrypted vault directory.
+// Secrets are stored at vault/<group>/<slug>.age.
 type Store struct {
 	dir string
 	id  *crypto.Identity
@@ -51,23 +43,22 @@ func (s *Store) Dir() string {
 	return s.dir
 }
 
-// Init creates the vault directory structure with secure permissions.
+// Init creates the vault directory with secure permissions.
 func (s *Store) Init() error {
-	for _, st := range ValidSecretTypes() {
-		dir := filepath.Join(s.dir, CategoryDir(st))
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return fmt.Errorf("store.Init: %w", err)
-		}
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		return fmt.Errorf("store.Init: %w", err)
 	}
 	return nil
 }
 
 // Save encrypts and writes a secret to the vault directory.
+// The secret is stored at vault/<group>/<slug>.age.
 func (s *Store) Save(_ context.Context, secret *Secret) error {
 	if secret.Name == "" {
 		return errors.New("store.Save: secret name cannot be empty")
 	}
 
+	secret.Group = NormalizeGroup(secret.Group)
 	secret.ModifiedAt = time.Now().UTC()
 	if secret.CreatedAt.IsZero() {
 		secret.CreatedAt = secret.ModifiedAt
@@ -96,18 +87,19 @@ func (s *Store) Save(_ context.Context, secret *Secret) error {
 		return fmt.Errorf("store.Save: write: %w", err)
 	}
 
-	s.log.Info("secret saved", "name", secret.Name, "type", secret.Type, "path", path)
+	s.log.Info("secret saved", "name", secret.Name, "group", secret.Group, "path", path)
 	return nil
 }
 
-// Get decrypts and returns a secret by name and type.
-func (s *Store) Get(_ context.Context, name string, secretType SecretType) (*Secret, error) {
+// Get decrypts and returns a secret by name and group.
+func (s *Store) Get(_ context.Context, name string, group string) (*Secret, error) {
 	sn, err := NewSecretName(name)
 	if err != nil {
 		return nil, fmt.Errorf("store.Get: %w", err)
 	}
 
-	path := filepath.Join(s.dir, CategoryDir(secretType), sn.Slug()+".age")
+	g := NormalizeGroup(group)
+	path := filepath.Join(s.dir, g, sn.Slug()+".age")
 
 	ciphertext, err := os.ReadFile(path)
 	if err != nil {
@@ -130,14 +122,15 @@ func (s *Store) Get(_ context.Context, name string, secretType SecretType) (*Sec
 	return &secret, nil
 }
 
-// Delete removes a secret from the vault.
-func (s *Store) Delete(_ context.Context, name string, secretType SecretType) error {
+// Delete removes a secret from the vault by name and group.
+func (s *Store) Delete(_ context.Context, name string, group string) error {
 	sn, err := NewSecretName(name)
 	if err != nil {
 		return fmt.Errorf("store.Delete: %w", err)
 	}
 
-	path := filepath.Join(s.dir, CategoryDir(secretType), sn.Slug()+".age")
+	g := NormalizeGroup(group)
+	path := filepath.Join(s.dir, g, sn.Slug()+".age")
 
 	if err := os.Remove(path); err != nil {
 		if os.IsNotExist(err) {
@@ -146,24 +139,32 @@ func (s *Store) Delete(_ context.Context, name string, secretType SecretType) er
 		return fmt.Errorf("store.Delete %q: %w", name, err)
 	}
 
-	s.log.Info("secret deleted", "name", name, "type", secretType)
+	s.log.Info("secret deleted", "name", name, "group", g)
 	return nil
 }
 
-// List returns all secrets in the vault.
-// Each secret is decrypted to read its metadata.
+// List returns all secrets in the vault by walking every group subdirectory.
 func (s *Store) List(ctx context.Context) ([]*Secret, error) {
 	var secrets []*Secret
 
-	for _, st := range ValidSecretTypes() {
-		dir := filepath.Join(s.dir, CategoryDir(st))
+	groups, err := os.ReadDir(s.dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("store.List: %w", err)
+	}
 
-		entries, err := os.ReadDir(dir)
+	for _, groupEntry := range groups {
+		if !groupEntry.IsDir() {
+			continue
+		}
+
+		groupDir := filepath.Join(s.dir, groupEntry.Name())
+		entries, err := os.ReadDir(groupDir)
 		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, fmt.Errorf("store.List: %w", err)
+			s.log.Warn("failed to read group directory", "group", groupEntry.Name(), "err", err)
+			continue
 		}
 
 		for _, entry := range entries {
@@ -171,7 +172,7 @@ func (s *Store) List(ctx context.Context) ([]*Secret, error) {
 				continue
 			}
 
-			path := filepath.Join(dir, entry.Name())
+			path := filepath.Join(groupDir, entry.Name())
 			ciphertext, err := os.ReadFile(path)
 			if err != nil {
 				s.log.Warn("failed to read secret file", "path", path, "err", err)
@@ -194,8 +195,25 @@ func (s *Store) List(ctx context.Context) ([]*Secret, error) {
 		}
 	}
 
-	_ = ctx // respect context in future iterations
+	_ = ctx
 	return secrets, nil
+}
+
+// Groups returns a sorted list of all group names that exist in the vault.
+func (s *Store) Groups() []string {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return nil
+	}
+
+	var groups []string
+	for _, e := range entries {
+		if e.IsDir() {
+			groups = append(groups, e.Name())
+		}
+	}
+	sort.Strings(groups)
+	return groups
 }
 
 // ReEncryptAll decrypts every secret with the current identity and
@@ -207,7 +225,6 @@ func (s *Store) ReEncryptAll(ctx context.Context, newID *crypto.Identity) error 
 		return fmt.Errorf("store.ReEncryptAll: list: %w", err)
 	}
 
-	// Re-encrypt each secret with the new identity
 	for _, sec := range secrets {
 		data, err := json.MarshalIndent(sec, "", "  ")
 		if err != nil {
@@ -231,12 +248,23 @@ func (s *Store) ReEncryptAll(ctx context.Context, newID *crypto.Identity) error 
 }
 
 // CopyTo copies every .age file from this store's directory into destDir,
-// preserving the category subdirectory structure. The destination directory
-// is created with 0700 permissions if it does not exist.
+// preserving the group subdirectory structure.
 func (s *Store) CopyTo(destDir string) error {
-	for _, st := range ValidSecretTypes() {
-		srcDir := filepath.Join(s.dir, CategoryDir(st))
-		dstDir := filepath.Join(destDir, CategoryDir(st))
+	groups, err := os.ReadDir(s.dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("store.CopyTo: read %q: %w", s.dir, err)
+	}
+
+	for _, groupEntry := range groups {
+		if !groupEntry.IsDir() {
+			continue
+		}
+
+		srcDir := filepath.Join(s.dir, groupEntry.Name())
+		dstDir := filepath.Join(destDir, groupEntry.Name())
 
 		if err := os.MkdirAll(dstDir, 0o700); err != nil {
 			return fmt.Errorf("store.CopyTo: mkdir %q: %w", dstDir, err)
@@ -244,9 +272,6 @@ func (s *Store) CopyTo(destDir string) error {
 
 		entries, err := os.ReadDir(srcDir)
 		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
 			return fmt.Errorf("store.CopyTo: read %q: %w", srcDir, err)
 		}
 
@@ -273,8 +298,9 @@ func (s *Store) SetDir(dir string) {
 	s.dir = dir
 }
 
-// secretPath returns the filesystem path for a secret.
+// secretPath returns the filesystem path for a secret: vault/<group>/<slug>.age
 func (s *Store) secretPath(secret *Secret) string {
+	g := NormalizeGroup(secret.Group)
 	slug := Slugify(secret.Name)
-	return filepath.Join(s.dir, CategoryDir(secret.Type), slug+".age")
+	return filepath.Join(s.dir, g, slug+".age")
 }

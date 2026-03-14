@@ -103,12 +103,29 @@ func (dv *DetailView) ShowNewRecord() {
 	dv.showRecordDetail(secret, true)
 }
 
+// groupSelect creates a group selector that shows existing groups as a dropdown
+// and allows typing a new group name.
+func (dv *DetailView) groupSelect(current string) *widget.SelectEntry {
+	groups := dv.store.Groups()
+	sel := widget.NewSelectEntry(groups)
+	sel.SetPlaceHolder("Group (e.g. work, personal)")
+	if current != "" {
+		sel.SetText(current)
+	}
+	return sel
+}
+
 // showPasswordDetail renders a password secret form.
 func (dv *DetailView) showPasswordDetail(secret *store.Secret, isNew bool) {
 	nameEntry := widget.NewEntry()
 	nameEntry.SetText(secret.Name)
 	if !isNew {
 		nameEntry.Disable()
+	}
+
+	groupEntry := dv.groupSelect(secret.Group)
+	if !isNew {
+		groupEntry.Disable()
 	}
 
 	valueEntry := widget.NewPasswordEntry()
@@ -133,6 +150,7 @@ func (dv *DetailView) showPasswordDetail(secret *store.Secret, isNew bool) {
 
 	saveBtn := widget.NewButton("Save", func() {
 		secret.Name = nameEntry.Text
+		secret.Group = groupEntry.Text
 		secret.Value = valueEntry.Text
 		secret.Tags = parseTags(tagsEntry.Text)
 		secret.Notes = notesEntry.Text
@@ -153,6 +171,8 @@ func (dv *DetailView) showPasswordDetail(secret *store.Secret, isNew bool) {
 		widget.NewSeparator(),
 		widget.NewLabel("Name:"),
 		nameEntry,
+		widget.NewLabel("Group:"),
+		groupEntry,
 		widget.NewLabel("Password / Value:"),
 		valueEntry,
 		widget.NewLabel("Tags:"),
@@ -182,6 +202,11 @@ func (dv *DetailView) showRecordDetail(secret *store.Secret, isNew bool) {
 	nameEntry.SetText(secret.Name)
 	if !isNew {
 		nameEntry.Disable()
+	}
+
+	groupEntry := dv.groupSelect(secret.Group)
+	if !isNew {
+		groupEntry.Disable()
 	}
 
 	usernameEntry := widget.NewEntry()
@@ -220,6 +245,7 @@ func (dv *DetailView) showRecordDetail(secret *store.Secret, isNew bool) {
 
 	saveBtn := widget.NewButton("Save", func() {
 		secret.Name = nameEntry.Text
+		secret.Group = groupEntry.Text
 		secret.Username = usernameEntry.Text
 		secret.Password = passwordEntry.Text
 		secret.URL = urlEntry.Text
@@ -243,6 +269,8 @@ func (dv *DetailView) showRecordDetail(secret *store.Secret, isNew bool) {
 		widget.NewSeparator(),
 		widget.NewLabel("Name:"),
 		nameEntry,
+		widget.NewLabel("Group:"),
+		groupEntry,
 		widget.NewLabel("URL:"),
 		urlEntry,
 		widget.NewLabel("Username:"),
@@ -287,6 +315,7 @@ func (dv *DetailView) showFileDetail(secret *store.Secret) {
 		widget.NewLabel("File Secret"),
 		widget.NewSeparator(),
 		widget.NewLabel("Name: " + secret.Name),
+		widget.NewLabel("Group: " + secret.Group),
 		widget.NewLabel("Original Filename: " + secret.OriginalFilename),
 		widget.NewLabel("MIME Type: " + secret.MIMEType),
 		widget.NewLabel(fmt.Sprintf("Created: %s", secret.CreatedAt.Format(time.RFC3339))),
@@ -323,7 +352,7 @@ func (dv *DetailView) confirmDelete(secret *store.Secret) {
 				return
 			}
 			ctx := context.Background()
-			if err := dv.store.Delete(ctx, secret.Name, secret.Type); err != nil {
+			if err := dv.store.Delete(ctx, secret.Name, secret.Group); err != nil {
 				dialog.ShowError(fmt.Errorf("delete failed: %w", err), dv.window)
 				return
 			}
