@@ -235,3 +235,91 @@ func TestStore_Save_RejectsEmptyName(t *testing.T) {
 		t.Fatal("expected error for empty name")
 	}
 }
+
+func TestStore_ReEncryptAll_ChangesPassphrase(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	oldID := testutil.NewTestIdentity(t, "old-passphrase")
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	s := store.New(oldID, dir, log)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Save some secrets with old passphrase
+	if err := s.Save(ctx, testutil.PasswordSecret("key-1", "val1")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := s.Save(ctx, testutil.RecordSecret("rec-1", "user", "pass", "https://example.com")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Re-encrypt with new passphrase
+	newID := testutil.NewTestIdentity(t, "new-passphrase")
+	if err := s.ReEncryptAll(ctx, newID); err != nil {
+		t.Fatalf("ReEncryptAll: %v", err)
+	}
+
+	// Verify we can read with the new identity (store now uses newID)
+	got, err := s.Get(ctx, "key-1", store.TypePassword)
+	if err != nil {
+		t.Fatalf("Get after re-encrypt: %v", err)
+	}
+	if got.Value != "val1" {
+		t.Fatalf("value mismatch after re-encrypt: got %q", got.Value)
+	}
+
+	// Verify old identity can no longer decrypt
+	oldID2 := testutil.NewTestIdentity(t, "old-passphrase")
+	oldStore := store.New(oldID2, dir, log)
+	_, err = oldStore.Get(ctx, "key-1", store.TypePassword)
+	if err == nil {
+		t.Fatal("expected error decrypting with old passphrase after re-encrypt")
+	}
+}
+
+func TestStore_CopyTo_CopiesAllSecrets(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.Save(ctx, testutil.PasswordSecret("copy-1", "v1")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := s.Save(ctx, testutil.RecordSecret("copy-2", "u", "p", "https://example.com")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	destDir := t.TempDir()
+	if err := s.CopyTo(destDir); err != nil {
+		t.Fatalf("CopyTo: %v", err)
+	}
+
+	// Verify files exist in destination
+	for _, sub := range []string{"passwords", "records"} {
+		entries, err := os.ReadDir(filepath.Join(destDir, sub))
+		if err != nil {
+			t.Fatalf("ReadDir %q: %v", sub, err)
+		}
+		if len(entries) == 0 {
+			t.Fatalf("expected files in %q", sub)
+		}
+	}
+
+	// Verify we can read from the new location with same identity
+	id := testutil.NewTestIdentity(t, "test-store-passphrase")
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	destStore := store.New(id, destDir, log)
+
+	got, err := destStore.Get(ctx, "copy-1", store.TypePassword)
+	if err != nil {
+		t.Fatalf("Get from dest: %v", err)
+	}
+	if got.Value != "v1" {
+		t.Fatalf("value mismatch: got %q", got.Value)
+	}
+}

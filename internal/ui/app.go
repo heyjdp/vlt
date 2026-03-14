@@ -131,6 +131,14 @@ func (a *App) showMainView() {
 			a.resetLockTimer()
 			fileOps.ImportFile()
 		}),
+		widget.NewButton("Settings", func() {
+			a.resetLockTimer()
+			settings := NewSettingsScreen(a.window, &a.config, a.identity, a.store, a.statusBar, a.log, func() {
+				a.Lock()
+			})
+			a.detailView.Content().Objects = []fyne.CanvasObject{settings.Content()}
+			a.detailView.Content().Refresh()
+		}),
 		widget.NewButton("Lock", func() {
 			a.Lock()
 		}),

@@ -198,6 +198,81 @@ func (s *Store) List(ctx context.Context) ([]*Secret, error) {
 	return secrets, nil
 }
 
+// ReEncryptAll decrypts every secret with the current identity and
+// re-encrypts with newID. On success the store's identity is swapped
+// to newID and the old identity is zeroed.
+func (s *Store) ReEncryptAll(ctx context.Context, newID *crypto.Identity) error {
+	secrets, err := s.List(ctx)
+	if err != nil {
+		return fmt.Errorf("store.ReEncryptAll: list: %w", err)
+	}
+
+	// Re-encrypt each secret with the new identity
+	for _, sec := range secrets {
+		data, err := json.MarshalIndent(sec, "", "  ")
+		if err != nil {
+			return fmt.Errorf("store.ReEncryptAll: marshal %q: %w", sec.Name, err)
+		}
+
+		ciphertext, err := crypto.Encrypt(newID, data)
+		if err != nil {
+			return fmt.Errorf("store.ReEncryptAll: encrypt %q: %w", sec.Name, err)
+		}
+
+		path := s.secretPath(sec)
+		if err := os.WriteFile(path, ciphertext, 0o600); err != nil {
+			return fmt.Errorf("store.ReEncryptAll: write %q: %w", sec.Name, err)
+		}
+	}
+
+	s.log.Info("vault re-encrypted", "secrets", len(secrets))
+	s.id = newID
+	return nil
+}
+
+// CopyTo copies every .age file from this store's directory into destDir,
+// preserving the category subdirectory structure. The destination directory
+// is created with 0700 permissions if it does not exist.
+func (s *Store) CopyTo(destDir string) error {
+	for _, st := range ValidSecretTypes() {
+		srcDir := filepath.Join(s.dir, CategoryDir(st))
+		dstDir := filepath.Join(destDir, CategoryDir(st))
+
+		if err := os.MkdirAll(dstDir, 0o700); err != nil {
+			return fmt.Errorf("store.CopyTo: mkdir %q: %w", dstDir, err)
+		}
+
+		entries, err := os.ReadDir(srcDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("store.CopyTo: read %q: %w", srcDir, err)
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".age" {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(srcDir, entry.Name()))
+			if err != nil {
+				return fmt.Errorf("store.CopyTo: read file %q: %w", entry.Name(), err)
+			}
+			if err := os.WriteFile(filepath.Join(dstDir, entry.Name()), data, 0o600); err != nil {
+				return fmt.Errorf("store.CopyTo: write file %q: %w", entry.Name(), err)
+			}
+		}
+	}
+
+	s.log.Info("vault copied", "from", s.dir, "to", destDir)
+	return nil
+}
+
+// SetDir changes the vault directory the store operates on.
+func (s *Store) SetDir(dir string) {
+	s.dir = dir
+}
+
 // secretPath returns the filesystem path for a secret.
 func (s *Store) secretPath(secret *Secret) string {
 	slug := Slugify(secret.Name)
