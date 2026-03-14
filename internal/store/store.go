@@ -310,9 +310,22 @@ func (s *Store) ReEncryptAll(ctx context.Context, newID *crypto.Identity) error 
 	return nil
 }
 
-// CopyTo copies every .age file from this store's directory into destDir,
-// preserving the group subdirectory structure.
+// CopyTo copies the sentinel file and every .age file from this store's
+// directory into destDir, preserving the group subdirectory structure.
 func (s *Store) CopyTo(destDir string) error {
+	if err := os.MkdirAll(destDir, 0o700); err != nil {
+		return fmt.Errorf("store.CopyTo: mkdir %q: %w", destDir, err)
+	}
+
+	// Copy the sentinel file if it exists
+	sentinelSrc := filepath.Join(s.dir, sentinelFile)
+	if data, err := os.ReadFile(sentinelSrc); err == nil {
+		if err := os.WriteFile(filepath.Join(destDir, sentinelFile), data, 0o600); err != nil {
+			return fmt.Errorf("store.CopyTo: write sentinel: %w", err)
+		}
+	}
+
+	// Copy group subdirectories
 	groups, err := os.ReadDir(s.dir)
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -335,6 +335,10 @@ func TestStore_CopyTo_CopiesAllSecrets(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
+	if err := s.CreateSentinel(); err != nil {
+		t.Fatalf("CreateSentinel: %v", err)
+	}
+
 	if err := s.Save(ctx, testutil.PasswordSecret("copy-1", "v1", "work")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -369,6 +373,43 @@ func TestStore_CopyTo_CopiesAllSecrets(t *testing.T) {
 	}
 	if got.Value != "v1" {
 		t.Fatalf("value mismatch: got %q", got.Value)
+	}
+
+	// Verify sentinel was copied
+	if destStore.IsNew() {
+		t.Fatal("expected sentinel to be copied to destination (IsNew should be false)")
+	}
+	if err := destStore.Verify(); err != nil {
+		t.Fatalf("Verify on dest should succeed: %v", err)
+	}
+}
+
+func TestStore_SwitchToNewDir_IsNew(t *testing.T) {
+	t.Parallel()
+
+	// Simulates switching vault to a new empty directory
+	newDir := t.TempDir()
+	id := testutil.NewTestIdentity(t, "test-switch")
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	s := store.New(id, newDir, log)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	// New dir has no sentinel
+	if !s.IsNew() {
+		t.Fatal("expected IsNew() == true for new vault dir")
+	}
+
+	// Creating sentinel makes it no longer new
+	if err := s.CreateSentinel(); err != nil {
+		t.Fatalf("CreateSentinel: %v", err)
+	}
+	if s.IsNew() {
+		t.Fatal("expected IsNew() == false after CreateSentinel")
+	}
+	if err := s.Verify(); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 
