@@ -41,6 +41,7 @@ func main() {
 
 	// Create Fyne application
 	fyneApp := app.NewWithID("io.yourorg.vlt")
+	fyneApp.Settings().SetTheme(&ui.VltTheme{})
 	window := fyneApp.NewWindow(fmt.Sprintf("vlt %s", version))
 	window.Resize(fyne.NewSize(900, 600))
 
