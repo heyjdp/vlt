@@ -132,7 +132,7 @@ func TestApp_SaveFromListSelectionUpdatesList(t *testing.T) {
 	sec := app.secretList.secrets[0]
 	edited := *sec
 	edited.Value = "new"
-	app.detailView.saveSecret(&edited, false, widget.NewButton("Save", nil), func() { *sec = edited })
+	app.detailView.saveSecret(&edited, false, saveButton(), func() { *sec = edited })
 
 	if app.secretList.secrets[0].Value != "new" {
 		t.Fatal("saving a secret selected from the list should update the list")
@@ -161,7 +161,7 @@ func TestApp_SaveNewSecretAddsItToList(t *testing.T) {
 	unlock(app)
 
 	sec := testutil.PasswordSecret("new-one", "v", "work")
-	app.detailView.saveSecret(sec, true, widget.NewButton("Save", nil), func() {})
+	app.detailView.saveSecret(sec, true, saveButton(), func() {})
 
 	if len(app.secretList.secrets) != 1 || app.secretList.secrets[0].Name != "new-one" {
 		t.Fatalf("a newly created secret should be added to the list, got %d entries", len(app.secretList.secrets))
@@ -215,7 +215,7 @@ func TestApp_SaveCompletingAfterLockIsDropped(t *testing.T) {
 	unlockQueued(t, app, q)
 	q.flush() // initial list load
 
-	app.detailView.saveSecret(testutil.PasswordSecret("late", "v", "work"), true, widget.NewButton("Save", nil), func() {})
+	app.detailView.saveSecret(testutil.PasswordSecret("late", "v", "work"), true, saveButton(), func() {})
 	app.Lock()
 	q.flush()
 
@@ -293,3 +293,7 @@ func TestSecretList_SaveDuringFirstLoadSurvivesLoad(t *testing.T) {
 		t.Fatalf("expected both the loaded and the concurrently saved secret, got %v", names)
 	}
 }
+
+// saveButton is a stand-in for the form's Save button, which saveSecret
+// disables while a save is in flight.
+func saveButton() *widget.Button { return widget.NewButton("Save", nil) }

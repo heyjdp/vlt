@@ -64,5 +64,6 @@ Progress is tracked in the [[Roadmap]]. Completed so far:
 - [[F03 Prevent silent overwrites]]: `Create`/`Update` split and `ErrSecretExists`
 - [[F04 Confirm passphrase on vault creation]]: separate create screen with confirmation; unlock only opens
 - [[F10 Keep vault IO off the UI goroutine]]: all vault I/O runs in the background on a session-scoped runner
+- [[F05 Refresh list after edit and delete]]: saves, imports and deletes update the list in place; the highlight follows the selected secret
 
 These findings became the five-phase [[Roadmap]]. The storage-format change ([[ADR-001 Scrypt-wrapped X25519 identity]]) goes first because it's cheapest before real vaults exist that would need migrating.

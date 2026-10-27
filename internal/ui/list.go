@@ -34,6 +34,12 @@ type SecretList struct {
 	// and deletes made meanwhile, re-applied to the loaded result.
 	loading bool
 	replay  []func()
+
+	// selected is the secret highlighted in the list, kept so filtering can
+	// move or clear the highlight when rows shift; reselecting suppresses
+	// OnSelected while the highlight is moved programmatically.
+	selected    *store.Secret
+	reselecting bool
 }
 
 // NewSecretList creates a new secret browser panel.
@@ -76,11 +82,17 @@ func NewSecretList(window fyne.Window, s *store.Store, detail *DetailView, log *
 	)
 
 	sl.list.OnSelected = func(id widget.ListItemID) {
-		if id >= len(sl.filtered) {
+		if sl.reselecting || id >= len(sl.filtered) {
 			return
 		}
 		sec := sl.filtered[id]
+		sl.selected = sec
 		sl.detailView.ShowSecret(sec)
+	}
+	sl.list.OnUnselected = func(widget.ListItemID) {
+		if !sl.reselecting {
+			sl.selected = nil
+		}
 	}
 
 	sl.content = container.NewBorder(
@@ -123,8 +135,8 @@ func (sl *SecretList) Refresh() {
 		})
 }
 
-// Upsert adds a saved secret to the list, or replaces the entry with the
-// same name and group, without re-reading the vault.
+// Upsert adds a saved secret to the list, or replaces the entry stored at
+// the same path, without re-reading the vault.
 func (sl *SecretList) Upsert(secret *store.Secret) {
 	sl.upsert(secret)
 	if sl.loading {
@@ -143,14 +155,14 @@ func (sl *SecretList) upsert(secret *store.Secret) {
 	sl.secrets = append(sl.secrets, secret)
 }
 
-// Remove drops a deleted secret from the list and clears the selection.
+// Remove drops a deleted secret from the list; the highlight is cleared if
+// it was on that secret.
 func (sl *SecretList) Remove(secret *store.Secret) {
 	sl.remove(secret)
 	if sl.loading {
 		sl.replay = append(sl.replay, func() { sl.remove(secret) })
 	}
-	sl.list.UnselectAll()
-	sl.filter(sl.searchEntry.Text)
+	sl.filter(sl.searchEntry.Text) // clears the highlight if it was on this secret
 }
 
 func (sl *SecretList) remove(secret *store.Secret) {
@@ -213,4 +225,26 @@ func (sl *SecretList) filter(query string) {
 	}
 
 	sl.list.Refresh()
+	sl.syncSelection()
+}
+
+// syncSelection keeps the list highlight on the selected secret after the
+// rows change: it moves the highlight if the secret's row moved, and clears
+// it if the secret is no longer shown (deleted, or filtered out).
+func (sl *SecretList) syncSelection() {
+	if sl.selected == nil {
+		return
+	}
+	for i, s := range sl.filtered {
+		if sameSecret(s, sl.selected) {
+			sl.reselecting = true
+			sl.list.Select(i)
+			sl.reselecting = false
+			return
+		}
+	}
+	sl.selected = nil
+	sl.reselecting = true
+	sl.list.UnselectAll()
+	sl.reselecting = false
 }

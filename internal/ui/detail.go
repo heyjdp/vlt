@@ -29,7 +29,12 @@ type DetailView struct {
 	onDeleted    func(*store.Secret)
 
 	content *fyne.Container
+	// current is the existing secret shown in the panel, or nil when the
+	// panel shows a new-secret form, a message, or settings.
 	current *store.Secret
+	// busy is true while a save or delete is in flight; a second one is
+	// refused so they cannot interleave.
+	busy    bool
 	fileOps *FileOps
 }
 
@@ -65,6 +70,22 @@ func (dv *DetailView) SetCallbacks(onSaved, onDeleted func(*store.Secret), group
 	dv.onSaved, dv.onDeleted, dv.groups = onSaved, onDeleted, groups
 }
 
+// ShowContent replaces the panel with obj (for example the settings screen).
+func (dv *DetailView) ShowContent(obj fyne.CanvasObject) {
+	dv.current = nil
+	dv.content.Objects = []fyne.CanvasObject{obj}
+	dv.content.Refresh()
+}
+
+// RefreshIfShowing re-renders the panel when it shows the secret stored at
+// the same path as secret, so a form never edits a stale copy (for example
+// after an import replaced it).
+func (dv *DetailView) RefreshIfShowing(secret *store.Secret) {
+	if dv.current != nil && sameSecret(dv.current, secret) {
+		dv.ShowSecret(secret)
+	}
+}
+
 // SetFileOps sets the file operations handler for import/export.
 func (dv *DetailView) SetFileOps(fo *FileOps) {
 	dv.fileOps = fo
@@ -98,6 +119,7 @@ func (dv *DetailView) ShowNewPassword() {
 		CreatedAt:  now,
 		ModifiedAt: now,
 	}
+	dv.current = nil
 	dv.showPasswordDetail(secret, true)
 }
 
@@ -110,6 +132,7 @@ func (dv *DetailView) ShowNewRecord() {
 		CreatedAt:  now,
 		ModifiedAt: now,
 	}
+	dv.current = nil
 	dv.showRecordDetail(secret, true)
 }
 
@@ -347,6 +370,11 @@ func (dv *DetailView) showFileDetail(secret *store.Secret) {
 // overwrites: a name already used in the group, including one that differs
 // only in case or punctuation, is reported.
 func (dv *DetailView) saveSecret(secret *store.Secret, isNew bool, btn *widget.Button, commit func()) {
+	if dv.busy {
+		dv.statusBar.SetText("Please wait for the current operation to finish")
+		return
+	}
+	dv.busy = true
 	dv.statusBar.SetText("Saving…")
 	btn.Disable()
 	background(dv.run,
@@ -357,6 +385,7 @@ func (dv *DetailView) saveSecret(secret *store.Secret, isNew bool, btn *widget.B
 			return none{}, dv.store.Update(ctx, secret)
 		},
 		func(_ none, err error) {
+			dv.busy = false
 			btn.Enable()
 			switch {
 			case errors.Is(err, store.ErrSecretExists) && isNew:
@@ -401,28 +430,38 @@ func (dv *DetailView) confirmDelete(secret *store.Secret) {
 	)
 }
 
-// deleteSecret deletes secret in the background, then clears the detail
-// panel and removes it from the list. Name and group are copied first: the
-// list's *Secret may be rewritten by a save completing meanwhile.
+// deleteSecret deletes secret in the background, then removes it from the
+// list and, if the panel still shows it, clears the panel. Name and group are
+// snapshotted first: the list's *Secret may be rewritten by a save
+// completing meanwhile.
 func (dv *DetailView) deleteSecret(secret *store.Secret) {
-	name, group := secret.Name, secret.Group
+	if dv.busy {
+		dv.statusBar.SetText("Please wait for the current operation to finish")
+		return
+	}
+	dv.busy = true
+	deleted := &store.Secret{Name: secret.Name, Group: secret.Group}
 	background(dv.run,
 		func(ctx context.Context) (none, error) {
-			return none{}, dv.store.Delete(ctx, name, group)
+			return none{}, dv.store.Delete(ctx, deleted.Name, deleted.Group)
 		},
 		func(_ none, err error) {
+			dv.busy = false
 			if err != nil {
 				dialog.ShowError(fmt.Errorf("delete failed: %w", err), dv.window)
 				return
 			}
-			dv.log.Info("secret deleted via UI", "name", secret.Name)
-			dv.statusBar.SetText("Deleted: " + secret.Name)
-			dv.content.Objects = []fyne.CanvasObject{
-				widget.NewLabel("Secret deleted"),
+			dv.log.Info("secret deleted via UI", "name", deleted.Name)
+			dv.statusBar.SetText("Deleted: " + deleted.Name)
+			// Only clear the panel if it still shows the deleted secret; the
+			// user may have moved on while the delete ran.
+			if dv.current != nil && sameSecret(dv.current, deleted) {
+				dv.current = nil
+				dv.content.Objects = []fyne.CanvasObject{widget.NewLabel("Secret deleted")}
+				dv.content.Refresh()
 			}
-			dv.content.Refresh()
 			if dv.onDeleted != nil {
-				dv.onDeleted(secret)
+				dv.onDeleted(deleted)
 			}
 		})
 }

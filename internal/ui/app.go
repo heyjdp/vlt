@@ -227,7 +227,12 @@ func (a *App) showMainView(s *store.Store, session runner) {
 	// secret is new or was selected from the list.
 	onSaved := a.secretList.Upsert
 	a.detailView.SetCallbacks(onSaved, a.secretList.Remove, a.secretList.Groups)
-	fileOps := NewFileOps(a.window, s, a.log, session, a.secretList.Groups, onSaved)
+	// An import may replace the secret whose form is open; re-render it.
+	onImported := func(sec *store.Secret) {
+		a.secretList.Upsert(sec)
+		a.detailView.RefreshIfShowing(sec)
+	}
+	fileOps := NewFileOps(a.window, s, a.log, session, a.secretList.Groups, onImported)
 	a.detailView.SetFileOps(fileOps)
 
 	// Toolbar with actions
@@ -249,8 +254,7 @@ func (a *App) showMainView(s *store.Store, session runner) {
 			settings := NewSettingsScreen(a.window, &a.config, s, a.statusBar, a.log, session, func() {
 				a.Lock()
 			})
-			a.detailView.Content().Objects = []fyne.CanvasObject{settings.Content()}
-			a.detailView.Content().Refresh()
+			a.detailView.ShowContent(settings.Content())
 		}),
 		widget.NewButton("Lock", func() {
 			a.Lock()

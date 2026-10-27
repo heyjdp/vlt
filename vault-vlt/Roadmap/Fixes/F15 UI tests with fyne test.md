@@ -37,8 +37,8 @@ Use a lock-timeout config in milliseconds plus an injectable clock to test auto-
 |---|---|
 | Create vault | ✅ Mismatched confirm shows an error; matching creates `vlt.age` (F04, F10) |
 | Unlock | Wrong passphrase shows "Incorrect passphrase"; the entry is cleared afterwards |
-| Edit | ✅ Selecting and editing a secret updates its list row (`TestApp_SaveFromListSelectionUpdatesList`) |
-| Delete | ✅ Selecting and deleting a secret removes its row (`TestApp_DeleteRemovesSecretFromList`) |
+| Edit | ✅ Editing a secret selected from a search-filtered list updates its row (`TestApp_SelectThenEditUpdatesFilteredRow`, `TestApp_SaveFromListSelectionUpdatesList`) |
+| Delete | ✅ Deleting a selected secret removes its row and clears the selection (`TestApp_SelectThenDeleteRemovesRowAndClearsSelection`, `TestApp_DeleteRemovesSecretFromList`). The confirmation dialog itself (`confirmDelete`) is not yet driven by a test |
 | Auto-lock | Typing postpones it; idleness locks; no secrets referenced after lock |
 | Clipboard | Copy A then B, B lasts the full TTL ([[F08 Correct clipboard clearing]]) |
 | Import | A failing reader saves nothing ([[F09 Fail import on read errors]]). ✅ Import adds to the list (`TestApp_ImportAddsSecretToList`) |
