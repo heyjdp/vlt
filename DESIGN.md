@@ -189,7 +189,7 @@ vlt/
 
 **`internal/store`**
 - `secret.go` — defines `Secret`, `PasswordSecret`, `RecordSecret`, `FileSecret` structs; JSON marshalling/unmarshalling; filename slugification
-- `store.go` — `List()`, `Get(name, group)`, `Save(secret)`, `Delete(name, group)`, `Groups()`, `CopyTo(dir)` operating on the vault directory; decrypts on `Get`, encrypts on `Save`
+- `store.go` — `List()`, `Get(name, group)`, `Create(secret)`, `Update(secret)`, `Delete(name, group)`, `Groups()`, `CopyTo(dir)` operating on the vault directory. `Create` never overwrites: it fails with `ErrSecretExists` if the slugified path is taken. `Update` requires the stored secret to have exactly the same name
 - `vault.go` — `Create`, `Open`, `Exists`, `ChangePassphrase`, `Close`; reads and writes `vlt.age` (wrapped vault key) and `vlt.json` (format marker)
 - `migrate.go` — in-place, resumable migration of format-1 vaults on first unlock
 - `atomic.go` — temp-file + fsync + rename writes used for every vault file

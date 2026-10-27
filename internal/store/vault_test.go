@@ -75,7 +75,7 @@ func TestStore_CreateOpen_RoundTrip(t *testing.T) {
 
 	dir := filepath.Join(t.TempDir(), "vault")
 	s := createVault(t, dir)
-	if err := s.Save(context.Background(), testutil.PasswordSecret("gh", "ghp_x", "work")); err != nil {
+	if err := s.Create(context.Background(), testutil.PasswordSecret("gh", "ghp_x", "work")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	s.Close()
@@ -97,7 +97,7 @@ func TestStore_Unlock_RunsExactlyOneScrypt(t *testing.T) {
 	s := createVault(t, dir)
 	for i := range 100 {
 		sec := testutil.PasswordSecret(fmt.Sprintf("secret-%03d", i), "v", fmt.Sprintf("g%d", i%5))
-		if err := s.Save(context.Background(), sec); err != nil {
+		if err := s.Create(context.Background(), sec); err != nil {
 			t.Fatalf("Save %d: %v", i, err)
 		}
 	}
@@ -183,7 +183,7 @@ func TestStore_ChangePassphrase_RewritesOnlyKeyFile(t *testing.T) {
 	dir := t.TempDir()
 	s := createVault(t, dir)
 	ctx := context.Background()
-	if err := s.Save(ctx, testutil.PasswordSecret("a", "1", "work")); err != nil {
+	if err := s.Create(ctx, testutil.PasswordSecret("a", "1", "work")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	secretPath := filepath.Join(dir, "work", "a.age")
@@ -262,10 +262,10 @@ func TestStore_CopyTo_CopiesAllSecrets(t *testing.T) {
 
 	s := createVault(t, t.TempDir())
 	ctx := context.Background()
-	if err := s.Save(ctx, testutil.PasswordSecret("copy-1", "v1", "work")); err != nil {
+	if err := s.Create(ctx, testutil.PasswordSecret("copy-1", "v1", "work")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := s.Save(ctx, testutil.RecordSecret("copy-2", "u", "p", "https://example.com", "personal")); err != nil {
+	if err := s.Create(ctx, testutil.RecordSecret("copy-2", "u", "p", "https://example.com", "personal")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -293,7 +293,7 @@ func TestStore_Close_ZeroesKey(t *testing.T) {
 	s := createVault(t, t.TempDir())
 	s.Close()
 
-	if err := s.Save(context.Background(), testutil.PasswordSecret("a", "1", "")); err == nil {
+	if err := s.Create(context.Background(), testutil.PasswordSecret("a", "1", "")); err == nil {
 		t.Fatal("expected Save to fail after Close")
 	}
 }
@@ -364,7 +364,7 @@ func TestStore_Open_ReportsMissingKeyFile(t *testing.T) {
 
 	dir := t.TempDir()
 	s := createVault(t, dir)
-	if err := s.Save(context.Background(), testutil.PasswordSecret("a", "1", "work")); err != nil {
+	if err := s.Create(context.Background(), testutil.PasswordSecret("a", "1", "work")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(dir, "vlt.age")); err != nil {

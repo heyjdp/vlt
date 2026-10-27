@@ -60,7 +60,9 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 // writeFileExclusive writes data to path atomically, failing with an error
 // wrapping os.ErrExist if path already exists. It writes and fsyncs a uniquely
 // named temp file, then hard-links it into place; link(2) fails if the target
-// exists, so exactly one concurrent caller wins.
+// exists, so exactly one concurrent caller wins. On filesystems without hard
+// links (FAT32, exFAT, some network mounts) it falls back to O_EXCL creation,
+// which keeps the no-overwrite guarantee but not crash atomicity.
 func writeFileExclusive(path string, data []byte, perm os.FileMode) (err error) {
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, tmpPrefix+"*")
@@ -82,11 +84,39 @@ func writeFileExclusive(path string, data []byte, perm os.FileMode) (err error) 
 		return fmt.Errorf("writeFileExclusive: %w", err)
 	}
 
-	if err := os.Link(tmp, path); err != nil {
-		return fmt.Errorf("writeFileExclusive: %w", err)
+	linkErr := os.Link(tmp, path)
+	switch {
+	case linkErr == nil:
+	case errors.Is(linkErr, os.ErrExist):
+		return fmt.Errorf("writeFileExclusive: %w", linkErr)
+	default:
+		if err := createExclusive(path, data, perm); err != nil {
+			return fmt.Errorf("writeFileExclusive: link unsupported (%v); fallback: %w", linkErr, err)
+		}
 	}
 	if err := syncDir(dir); err != nil {
 		return fmt.Errorf("writeFileExclusive: %w", err)
+	}
+	return nil
+}
+
+// createExclusive creates path with O_EXCL and writes data, removing the file
+// if the write fails. It is the fallback for filesystems without hard links.
+func createExclusive(path string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(path)
+		return err
 	}
 	return nil
 }

@@ -53,14 +53,27 @@ type SecretName struct {
 	value string
 }
 
-// NewSecretName validates and returns a SecretName.
+// maxSlugLen keeps "<slug>.age" within the 255-byte filename limit common to
+// ext4, APFS and NTFS.
+const maxSlugLen = 255 - len(".age")
+
+// NewSecretName validates and returns a SecretName. The name is trimmed. It
+// must be at most 255 bytes and contain at least one ASCII letter or digit,
+// because the filename is derived from those characters alone (see Slugify).
 func NewSecretName(s string) (SecretName, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return SecretName{}, errors.New("secret name cannot be empty")
 	}
 	if len(s) > 255 {
-		return SecretName{}, errors.New("secret name exceeds 255 characters")
+		return SecretName{}, errors.New("secret name exceeds 255 bytes")
+	}
+	slug := Slugify(s)
+	if slug == "" {
+		return SecretName{}, errors.New("secret name must contain at least one ASCII letter or digit")
+	}
+	if len(slug) > maxSlugLen {
+		return SecretName{}, errors.New("secret name is too long to use as a filename")
 	}
 	return SecretName{value: s}, nil
 }

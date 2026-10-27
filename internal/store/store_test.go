@@ -55,7 +55,7 @@ func TestStore_SaveAndGet_Password(t *testing.T) {
 	secret := testutil.PasswordSecret("GitHub API Key", "ghp_xxxxxxxxxxxx", "work")
 	secret.Tags = []string{"github", "ci"}
 
-	if err := s.Save(ctx, secret); err != nil {
+	if err := s.Create(ctx, secret); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -89,7 +89,7 @@ func TestStore_SaveAndGet_Record(t *testing.T) {
 
 	secret := testutil.RecordSecret("Work Jira", "user@example.com", "secret", "https://jira.example.com", "work")
 
-	if err := s.Save(ctx, secret); err != nil {
+	if err := s.Create(ctx, secret); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -118,7 +118,7 @@ func TestStore_SaveAndGet_DefaultGroup(t *testing.T) {
 	// Empty group should normalize to "default"
 	secret := testutil.PasswordSecret("no-group", "val", "")
 
-	if err := s.Save(ctx, secret); err != nil {
+	if err := s.Create(ctx, secret); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -154,7 +154,7 @@ func TestStore_Delete_RemovesSecret(t *testing.T) {
 	ctx := context.Background()
 
 	secret := testutil.PasswordSecret("to-delete", "value", "personal")
-	if err := s.Save(ctx, secret); err != nil {
+	if err := s.Create(ctx, secret); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -193,7 +193,7 @@ func TestStore_List_ReturnsAllSecrets(t *testing.T) {
 	}
 
 	for _, sec := range secrets {
-		if err := s.Save(ctx, sec); err != nil {
+		if err := s.Create(ctx, sec); err != nil {
 			t.Fatalf("Save %q: %v", sec.Name, err)
 		}
 	}
@@ -216,7 +216,7 @@ func TestStore_List_IgnoresLeftoverTempFiles(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.Save(ctx, testutil.PasswordSecret("key-1", "val1", "work")); err != nil {
+	if err := s.Create(ctx, testutil.PasswordSecret("key-1", "val1", "work")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	// Simulate a crash between temp-file creation and rename.
@@ -250,42 +250,127 @@ func TestStore_List_ReturnsEmptyForNewVault(t *testing.T) {
 	}
 }
 
-func TestStore_Save_UpdatesExisting(t *testing.T) {
+func TestStore_Update_ReplacesValueAndKeepsCreatedAt(t *testing.T) {
 	t.Parallel()
 
 	s := newTestStore(t)
 	ctx := context.Background()
 
 	secret := testutil.PasswordSecret("update-me", "original", "work")
-	if err := s.Save(ctx, secret); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := s.Create(ctx, secret); err != nil {
+		t.Fatalf("Create: %v", err)
 	}
+	created := secret.CreatedAt
 
-	secret.Value = "updated"
-	if err := s.Save(ctx, secret); err != nil {
-		t.Fatalf("Save update: %v", err)
+	edited := testutil.PasswordSecret("update-me", "updated", "work")
+	if err := s.Update(ctx, edited); err != nil {
+		t.Fatalf("Update: %v", err)
 	}
 
 	got, err := s.Get(ctx, "update-me", "work")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-
 	if got.Value != "updated" {
 		t.Fatalf("expected updated value, got %q", got.Value)
 	}
+	if !got.CreatedAt.Equal(created) {
+		t.Fatalf("CreatedAt changed: got %v, want %v", got.CreatedAt, created)
+	}
 }
 
-func TestStore_Save_RejectsEmptyName(t *testing.T) {
+func TestStore_Create_RefusesExistingSecret(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		existing string
+		incoming string
+	}{
+		{"same name", "GitHub Key", "GitHub Key"},
+		{"case differs", "GitHub Key", "github key"},
+		{"punctuation differs", "GitHub Key", "github-key"},
+		{"underscore and bang", "GitHub Key", "GitHub_Key!"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := context.Background()
+
+			if err := s.Create(ctx, testutil.PasswordSecret(tt.existing, "original", "work")); err != nil {
+				t.Fatalf("Create existing: %v", err)
+			}
+			err := s.Create(ctx, testutil.PasswordSecret(tt.incoming, "intruder", "work"))
+			if !errors.Is(err, store.ErrSecretExists) {
+				t.Fatalf("expected ErrSecretExists, got %v", err)
+			}
+
+			got, err := s.Get(ctx, tt.existing, "work")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got.Value != "original" || got.Name != tt.existing {
+				t.Fatalf("existing secret was overwritten: %+v", got)
+			}
+		})
+	}
+}
+
+func TestStore_Create_AllowsSameNameInDifferentGroups(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.Create(ctx, testutil.PasswordSecret("token", "a", "work")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(ctx, testutil.PasswordSecret("token", "b", "personal")); err != nil {
+		t.Fatalf("same name in another group should be allowed: %v", err)
+	}
+}
+
+func TestStore_Update_RefusesSlugCollision(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.Create(ctx, testutil.PasswordSecret("GitHub Key", "original", "work")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.Update(ctx, testutil.PasswordSecret("github-key", "intruder", "work"))
+	if !errors.Is(err, store.ErrSecretExists) {
+		t.Fatalf("expected ErrSecretExists, got %v", err)
+	}
+	got, err := s.Get(ctx, "GitHub Key", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Value != "original" {
+		t.Fatalf("secret overwritten through a slug collision: %q", got.Value)
+	}
+}
+
+func TestStore_Update_ReturnsErrNotFoundForMissing(t *testing.T) {
+	t.Parallel()
+
+	err := newTestStore(t).Update(context.Background(), testutil.PasswordSecret("ghost", "x", "work"))
+	if !errors.Is(err, store.ErrSecretNotFound) {
+		t.Fatalf("expected ErrSecretNotFound, got %v", err)
+	}
+}
+
+func TestStore_Create_RejectsEmptyName(t *testing.T) {
 	t.Parallel()
 
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	secret := testutil.PasswordSecret("", "value", "work")
-	err := s.Save(ctx, secret)
-	if err == nil {
-		t.Fatal("expected error for empty name")
+	for _, name := range []string{"", "   ", "!!!", "日本"} {
+		if err := s.Create(ctx, testutil.PasswordSecret(name, "value", "work")); err == nil {
+			t.Fatalf("expected error for name %q", name)
+		}
 	}
 }
 
@@ -295,13 +380,13 @@ func TestStore_Groups_ReturnsAllGroups(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.Save(ctx, testutil.PasswordSecret("k1", "v1", "work")); err != nil {
+	if err := s.Create(ctx, testutil.PasswordSecret("k1", "v1", "work")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := s.Save(ctx, testutil.PasswordSecret("k2", "v2", "personal")); err != nil {
+	if err := s.Create(ctx, testutil.PasswordSecret("k2", "v2", "personal")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := s.Save(ctx, testutil.PasswordSecret("k3", "v3", "work")); err != nil {
+	if err := s.Create(ctx, testutil.PasswordSecret("k3", "v3", "work")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -320,7 +405,7 @@ func TestStore_CopyTo_IgnoresLeftoverTempFiles(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.Save(ctx, testutil.PasswordSecret("copy-1", "v1", "work")); err != nil {
+	if err := s.Create(ctx, testutil.PasswordSecret("copy-1", "v1", "work")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	leftover := filepath.Join(s.Dir(), "work", ".tmp-123456")
@@ -358,7 +443,7 @@ func TestStore_VaultStructure_GroupBasedPaths(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := s.Save(ctx, testutil.PasswordSecret("my-key", "val", "work")); err != nil {
+	if err := s.Create(ctx, testutil.PasswordSecret("my-key", "val", "work")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 

@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -118,25 +119,61 @@ func (fo *FileOps) processImport(reader fyne.URIReadCloser) {
 				Value:            encoded,
 			}
 
-			ctx := context.Background()
-			if err := fo.vaultStore.Save(ctx, secret); err != nil {
+			err := fo.vaultStore.Create(context.Background(), secret)
+			if errors.Is(err, store.ErrSecretExists) {
+				fo.confirmReplace(secret, totalRead)
+				return
+			}
+			if err != nil {
 				dialog.ShowError(fmt.Errorf("failed to save file secret: %w", err), fo.window)
 				return
 			}
-
-			fo.log.Info("file imported", "name", filename, "group", secret.Group, "size", totalRead, "mime", mimeType)
-
-			dialog.ShowInformation("Import Complete",
-				fmt.Sprintf("Imported %q to group %q (%s, %d bytes)", filename, secret.Group, mimeType, totalRead),
-				fo.window,
-			)
-
-			if fo.onSave != nil {
-				fo.onSave()
-			}
+			fo.importDone(secret, totalRead)
 		},
 		fo.window,
 	)
+}
+
+// confirmReplace asks before overwriting an existing secret with an import.
+// If the file is held by a differently named secret (same slug), replacing
+// is impossible and the user is told to rename instead.
+func (fo *FileOps) confirmReplace(secret *store.Secret, size int) {
+	existing, err := fo.vaultStore.Get(context.Background(), secret.Name, secret.Group)
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("import failed: %w", err), fo.window)
+		return
+	}
+	if existing.Name != secret.Name {
+		dialog.ShowError(fmt.Errorf("cannot import %q: its filename is already used by %q in group %q; rename the file and import again",
+			secret.Name, existing.Name, secret.Group), fo.window)
+		return
+	}
+	dialog.ShowConfirm("Secret already exists",
+		fmt.Sprintf("A %s secret named %q already exists in group %q.\nReplace it with the imported file?", existing.Type, secret.Name, secret.Group),
+		func(replace bool) {
+			if !replace {
+				return
+			}
+			if err := fo.vaultStore.Update(context.Background(), secret); err != nil {
+				dialog.ShowError(fmt.Errorf("replace failed: %w", err), fo.window)
+				return
+			}
+			fo.importDone(secret, size)
+		},
+		fo.window,
+	)
+}
+
+// importDone logs and reports a successful import and refreshes the list.
+func (fo *FileOps) importDone(secret *store.Secret, size int) {
+	fo.log.Info("file imported", "name", secret.Name, "group", secret.Group, "size", size, "mime", secret.MIMEType)
+	dialog.ShowInformation("Import Complete",
+		fmt.Sprintf("Imported %q to group %q (%s, %d bytes)", secret.Name, secret.Group, secret.MIMEType, size),
+		fo.window,
+	)
+	if fo.onSave != nil {
+		fo.onSave()
+	}
 }
 
 // ExportFile decodes a file secret and saves it to a user-selected location.

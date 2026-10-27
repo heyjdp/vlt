@@ -174,9 +174,14 @@ func TestNewSecretName_Validation(t *testing.T) {
 		{"valid name", "GitHub API Key", false},
 		{"empty string", "", true},
 		{"only whitespace", "   ", true},
-		{"max length", strings.Repeat("a", 255), false},
-		{"over max length", strings.Repeat("a", 256), true},
+		{"longest filename-safe slug", strings.Repeat("a", 251), false},
+		{"slug too long for a filename", strings.Repeat("a", 252), true},
+		{"long name with short slug", strings.Repeat("!", 250) + "abc", false},
+		{"over max bytes", strings.Repeat("a!", 128), true},
 		{"trimmed whitespace", "  hello  ", false},
+		{"punctuation only", "!!!", true},
+		{"non-ASCII only", "日本", true},
+		{"non-ASCII with a letter", "日本 key", false},
 	}
 
 	for _, tt := range tests {

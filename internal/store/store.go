@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/yourorg/vlt/internal/crypto"
@@ -16,6 +17,10 @@ import (
 
 // ErrSecretNotFound is returned when a secret does not exist in the vault.
 var ErrSecretNotFound = errors.New("secret not found")
+
+// ErrSecretExists is returned by Create when the secret's file is already
+// taken, and by Update when it is held by a differently named secret.
+var ErrSecretExists = errors.New("a secret with that name already exists")
 
 // Store manages secrets in an age-encrypted vault directory.
 // Secrets are stored at vault/<group>/<slug>.age, encrypted to the vault key.
@@ -60,13 +65,76 @@ func (s *Store) Init() error {
 	return nil
 }
 
-// Save encrypts and writes a secret to the vault directory.
-// The secret is stored at vault/<group>/<slug>.age.
-func (s *Store) Save(_ context.Context, secret *Secret) error {
-	if secret.Name == "" {
-		return errors.New("store.Save: secret name cannot be empty")
+// Create encrypts and writes a new secret to vault/<group>/<slug>.age. It
+// returns ErrSecretExists if any secret already occupies that path, including
+// a different name with the same slug (e.g. "GitHub Key" and "github-key"),
+// so it never overwrites. The name must pass NewSecretName. The secret's Name
+// and Group are normalised in place.
+func (s *Store) Create(_ context.Context, secret *Secret) error {
+	sn, err := NewSecretName(secret.Name)
+	if err != nil {
+		return fmt.Errorf("store.Create: %w", err)
+	}
+	secret.Name = sn.String()
+	path := s.path(secret.Name, secret.Group)
+
+	data, err := s.seal(secret)
+	if err != nil {
+		return fmt.Errorf("store.Create: %w", err)
+	}
+	if err := mkdirAllSynced(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("store.Create: mkdir: %w", err)
 	}
 
+	err = writeFileExclusive(path, data, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("store.Create %q in %q: %w", secret.Name, secret.Group, ErrSecretExists)
+	}
+	if err != nil {
+		return fmt.Errorf("store.Create: write: %w", err)
+	}
+
+	s.log.Info("secret created", "name", secret.Name, "group", secret.Group)
+	return nil
+}
+
+// Update re-encrypts an existing secret in place. The file at the secret's
+// path must exist and hold a secret with the same name (compared after
+// trimming, so names stored untrimmed by older versions still match);
+// otherwise it returns ErrSecretNotFound or ErrSecretExists (a slug collision
+// with a differently named secret). CreatedAt is preserved from the stored
+// copy. Names that predate NewSecretName's rules are accepted here so legacy
+// secrets stay editable.
+func (s *Store) Update(ctx context.Context, secret *Secret) error {
+	name, err := lookupName(secret.Name)
+	if err != nil {
+		return fmt.Errorf("store.Update: %w", err)
+	}
+	existing, err := s.Get(ctx, name, secret.Group)
+	if err != nil {
+		return fmt.Errorf("store.Update: %w", err)
+	}
+	if strings.TrimSpace(existing.Name) != name {
+		return fmt.Errorf("store.Update %q: file is held by %q: %w", name, existing.Name, ErrSecretExists)
+	}
+	secret.Name = name
+	secret.CreatedAt = existing.CreatedAt
+
+	data, err := s.seal(secret)
+	if err != nil {
+		return fmt.Errorf("store.Update: %w", err)
+	}
+	if err := writeFileAtomic(s.path(name, secret.Group), data, 0o600); err != nil {
+		return fmt.Errorf("store.Update: write: %w", err)
+	}
+
+	s.log.Info("secret updated", "name", secret.Name, "group", secret.Group)
+	return nil
+}
+
+// seal normalises the secret's group, stamps its timestamps, and returns its
+// ciphertext. The caller has already validated and normalised the name.
+func (s *Store) seal(secret *Secret) ([]byte, error) {
 	secret.Group = NormalizeGroup(secret.Group)
 	secret.ModifiedAt = time.Now().UTC()
 	if secret.CreatedAt.IsZero() {
@@ -76,39 +144,45 @@ func (s *Store) Save(_ context.Context, secret *Secret) error {
 		secret.Version = 1
 	}
 
-	data, err := json.MarshalIndent(secret, "", "  ")
+	plaintext, err := json.MarshalIndent(secret, "", "  ")
 	if err != nil {
-		return fmt.Errorf("store.Save: marshal: %w", err)
+		return nil, fmt.Errorf("marshal: %w", err)
 	}
-
-	ciphertext, err := crypto.Encrypt(s.id, data)
+	ciphertext, err := crypto.Encrypt(s.id, plaintext)
+	crypto.Wipe(plaintext)
 	if err != nil {
-		return fmt.Errorf("store.Save: encrypt: %w", err)
+		return nil, fmt.Errorf("encrypt: %w", err)
 	}
+	return ciphertext, nil
+}
 
-	path := s.secretPath(secret)
-	dir := filepath.Dir(path)
-	if err := mkdirAllSynced(dir, 0o700); err != nil {
-		return fmt.Errorf("store.Save: mkdir: %w", err)
+// lookupName trims a name for locating an existing secret. Unlike
+// NewSecretName it accepts names with an empty slug, which older versions
+// stored at <group>/.age, so those secrets can still be opened, edited and
+// deleted.
+func lookupName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("secret name cannot be empty")
 	}
-
-	if err := writeFileAtomic(path, ciphertext, 0o600); err != nil {
-		return fmt.Errorf("store.Save: write: %w", err)
+	if len(name) > 255 {
+		return "", errors.New("secret name exceeds 255 bytes")
 	}
+	return name, nil
+}
 
-	s.log.Info("secret saved", "name", secret.Name, "group", secret.Group, "path", path)
-	return nil
+// path returns vault/<group>/<slug>.age for a (trimmed) name.
+func (s *Store) path(name, group string) string {
+	return filepath.Join(s.dir, NormalizeGroup(group), Slugify(name)+".age")
 }
 
 // Get decrypts and returns a secret by name and group.
 func (s *Store) Get(_ context.Context, name string, group string) (*Secret, error) {
-	sn, err := NewSecretName(name)
+	name, err := lookupName(name)
 	if err != nil {
 		return nil, fmt.Errorf("store.Get: %w", err)
 	}
-
-	g := NormalizeGroup(group)
-	path := filepath.Join(s.dir, g, sn.Slug()+".age")
+	path := s.path(name, group)
 
 	ciphertext, err := os.ReadFile(path)
 	if err != nil {
@@ -124,7 +198,9 @@ func (s *Store) Get(_ context.Context, name string, group string) (*Secret, erro
 	}
 
 	var secret Secret
-	if err := json.Unmarshal(plaintext, &secret); err != nil {
+	err = json.Unmarshal(plaintext, &secret)
+	crypto.Wipe(plaintext)
+	if err != nil {
 		return nil, fmt.Errorf("store.Get %q: unmarshal: %w", name, err)
 	}
 
@@ -133,13 +209,11 @@ func (s *Store) Get(_ context.Context, name string, group string) (*Secret, erro
 
 // Delete removes a secret from the vault by name and group.
 func (s *Store) Delete(_ context.Context, name string, group string) error {
-	sn, err := NewSecretName(name)
+	name, err := lookupName(name)
 	if err != nil {
 		return fmt.Errorf("store.Delete: %w", err)
 	}
-
-	g := NormalizeGroup(group)
-	path := filepath.Join(s.dir, g, sn.Slug()+".age")
+	path := s.path(name, group)
 
 	if err := os.Remove(path); err != nil {
 		if os.IsNotExist(err) {
@@ -148,7 +222,7 @@ func (s *Store) Delete(_ context.Context, name string, group string) error {
 		return fmt.Errorf("store.Delete %q: %w", name, err)
 	}
 
-	s.log.Info("secret deleted", "name", name, "group", g)
+	s.log.Info("secret deleted", "name", name, "group", NormalizeGroup(group))
 	return nil
 }
 
@@ -300,11 +374,4 @@ func (s *Store) CopyTo(destDir string) error {
 // SetDir changes the vault directory the store operates on.
 func (s *Store) SetDir(dir string) {
 	s.dir = dir
-}
-
-// secretPath returns the filesystem path for a secret: vault/<group>/<slug>.age
-func (s *Store) secretPath(secret *Secret) string {
-	g := NormalizeGroup(secret.Group)
-	slug := Slugify(secret.Name)
-	return filepath.Join(s.dir, g, slug+".age")
 }

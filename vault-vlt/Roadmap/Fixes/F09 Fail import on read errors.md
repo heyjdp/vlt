@@ -50,4 +50,4 @@ This also removes the hand-rolled buffer loop. Consider showing the SHA-256 of t
 - [ ] Files of exactly 10 MiB are accepted; 10 MiB + 1 byte is rejected
 
 ## Related
-- [[F03 Prevent silent overwrites]]: import also needs the existence check
+- [[F03 Prevent silent overwrites]]: import now uses `Create` and asks before replacing (done)

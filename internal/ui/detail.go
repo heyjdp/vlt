@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -149,12 +150,15 @@ func (dv *DetailView) showPasswordDetail(secret *store.Secret, isNew bool) {
 	}
 
 	saveBtn := widget.NewButton("Save", func() {
-		secret.Name = nameEntry.Text
-		secret.Group = groupEntry.Text
-		secret.Value = valueEntry.Text
-		secret.Tags = parseTags(tagsEntry.Text)
-		secret.Notes = notesEntry.Text
-		dv.saveSecret(secret)
+		edited := *secret
+		edited.Name = nameEntry.Text
+		edited.Group = groupEntry.Text
+		edited.Value = valueEntry.Text
+		edited.Tags = parseTags(tagsEntry.Text)
+		edited.Notes = notesEntry.Text
+		if dv.saveSecret(&edited, isNew) {
+			*secret = edited
+		}
 	})
 	saveBtn.Importance = widget.HighImportance
 
@@ -244,15 +248,18 @@ func (dv *DetailView) showRecordDetail(secret *store.Secret, isNew bool) {
 	}
 
 	saveBtn := widget.NewButton("Save", func() {
-		secret.Name = nameEntry.Text
-		secret.Group = groupEntry.Text
-		secret.Username = usernameEntry.Text
-		secret.Password = passwordEntry.Text
-		secret.URL = urlEntry.Text
-		secret.TOTPSecret = totpEntry.Text
-		secret.Tags = parseTags(tagsEntry.Text)
-		secret.Notes = notesEntry.Text
-		dv.saveSecret(secret)
+		edited := *secret
+		edited.Name = nameEntry.Text
+		edited.Group = groupEntry.Text
+		edited.Username = usernameEntry.Text
+		edited.Password = passwordEntry.Text
+		edited.URL = urlEntry.Text
+		edited.TOTPSecret = totpEntry.Text
+		edited.Tags = parseTags(tagsEntry.Text)
+		edited.Notes = notesEntry.Text
+		if dv.saveSecret(&edited, isNew) {
+			*secret = edited
+		}
 	})
 	saveBtn.Importance = widget.HighImportance
 
@@ -325,21 +332,44 @@ func (dv *DetailView) showFileDetail(secret *store.Secret) {
 	dv.content.Refresh()
 }
 
-// saveSecret encrypts and saves a secret, then refreshes the UI.
-func (dv *DetailView) saveSecret(secret *store.Secret) {
+// saveSecret creates (isNew) or updates a secret, then refreshes the UI, and
+// reports whether it succeeded. Callers pass an edited copy and commit it to
+// the shared *Secret only on success, so a failed save leaves the list's copy
+// unchanged. Creating never overwrites: a name already used in the group,
+// including one that differs only in case or punctuation, is reported.
+func (dv *DetailView) saveSecret(secret *store.Secret, isNew bool) bool {
 	ctx := context.Background()
 
-	if err := dv.store.Save(ctx, secret); err != nil {
+	var err error
+	if isNew {
+		err = dv.store.Create(ctx, secret)
+	} else {
+		err = dv.store.Update(ctx, secret)
+	}
+	switch {
+	case errors.Is(err, store.ErrSecretExists) && isNew:
+		dialog.ShowError(fmt.Errorf("a secret named %q (or one whose name differs only in case or punctuation) already exists in group %q; choose a different name",
+			secret.Name, store.NormalizeGroup(secret.Group)), dv.window)
+		return false
+	case errors.Is(err, store.ErrSecretExists):
+		dialog.ShowError(fmt.Errorf("save failed: this secret's file is now held by a different secret: %w", err), dv.window)
+		return false
+	case err != nil:
 		dialog.ShowError(fmt.Errorf("save failed: %w", err), dv.window)
-		return
+		return false
 	}
 
-	dv.log.Info("secret saved via UI", "name", secret.Name)
+	dv.log.Info("secret saved via UI", "name", secret.Name, "created", isNew)
 	dv.statusBar.SetText("Saved: " + secret.Name)
+	if isNew {
+		// Re-render as an existing secret so a second Save updates it.
+		dv.ShowSecret(secret)
+	}
 
 	if dv.onSave != nil {
 		dv.onSave()
 	}
+	return true
 }
 
 // confirmDelete shows a confirmation dialog before deleting a secret.

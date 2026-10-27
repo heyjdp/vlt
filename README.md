@@ -39,7 +39,7 @@ vault/
 
 - Secrets are stored at `vault/<group>/<slug>.age`
 - Groups are plain subdirectories, created on demand
-- Filenames are slugified from the secret name
+- Filenames are slugified from the secret name (lowercase ASCII letters, digits and `-`). Names that slugify to the same filename, such as `GitHub Key` and `github-key`, cannot coexist in a group: creating one when the other exists is refused, and updating through the other name is refused. Names with no ASCII letter or digit, or whose filename would exceed 255 bytes, are rejected.
 - No database, no index file — the directory structure is the index
 - Every write is atomic: vlt writes a `.tmp-*` file beside the target, fsyncs it, renames it into place, and fsyncs the directory (skipped on Windows, where NTFS journals the rename). New group directories are fsynced into their parent too. A crash leaves either the old or the new file, never a partial one. Leftover `.tmp-*` files are ignored and can be deleted.
 - Trivially Git-compatible (add `.tmp-*` to the vault's `.gitignore` so an interrupted write never shows up as untracked)
@@ -174,7 +174,7 @@ go tool cover -html=coverage.out
 The test suite covers:
 
 - **crypto** — vault-key generation, wrap/unwrap with a passphrase, wrong-passphrase rejection, zeroing, encrypt/decrypt round-trips, X25519-only secret encryption, legacy passphrase decryption
-- **store** — secret types and JSON marshalling, slugification, name validation, group normalisation, CRUD operations (save/get/delete/list), group listing, vault create/open/exists, one-scrypt-per-unlock check, passphrase change (only `vlt.age` rewritten, failures keep the old passphrase), format-1 migration (including resume after a crash), atomic writes, vault copy
+- **store** — secret types and JSON marshalling, slugification, name validation, group normalisation, CRUD operations (create/update/get/delete/list), refusal to overwrite on create and on slug collision, group listing, vault create/open/exists, one-scrypt-per-unlock check, passphrase change (only `vlt.age` rewritten, failures keep the old passphrase), format-1 migration (including resume after a crash), atomic writes, vault copy
 
 All tests use `t.Parallel()`, the race detector, and `t.TempDir()` for filesystem isolation.
 

@@ -39,9 +39,9 @@ $$
 | `GitHub Key` | `github-key` |
 | `github-key` | `github-key` |
 | `GitHub_Key!` | `github-key` |
-| `日本` / `!!!` | *(empty)* → `.age` |
+| `日本` / `!!!` | *(empty)*: rejected by `NewSecretName` |
 
-That makes collisions deterministic, not just possible. See [[F03 Prevent silent overwrites]].
+Because `slug` isn't injective, `Create` writes exclusively (temp file + `link`) and returns `ErrSecretExists` if the file exists. `Update` requires the stored name to match exactly. Slugs longer than 251 bytes are rejected, so `<slug>.age` fits in a 255-byte filename. See [[F03 Prevent silent overwrites]].
 
 > [!tip] Safety property
 > Because both group and name pass through `slug`, which only emits `[a-z0-9-]`, path traversal (`../`) is impossible. Keep that property in whatever replaces it.
