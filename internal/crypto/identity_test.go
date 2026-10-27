@@ -25,9 +25,6 @@ func TestGenerateIdentity_ReturnsUsableKey(t *testing.T) {
 	t.Parallel()
 
 	id := newID(t)
-	if id.IsZeroed() {
-		t.Fatal("new identity should not be zeroed")
-	}
 	r, err := id.Recipient()
 	if err != nil {
 		t.Fatalf("Recipient: %v", err)
@@ -59,8 +56,8 @@ func TestIdentity_Zero_IsIdempotent(t *testing.T) {
 	id := newID(t)
 	id.Zero()
 	id.Zero()
-	if !id.IsZeroed() {
-		t.Fatal("expected identity to be zeroed")
+	if _, err := id.Recipient(); !errors.Is(err, crypto.ErrIdentityZeroed) {
+		t.Fatalf("expected ErrIdentityZeroed after Zero, got %v", err)
 	}
 }
 

@@ -22,14 +22,16 @@ release; until then, builds are identified by commit hash.
 - Auto-lock measures real inactivity (typing, selections, dialog answers) instead of resetting only on toolbar clicks.
 - Locking dismisses open dialogs, empties loaded secrets and blanks forms, and clears the clipboard if it still holds vlt's copy.
 - The README and design documents describe memory protection as best-effort and name its limits.
+- The TOTP secret in record forms is masked like a password.
 
 ### Removed
-These were part of the internal store and crypto API (`internal/` packages), not a public interface:
+These were part of the internal store, crypto and ui APIs (`internal/` packages), not a public interface:
 - `Store.Save`, replaced by `Store.Create` (never overwrites) and `Store.Update`.
 - `Store.ReEncryptAll`, `Store.IsNew`, `Store.Verify`, `Store.CreateSentinel` and `Store.RecreateSentinel`, superseded by `Create`, `Open`, `Exists` and `ChangePassphrase` in the vault-key design.
 - `Store.SetDir`, which was unsynchronised (moving a vault now relocks instead).
 - `crypto.NewIdentity` and `Identity.ScryptIdentity`, replaced by `GenerateIdentity`, `ParseIdentity`, `WrapIdentity` and `UnwrapIdentity`.
 - `DetailView.SetOnSave` and `FileOps.SetOnSave`, replaced by callbacks wired once when the main view is built.
+- Unused code: `Store.Groups` (group suggestions now come from the loaded list), `store.ValidSecretTypes`, `Identity.IsZeroed` and `App.ShowError`, and hand-written string helpers replaced by the standard library.
 
 ### Fixed
 - Every vault write is atomic (temp file, fsync, rename), so a crash or full disk can no longer truncate a secret.

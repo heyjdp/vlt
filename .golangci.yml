@@ -12,6 +12,7 @@ linters:
   default: standard
   enable:
     - bodyclose
+    - dupl
     - errorlint
     - gocritic
     - gosec
@@ -19,6 +20,7 @@ linters:
     - nilerr
     - revive
     - unconvert
+    - unparam
   settings:
     govet:
       enable-all: true

@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -32,107 +33,70 @@ func TestSecretType_Constants(t *testing.T) {
 	}
 }
 
-func TestSecret_MarshalJSON_Password(t *testing.T) {
+// TestSecret_JSONRoundTrip checks every secret type survives the JSON
+// envelope intact, field for field.
+func TestSecret_JSONRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	now := time.Now().UTC()
-	s := &store.Secret{
-		Version:    1,
-		Type:       store.TypePassword,
-		Name:       "GitHub API Key",
-		CreatedAt:  now,
-		ModifiedAt: now,
-		Tags:       []string{"github", "ci"},
-		Notes:      "Expires 2027-03-14",
-		Value:      "ghp_xxxxxxxxxxxx",
+	ts := time.Date(2026, 3, 14, 9, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		secret store.Secret
+	}{
+		{"password", store.Secret{
+			Version: 1, Type: store.TypePassword, Name: "GitHub API Key", Group: "work", CreatedAt: ts, ModifiedAt: ts,
+			Tags: []string{"github", "ci"}, Notes: "Expires 2027-03-14", Value: "ghp_xxxxxxxxxxxx",
+		}},
+		{"record", store.Secret{
+			Version: 1, Type: store.TypeRecord, Name: "Work Jira", Group: "work", CreatedAt: ts, ModifiedAt: ts,
+			Username: "user@example.com", Password: "secret", URL: "https://jira.example.com", TOTPSecret: "JBSWY3DPEHPK3PXP",
+		}},
+		{"file", store.Secret{
+			Version: 1, Type: store.TypeFile, Name: "Server Key", Group: "keys", CreatedAt: ts, ModifiedAt: ts,
+			OriginalFilename: "id_ed25519", MIMEType: "application/octet-stream", Encoding: "base64", Value: "LS0tLS1CRUdJTi...",
+		}},
 	}
-
-	data, err := json.Marshal(s)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-
-	var got store.Secret
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-
-	if got.Name != s.Name {
-		t.Fatalf("name mismatch: got %q, want %q", got.Name, s.Name)
-	}
-	if got.Value != s.Value {
-		t.Fatalf("value mismatch: got %q, want %q", got.Value, s.Value)
-	}
-	if got.Type != store.TypePassword {
-		t.Fatalf("type mismatch: got %q, want %q", got.Type, store.TypePassword)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data, err := json.Marshal(tt.secret)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			var got store.Secret
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+			if !reflect.DeepEqual(got, tt.secret) {
+				t.Fatalf("round trip changed the secret:\n got  %+v\n want %+v", got, tt.secret)
+			}
+		})
 	}
 }
 
-func TestSecret_MarshalJSON_Record(t *testing.T) {
+// TestSecret_JSONKeysAreStable pins the on-disk key names: vaults written by
+// earlier versions must keep decoding, so renaming a JSON key is a format
+// change, not a refactor.
+func TestSecret_JSONKeysAreStable(t *testing.T) {
 	t.Parallel()
 
-	now := time.Now().UTC()
-	s := &store.Secret{
-		Version:    1,
-		Type:       store.TypeRecord,
-		Name:       "Work Jira",
-		CreatedAt:  now,
-		ModifiedAt: now,
-		Username:   "user@example.com",
-		Password:   "secret",
-		URL:        "https://jira.example.com",
-		TOTPSecret: "JBSWY3DPEHPK3PXP",
-	}
-
-	data, err := json.Marshal(s)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-
+	const stored = `{"version":1,"type":"record","name":"Work Jira","group":"work",
+		"created_at":"2026-03-14T09:00:00Z","modified_at":"2026-03-14T09:00:00Z",
+		"tags":["jira"],"notes":"n","value":"v","username":"u","password":"p",
+		"url":"https://jira.example.com","totp_secret":"T","original_filename":"f",
+		"mime_type":"m","encoding":"base64"}`
 	var got store.Secret
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
+	if err := json.Unmarshal([]byte(stored), &got); err != nil {
+		t.Fatal(err)
 	}
-
-	if got.Username != s.Username {
-		t.Fatalf("username mismatch: got %q, want %q", got.Username, s.Username)
+	ts := time.Date(2026, 3, 14, 9, 0, 0, 0, time.UTC)
+	want := store.Secret{
+		Version: 1, Type: store.TypeRecord, Name: "Work Jira", Group: "work", CreatedAt: ts, ModifiedAt: ts,
+		Tags: []string{"jira"}, Notes: "n", Value: "v", Username: "u", Password: "p",
+		URL: "https://jira.example.com", TOTPSecret: "T", OriginalFilename: "f", MIMEType: "m", Encoding: "base64",
 	}
-	if got.URL != s.URL {
-		t.Fatalf("url mismatch: got %q, want %q", got.URL, s.URL)
-	}
-}
-
-func TestSecret_MarshalJSON_File(t *testing.T) {
-	t.Parallel()
-
-	now := time.Now().UTC()
-	s := &store.Secret{
-		Version:          1,
-		Type:             store.TypeFile,
-		Name:             "Server Key",
-		CreatedAt:        now,
-		ModifiedAt:       now,
-		OriginalFilename: "id_ed25519",
-		MIMEType:         "application/octet-stream",
-		Encoding:         "base64",
-		Value:            "LS0tLS1CRUdJTi...",
-	}
-
-	data, err := json.Marshal(s)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-
-	var got store.Secret
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-
-	if got.OriginalFilename != s.OriginalFilename {
-		t.Fatalf("original_filename mismatch: got %q, want %q", got.OriginalFilename, s.OriginalFilename)
-	}
-	if got.MIMEType != s.MIMEType {
-		t.Fatalf("mime_type mismatch: got %q, want %q", got.MIMEType, s.MIMEType)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("decoding the stored format changed:\n got  %+v\n want %+v", got, want)
 	}
 }
 

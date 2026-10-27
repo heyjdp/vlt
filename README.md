@@ -10,7 +10,7 @@ vlt replaces ad-hoc PGP-encrypted text file workflows with a structured, portabl
 - **Safe vault creation** — when no vault exists at the configured location (first run, or after switching to an empty or missing folder), a dedicated screen shows where the vault will be created and asks for the passphrase twice (at least 12 characters not counting leading or trailing spaces; five or more random words recommended), so a typo can never become the passphrase. If the vault directory cannot be read (for example, permission denied), vlt shows the error and a Retry button rather than offering to create a vault over it
 - **age encryption** — each secret is an individual `.age` file encrypted to a random X25519 vault key; the vault key is encrypted to your passphrase with scrypt, so unlocking costs one scrypt derivation however many secrets you have
 - **Secure memory (best-effort)** — the vault key's encoded form is held in mlock'd memory via memguard and destroyed on lock; passphrase fields are cleared as soon as they are read, and on lock loaded secrets are emptied and vlt's references to them dropped. Go cannot wipe strings, so the parsed key and secret text live on the heap until garbage-collected
-- **Secret types** — passwords, structured login records (URL/username/password/TOTP), and encrypted files
+- **Secret types** — passwords, structured login records (URL/username/password/TOTP; the password and TOTP secret are masked), and encrypted files
 - **Groups** — organise secrets into groups (work, personal, etc.) with a dropdown that shows existing groups and accepts new ones
 - **Search** — instant filter across secret names, groups, and tags
 - **Clipboard safety** — copied values are cleared after a configurable TTL (default 30s) with a countdown in the status bar. Each copy gets its own full TTL; the clipboard is cleared only if it still holds the value vlt copied (anything you copied since from another app is left alone); locking the vault or quitting vlt clears it immediately
@@ -194,7 +194,7 @@ make check
 
 Use golangci-lint v2.14 or later: earlier releases cannot read the export data of the Go 1.27.3 standard library this module's toolchain uses, and fail with "export data version" errors.
 
-The linter set (`.golangci.yml`) is golangci-lint's `standard` set plus `bodyclose`, `errorlint`, `gocritic`, `gosec`, `misspell`, `nilerr`, `revive` and `unconvert`. Two gosec rule groups are excluded for `internal/store`, with the reasons recorded in the config: file paths there are slugified names inside the user's vault directory, and the secret envelope's `password` field exists to be encrypted.
+The linter set (`.golangci.yml`) is golangci-lint's `standard` set plus `bodyclose`, `dupl`, `errorlint`, `gocritic`, `gosec`, `misspell`, `nilerr`, `revive`, `unconvert` and `unparam`. Two gosec rule groups are excluded for `internal/store`, with the reasons recorded in the config: file paths there are slugified names inside the user's vault directory, and the secret envelope's `password` field exists to be encrypted.
 
 ### Continuous integration
 

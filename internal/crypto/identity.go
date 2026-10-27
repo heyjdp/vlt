@@ -90,13 +90,6 @@ func (id *Identity) Zero() {
 	}
 }
 
-// IsZeroed reports whether the identity has been zeroed.
-func (id *Identity) IsZeroed() bool {
-	id.mu.Lock()
-	defer id.mu.Unlock()
-	return id.parsed == nil
-}
-
 // WrapIdentity encrypts the vault key to passphrase with age's scrypt
 // recipient at the given work factor (log2 N; 0 means DefaultWorkFactor).
 // The result is what gets stored on disk as vlt.age. Lower work factors are

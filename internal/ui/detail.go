@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -161,191 +162,134 @@ func (dv *DetailView) groupSelect(current string) *widget.SelectEntry {
 	return sel
 }
 
+// formField is a type-specific field in a secret form: its label, its
+// entry, and how its text is stored on the secret when saving.
+type formField struct {
+	label string
+	entry *widget.Entry
+	store func(edited *store.Secret, text string)
+}
+
+// copyAction is a "Copy …" button that copies one of the secret's values.
+type copyAction struct {
+	label string
+	value func() string
+}
+
+// newEntry returns an entry holding text; password entries mask it.
+func newEntry(text string, password bool) *widget.Entry {
+	var e *widget.Entry
+	if password {
+		e = widget.NewPasswordEntry()
+	} else {
+		e = widget.NewEntry()
+	}
+	e.SetText(text)
+	return e
+}
+
 // showPasswordDetail renders a password secret form.
 func (dv *DetailView) showPasswordDetail(secret *store.Secret, isNew bool) {
-	nameEntry := widget.NewEntry()
-	nameEntry.SetText(secret.Name)
-	if !isNew {
-		nameEntry.Disable()
-	}
-
-	groupEntry := dv.groupSelect(secret.Group)
-	if !isNew {
-		groupEntry.Disable()
-	}
-
-	valueEntry := widget.NewPasswordEntry()
-	valueEntry.SetText(secret.Value)
-
-	tagsEntry := widget.NewEntry()
-	tagsEntry.SetPlaceHolder("comma-separated tags")
-	if len(secret.Tags) > 0 {
-		tagsEntry.SetText(joinTags(secret.Tags))
-	}
-
-	notesEntry := widget.NewMultiLineEntry()
-	notesEntry.SetText(secret.Notes)
-	notesEntry.SetMinRowsVisible(3)
-
-	copyBtn := widget.NewButton("Copy Password", func() {
-		dv.copyValue(secret.Value)
-	})
-	if isNew {
-		copyBtn.Disable()
-	}
-
-	var saveBtn *widget.Button
-	saveBtn = widget.NewButton("Save", func() {
-		edited := *secret
-		edited.Name = nameEntry.Text
-		edited.Group = groupEntry.Text
-		edited.Value = valueEntry.Text
-		edited.Tags = parseTags(tagsEntry.Text)
-		edited.Notes = notesEntry.Text
-		dv.saveSecret(&edited, isNew, saveBtn, func() { *secret = edited })
-	})
-	saveBtn.Importance = widget.HighImportance
-
-	var deleteBtn *widget.Button
-	if !isNew {
-		deleteBtn = widget.NewButton("Delete", func() {
-			dv.confirmDelete(secret)
+	dv.showForm("Password Secret", secret, isNew,
+		[]formField{
+			{"Password / Value:", newEntry(secret.Value, true), func(s *store.Secret, t string) { s.Value = t }},
+		},
+		[]copyAction{
+			{"Copy Password", func() string { return secret.Value }},
 		})
-		deleteBtn.Importance = widget.DangerImportance
-	}
-
-	objects := []fyne.CanvasObject{
-		widget.NewLabel("Password Secret"),
-		widget.NewSeparator(),
-		widget.NewLabel("Name:"),
-		nameEntry,
-		widget.NewLabel("Group:"),
-		groupEntry,
-		widget.NewLabel("Password / Value:"),
-		valueEntry,
-		widget.NewLabel("Tags:"),
-		tagsEntry,
-		widget.NewLabel("Notes:"),
-		notesEntry,
-		container.NewHBox(saveBtn, copyBtn),
-	}
-	if deleteBtn != nil {
-		objects = append(objects, deleteBtn)
-	}
-	if !isNew {
-		objects = append(objects,
-			widget.NewSeparator(),
-			widget.NewLabel(fmt.Sprintf("Created: %s", secret.CreatedAt.Format(time.RFC3339))),
-			widget.NewLabel(fmt.Sprintf("Modified: %s", secret.ModifiedAt.Format(time.RFC3339))),
-		)
-	}
-
-	dv.setObjects(objects...)
 }
 
 // showRecordDetail renders a record secret form.
 func (dv *DetailView) showRecordDetail(secret *store.Secret, isNew bool) {
-	nameEntry := widget.NewEntry()
-	nameEntry.SetText(secret.Name)
-	if !isNew {
-		nameEntry.Disable()
-	}
+	totp := newEntry(secret.TOTPSecret, true)
+	totp.SetPlaceHolder("TOTP secret (optional)")
+	dv.showForm("Record Secret", secret, isNew,
+		[]formField{
+			{"URL:", newEntry(secret.URL, false), func(s *store.Secret, t string) { s.URL = t }},
+			{"Username:", newEntry(secret.Username, false), func(s *store.Secret, t string) { s.Username = t }},
+			{"Password:", newEntry(secret.Password, true), func(s *store.Secret, t string) { s.Password = t }},
+			{"TOTP Secret:", totp, func(s *store.Secret, t string) { s.TOTPSecret = t }},
+		},
+		[]copyAction{
+			{"Copy Password", func() string { return secret.Password }},
+			{"Copy Username", func() string { return secret.Username }},
+		})
+}
 
+// showForm renders a secret form: name and group (read-only for existing
+// secrets), the type-specific fields, tags and notes, Save and copy buttons,
+// Delete and timestamps for existing secrets.
+func (dv *DetailView) showForm(title string, secret *store.Secret, isNew bool, fields []formField, copies []copyAction) {
+	nameEntry := newEntry(secret.Name, false)
 	groupEntry := dv.groupSelect(secret.Group)
 	if !isNew {
+		nameEntry.Disable()
 		groupEntry.Disable()
 	}
-
-	usernameEntry := widget.NewEntry()
-	usernameEntry.SetText(secret.Username)
-
-	passwordEntry := widget.NewPasswordEntry()
-	passwordEntry.SetText(secret.Password)
-
-	urlEntry := widget.NewEntry()
-	urlEntry.SetText(secret.URL)
-
-	totpEntry := widget.NewEntry()
-	totpEntry.SetText(secret.TOTPSecret)
-	totpEntry.SetPlaceHolder("TOTP secret (optional)")
-
-	tagsEntry := widget.NewEntry()
+	tagsEntry := newEntry(strings.Join(secret.Tags, ", "), false)
 	tagsEntry.SetPlaceHolder("comma-separated tags")
-	if len(secret.Tags) > 0 {
-		tagsEntry.SetText(joinTags(secret.Tags))
-	}
-
 	notesEntry := widget.NewMultiLineEntry()
 	notesEntry.SetText(secret.Notes)
 	notesEntry.SetMinRowsVisible(3)
-
-	copyPassBtn := widget.NewButton("Copy Password", func() {
-		dv.copyValue(secret.Password)
-	})
-	copyUserBtn := widget.NewButton("Copy Username", func() {
-		dv.copyValue(secret.Username)
-	})
-	if isNew {
-		copyPassBtn.Disable()
-		copyUserBtn.Disable()
-	}
 
 	var saveBtn *widget.Button
 	saveBtn = widget.NewButton("Save", func() {
 		edited := *secret
 		edited.Name = nameEntry.Text
 		edited.Group = groupEntry.Text
-		edited.Username = usernameEntry.Text
-		edited.Password = passwordEntry.Text
-		edited.URL = urlEntry.Text
-		edited.TOTPSecret = totpEntry.Text
+		for _, f := range fields {
+			f.store(&edited, f.entry.Text)
+		}
 		edited.Tags = parseTags(tagsEntry.Text)
 		edited.Notes = notesEntry.Text
 		dv.saveSecret(&edited, isNew, saveBtn, func() { *secret = edited })
 	})
 	saveBtn.Importance = widget.HighImportance
 
-	var deleteBtn *widget.Button
-	if !isNew {
-		deleteBtn = widget.NewButton("Delete", func() {
-			dv.confirmDelete(secret)
-		})
-		deleteBtn.Importance = widget.DangerImportance
-	}
-
 	objects := []fyne.CanvasObject{
-		widget.NewLabel("Record Secret"),
-		widget.NewSeparator(),
-		widget.NewLabel("Name:"),
-		nameEntry,
-		widget.NewLabel("Group:"),
-		groupEntry,
-		widget.NewLabel("URL:"),
-		urlEntry,
-		widget.NewLabel("Username:"),
-		usernameEntry,
-		widget.NewLabel("Password:"),
-		passwordEntry,
-		widget.NewLabel("TOTP Secret:"),
-		totpEntry,
-		widget.NewLabel("Tags:"),
-		tagsEntry,
-		widget.NewLabel("Notes:"),
-		notesEntry,
-		container.NewHBox(saveBtn, copyPassBtn, copyUserBtn),
+		widget.NewLabel(title), widget.NewSeparator(),
+		widget.NewLabel("Name:"), nameEntry,
+		widget.NewLabel("Group:"), groupEntry,
 	}
-	if deleteBtn != nil {
-		objects = append(objects, deleteBtn)
+	for _, f := range fields {
+		objects = append(objects, widget.NewLabel(f.label), f.entry)
 	}
+	objects = append(objects,
+		widget.NewLabel("Tags:"), tagsEntry,
+		widget.NewLabel("Notes:"), notesEntry,
+		dv.formButtons(saveBtn, copies, isNew),
+	)
 	if !isNew {
-		objects = append(objects,
-			widget.NewSeparator(),
-			widget.NewLabel(fmt.Sprintf("Created: %s", secret.CreatedAt.Format(time.RFC3339))),
-			widget.NewLabel(fmt.Sprintf("Modified: %s", secret.ModifiedAt.Format(time.RFC3339))),
-		)
+		objects = append(objects, dv.existingFooter(secret)...)
 	}
-
 	dv.setObjects(objects...)
+}
+
+// formButtons returns the Save button followed by the copy buttons, which
+// are disabled for a secret that has not been saved yet.
+func (dv *DetailView) formButtons(save *widget.Button, copies []copyAction, isNew bool) *fyne.Container {
+	buttons := container.NewHBox(save)
+	for _, c := range copies {
+		btn := widget.NewButton(c.label, func() { dv.copyValue(c.value()) })
+		if isNew {
+			btn.Disable()
+		}
+		buttons.Add(btn)
+	}
+	return buttons
+}
+
+// existingFooter returns the Delete button and timestamps shown under the
+// form of a saved secret.
+func (dv *DetailView) existingFooter(secret *store.Secret) []fyne.CanvasObject {
+	deleteBtn := widget.NewButton("Delete", func() { dv.confirmDelete(secret) })
+	deleteBtn.Importance = widget.DangerImportance
+	return []fyne.CanvasObject{
+		deleteBtn,
+		widget.NewSeparator(),
+		widget.NewLabel(fmt.Sprintf("Created: %s", secret.CreatedAt.Format(time.RFC3339))),
+		widget.NewLabel(fmt.Sprintf("Modified: %s", secret.ModifiedAt.Format(time.RFC3339))),
+	}
 }
 
 // showFileDetail renders a file secret detail view.
@@ -486,78 +430,16 @@ func (dv *DetailView) exportFile(secret *store.Secret) {
 	dv.fileOps.ExportFile(secret)
 }
 
-// parseTags splits a comma-separated string into tags.
+// parseTags splits a comma-separated string into tags, trimming whitespace
+// (including Unicode spaces) and dropping empty entries.
 func parseTags(s string) []string {
-	if s == "" {
-		return nil
-	}
 	var tags []string
-	for _, t := range splitAndTrim(s, ",") {
-		if t != "" {
+	for _, t := range strings.Split(s, ",") {
+		if t = strings.TrimSpace(t); t != "" {
 			tags = append(tags, t)
 		}
 	}
 	return tags
-}
-
-// joinTags joins tags with ", ".
-func joinTags(tags []string) string {
-	result := ""
-	for i, t := range tags {
-		if i > 0 {
-			result += ", "
-		}
-		result += t
-	}
-	return result
-}
-
-// splitAndTrim splits a string by sep and trims each part.
-func splitAndTrim(s, sep string) []string {
-	parts := make([]string, 0)
-	for _, p := range split(s, sep) {
-		p = trimSpace(p)
-		parts = append(parts, p)
-	}
-	return parts
-}
-
-// split is a simple string split.
-func split(s, sep string) []string {
-	var result []string
-	for {
-		i := indexOf(s, sep)
-		if i < 0 {
-			result = append(result, s)
-			break
-		}
-		result = append(result, s[:i])
-		s = s[i+len(sep):]
-	}
-	return result
-}
-
-// indexOf returns the index of sep in s, or -1.
-func indexOf(s, sep string) int {
-	for i := 0; i <= len(s)-len(sep); i++ {
-		if s[i:i+len(sep)] == sep {
-			return i
-		}
-	}
-	return -1
-}
-
-// trimSpace removes leading and trailing whitespace.
-func trimSpace(s string) string {
-	start := 0
-	for start < len(s) && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r') {
-		start++
-	}
-	end := len(s)
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r') {
-		end--
-	}
-	return s[start:end]
 }
 
 // clear drops the shown secret and its form (used when the vault locks). The

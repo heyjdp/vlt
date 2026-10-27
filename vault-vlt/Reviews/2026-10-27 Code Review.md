@@ -72,5 +72,6 @@ Progress is tracked in the [[Roadmap]]. Completed so far:
 - [[F11 Memory hygiene and honest docs]]: passphrase entries cleared on read; lock empties secrets and drops references; docs state best-effort limits
 - [[F12 Fix CI pipeline]]: Go from go.mod, native cgo builds on three OSes, golangci-lint v2 config and lint job, SHA-pinned actions, patched toolchain and dependencies for govulncheck
 - [[F13 Project hygiene]]: MIT LICENSE, CHANGELOG, version embedded by make and CI; the `yourorg` rename is deferred to the owner
+- [[F14 Remove reinvented stdlib and dead code]]: stdlib string helpers, dead code removed, shared form builder, TOTP masked, `dupl`/`unparam` lint
 
 These findings became the five-phase [[Roadmap]]. The storage-format change ([[ADR-001 Scrypt-wrapped X25519 identity]]) goes first because it's cheapest before real vaults exist that would need migrating.

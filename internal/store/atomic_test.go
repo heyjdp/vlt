@@ -13,7 +13,7 @@ func TestWriteFileAtomic_WritesContentsWithPermissions(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "secret.age")
 
-	if err := writeFileAtomic(path, []byte("ciphertext"), 0o600); err != nil {
+	if err := writeFileAtomic(path, []byte("ciphertext")); err != nil {
 		t.Fatalf("writeFileAtomic: %v", err)
 	}
 
@@ -39,11 +39,11 @@ func TestWriteFileAtomic_ReplacesExistingFile(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "secret.age")
-	if err := writeFileAtomic(path, []byte("old-contents-that-are-longer"), 0o600); err != nil {
+	if err := writeFileAtomic(path, []byte("old-contents-that-are-longer")); err != nil {
 		t.Fatalf("first write: %v", err)
 	}
 
-	if err := writeFileAtomic(path, []byte("new"), 0o600); err != nil {
+	if err := writeFileAtomic(path, []byte("new")); err != nil {
 		t.Fatalf("second write: %v", err)
 	}
 
@@ -67,7 +67,7 @@ func TestWriteFileAtomic_RenameFailureRemovesTempFile(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
-	if err := writeFileAtomic(target, []byte("data"), 0o600); err == nil {
+	if err := writeFileAtomic(target, []byte("data")); err == nil {
 		t.Fatal("expected rename onto a non-empty directory to fail")
 	}
 
@@ -95,7 +95,7 @@ func TestWriteFileAtomic_FailureLeavesOriginalIntact(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "secret.age")
-	if err := writeFileAtomic(path, []byte("original"), 0o600); err != nil {
+	if err := writeFileAtomic(path, []byte("original")); err != nil {
 		t.Fatalf("setup write: %v", err)
 	}
 	if err := os.Chmod(dir, 0o500); err != nil {
@@ -103,7 +103,7 @@ func TestWriteFileAtomic_FailureLeavesOriginalIntact(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	if err := writeFileAtomic(path, []byte("replacement"), 0o600); err == nil {
+	if err := writeFileAtomic(path, []byte("replacement")); err == nil {
 		t.Fatal("expected write into read-only directory to fail")
 	}
 
@@ -121,7 +121,7 @@ func TestWriteFileAtomic_LeavesNoTempFiles(t *testing.T) {
 
 	dir := t.TempDir()
 	for i := range 3 {
-		if err := writeFileAtomic(filepath.Join(dir, "a.age"), []byte{byte(i)}, 0o600); err != nil {
+		if err := writeFileAtomic(filepath.Join(dir, "a.age"), []byte{byte(i)}); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}
@@ -137,5 +137,24 @@ func TestWriteFileAtomic_LeavesNoTempFiles(t *testing.T) {
 	}
 	if len(entries) != 1 {
 		t.Fatalf("expected exactly one file, got %d", len(entries))
+	}
+}
+
+func TestMkdirAllSynced_CreatesPrivateDirectory(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits")
+	}
+
+	dir := filepath.Join(t.TempDir(), "vault", "work")
+	if err := mkdirAllSynced(dir); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm&^dirPerm != 0 {
+		t.Fatalf("directory mode %o grants more than %o", perm, dirPerm)
 	}
 }

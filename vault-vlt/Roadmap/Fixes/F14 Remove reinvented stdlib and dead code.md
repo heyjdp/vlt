@@ -7,16 +7,20 @@ tags:
   - fix
   - refactor
 severity: low
-status: todo
+status: done
 phase: 5
 area: ui
 review_finding: Code quality
 files:
   - internal/ui/detail.go
+  - internal/ui/detail_test.go
   - internal/ui/app.go
-  - internal/ui/settings.go
   - internal/store/store.go
   - internal/store/secret.go
+  - internal/store/secret_test.go
+  - internal/store/atomic.go
+  - internal/crypto/identity.go
+  - .golangci.yml
 depends_on: []
 created: 2026-10-27
 ---
@@ -35,19 +39,30 @@ created: 2026-10-27
 
 ## Dead or misleading code
 - ~~`SettingsScreen.identity` is stored but never used~~ (removed in F01)
-- `App.fyneApp` and `App.ShowError` are unused
-- `_ = ctx` in `App.showMainView` and `Store.List`
+- ~~`App.ShowError` is unused~~ (removed; `App.fyneApp` is used since F06 and F08)
+- ~~`_ = ctx` in `App.showMainView` and `Store.List`~~ (gone since F10)
 - ~~`Store.RecreateSentinel` is just an alias of `CreateSentinel`~~ (removed in [[F01 Scrypt-wrapped identity]])
-- `store.ValidSecretTypes`, `crypto.Identity.IsZeroed`: keep only if used outside tests
-- `Store.Groups()` swallows errors; return `([]string, error)`
+- ~~`store.ValidSecretTypes`, `crypto.Identity.IsZeroed`~~ (removed; tests assert `ErrIdentityZeroed` instead)
+- ~~`Store.Groups()` swallows errors~~ (removed instead: since F10, group suggestions come from `SecretList.Groups`)
 
 ## Smaller items
-- The TOTP secret uses `widget.NewEntry`; switch it to `NewPasswordEntry`
-- `showPasswordDetail` and `showRecordDetail` duplicate about 60 lines; extract a shared form builder
+- ~~The TOTP secret uses `widget.NewEntry`~~ (now a password entry)
+- ~~`showPasswordDetail` and `showRecordDetail` duplicate about 60 lines~~ (shared `showForm` with `formField`/`copyAction`)
 
 ## Acceptance criteria
-- [ ] `golangci-lint run` is clean (`unused`, `unparam`, `dupl`) once [[F12 Fix CI pipeline]] lands
-- [ ] Unit test for `parseTags` covering Unicode whitespace
+- [x] `golangci-lint run` is clean with `unused`, `unparam` and `dupl`. The last two are now enabled in `.golangci.yml`. Fixing `unparam` replaced the always-identical permission arguments with `filePerm`/`dirPerm`. Fixing `dupl` turned three marshal tests into the table-driven `TestSecret_JSONRoundTrip`.
+- [x] Unit test for `parseTags` covering Unicode whitespace: `TestParseTags`
+
+## Outcome
+Mutation testing in verification showed the first form tests were weak: 9 of 18 mutants survived. Tests now cover:
+- every record and password field being saved (each field changed before saving)
+- masking of the password, value and TOTP fields
+- copy buttons copying the right value
+- new forms having no Delete and disabled copy buttons, and existing forms having a read-only name
+- the on-disk JSON key names (`TestSecret_JSONKeysAreStable`)
+- the 0700 directory mode
+
+`showForm` is 45 lines after splitting out `formButtons` and `existingFooter`. Splitting further would hurt clarity, which the 40-line soft limit allows.
 
 ## Related
 - [[2026-10-27 Code Review]]

@@ -522,8 +522,3 @@ func (a *App) hideLockWarning() {
 		d.Hide()
 	}
 }
-
-// ShowError displays an error dialog.
-func (a *App) ShowError(err error) {
-	dialog.ShowError(err, a.window)
-}

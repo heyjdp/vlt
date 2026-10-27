@@ -138,7 +138,7 @@ func Create(dir, passphrase string, log *slog.Logger, opts ...Option) (*Store, e
 	if exists {
 		return nil, fmt.Errorf("store.Create %q: %w", dir, ErrVaultExists)
 	}
-	if err := mkdirAllSynced(dir, 0o700); err != nil {
+	if err := mkdirAllSynced(dir); err != nil {
 		return nil, fmt.Errorf("store.Create: %w", err)
 	}
 
@@ -156,7 +156,7 @@ func Create(dir, passphrase string, log *slog.Logger, opts ...Option) (*Store, e
 	s := newStore(id, dir, log, o)
 	// Exclusive: another instance creating a vault here at the same moment
 	// must not have its vlt.age replaced.
-	err = writeFileExclusive(filepath.Join(dir, keyFile), wrapped, 0o600)
+	err = writeFileExclusive(filepath.Join(dir, keyFile), wrapped)
 	if errors.Is(err, os.ErrExist) {
 		id.Zero()
 		return nil, fmt.Errorf("store.Create %q: %w", dir, ErrVaultExists)
@@ -301,7 +301,7 @@ func (s *Store) ChangePassphrase(ctx context.Context, oldPass, newPass string) e
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("store.ChangePassphrase: %w", err)
 	}
-	if err := writeFileAtomic(filepath.Join(s.dir, keyFile), wrapped, 0o600); err != nil {
+	if err := writeFileAtomic(filepath.Join(s.dir, keyFile), wrapped); err != nil {
 		return fmt.Errorf("store.ChangePassphrase: %w", err)
 	}
 	s.log.Info("passphrase changed", "dir", s.dir)
@@ -361,7 +361,7 @@ func (s *Store) writeFormatMarker() error {
 	if err != nil {
 		return fmt.Errorf("marshal format marker: %w", err)
 	}
-	if err := writeFileAtomic(filepath.Join(s.dir, formatFile), append(data, '\n'), 0o600); err != nil {
+	if err := writeFileAtomic(filepath.Join(s.dir, formatFile), append(data, '\n')); err != nil {
 		return fmt.Errorf("write format marker: %w", err)
 	}
 	return nil

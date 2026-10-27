@@ -9,18 +9,24 @@ import (
 	"syscall"
 )
 
+// Vault files are private to the user: files 0600, directories 0700.
+const (
+	filePerm os.FileMode = 0o600
+	dirPerm  os.FileMode = 0o700
+)
+
 // tmpPrefix marks in-flight writes. Files with this prefix never end in
 // ".age", so directory walks that filter on that extension skip them.
 const tmpPrefix = ".tmp-"
 
 // writeFileAtomic writes data to path so that readers observe either the old
 // contents or the new contents, never a truncated or partial file. It writes
-// to a temp file in the same directory, sets perm explicitly with Chmod (so
+// to a temp file in the same directory, sets mode 0600 explicitly with Chmod (so
 // the umask does not apply), fsyncs it, renames it over path, and fsyncs the
 // directory so the rename survives a crash (see syncDir for platform limits).
 // Atomicity is per file; callers that rewrite several files must order their
 // writes so that any prefix of them leaves the vault readable.
-func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
+func writeFileAtomic(path string, data []byte) (err error) {
 	dir := filepath.Dir(path)
 
 	f, err := os.CreateTemp(dir, tmpPrefix+"*")
@@ -38,7 +44,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 	if _, err = f.Write(data); err != nil {
 		return fmt.Errorf("writeFileAtomic: write: %w", err)
 	}
-	if err = f.Chmod(perm); err != nil {
+	if err = f.Chmod(filePerm); err != nil {
 		return fmt.Errorf("writeFileAtomic: chmod: %w", err)
 	}
 	if err = f.Sync(); err != nil {
@@ -63,7 +69,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 // exists, so exactly one concurrent caller wins. On filesystems without hard
 // links (FAT32, exFAT, some network mounts) it falls back to O_EXCL creation,
 // which keeps the no-overwrite guarantee but not crash atomicity.
-func writeFileExclusive(path string, data []byte, perm os.FileMode) (err error) {
+func writeFileExclusive(path string, data []byte) (err error) {
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, tmpPrefix+"*")
 	if err != nil {
@@ -73,7 +79,7 @@ func writeFileExclusive(path string, data []byte, perm os.FileMode) (err error) 
 	defer func() { _ = os.Remove(tmp) }()
 
 	if _, err = f.Write(data); err == nil {
-		if err = f.Chmod(perm); err == nil {
+		if err = f.Chmod(filePerm); err == nil {
 			err = f.Sync()
 		}
 	}
@@ -90,7 +96,7 @@ func writeFileExclusive(path string, data []byte, perm os.FileMode) (err error) 
 	case errors.Is(linkErr, os.ErrExist):
 		return fmt.Errorf("writeFileExclusive: %w", linkErr)
 	default:
-		if err := createExclusive(path, data, perm); err != nil {
+		if err := createExclusive(path, data); err != nil {
 			return fmt.Errorf("writeFileExclusive: link unsupported (%w); fallback: %w", linkErr, err)
 		}
 	}
@@ -102,8 +108,8 @@ func writeFileExclusive(path string, data []byte, perm os.FileMode) (err error) 
 
 // createExclusive creates path with O_EXCL and writes data, removing the file
 // if the write fails. It is the fallback for filesystems without hard links.
-func createExclusive(path string, data []byte, perm os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+func createExclusive(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePerm)
 	if err != nil {
 		return err
 	}
@@ -145,15 +151,15 @@ func syncDir(dir string) error {
 	return nil
 }
 
-// mkdirAllSynced creates dir (and parents) with perm if it does not exist,
+// mkdirAllSynced creates dir (and parents) with mode 0700 if it does not exist,
 // then fsyncs its parent so the new directory entry survives a crash. Without
 // this, the first secret saved into a new group could vanish with its
 // directory after a power loss even though the file itself was fsynced.
-func mkdirAllSynced(dir string, perm os.FileMode) error {
+func mkdirAllSynced(dir string) error {
 	if _, err := os.Stat(dir); err == nil {
 		return nil
 	}
-	if err := os.MkdirAll(dir, perm); err != nil {
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return fmt.Errorf("mkdirAllSynced: %w", err)
 	}
 	return syncDir(filepath.Dir(dir))

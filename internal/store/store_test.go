@@ -374,31 +374,6 @@ func TestStore_Create_RejectsEmptyName(t *testing.T) {
 	}
 }
 
-func TestStore_Groups_ReturnsAllGroups(t *testing.T) {
-	t.Parallel()
-
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	if err := s.Create(ctx, testutil.PasswordSecret("k1", "v1", "work")); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	if err := s.Create(ctx, testutil.PasswordSecret("k2", "v2", "personal")); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	if err := s.Create(ctx, testutil.PasswordSecret("k3", "v3", "work")); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	groups := s.Groups()
-	if len(groups) != 2 {
-		t.Fatalf("expected 2 groups, got %d: %v", len(groups), groups)
-	}
-	if groups[0] != "personal" || groups[1] != "work" {
-		t.Fatalf("expected [personal work], got %v", groups)
-	}
-}
-
 func TestStore_CopyTo_IgnoresLeftoverTempFiles(t *testing.T) {
 	t.Parallel()
 

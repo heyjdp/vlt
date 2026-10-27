@@ -41,6 +41,7 @@ Auto-lock is tested with an injectable `timerFactory` whose fake timers are fire
 | Delete | ✅ Deleting a selected secret removes its row and clears the selection (`TestApp_SelectThenDeleteRemovesRowAndClearsSelection`, `TestApp_DeleteRemovesSecretFromList`). The confirmation dialog itself (`confirmDelete`) is not yet driven by a test |
 | Auto-lock | ✅ Typing postpones it; idleness locks; warning works (`internal/ui/activity_test.go`). No secrets referenced after lock: see [[F11 Memory hygiene and honest docs]] |
 | Clipboard | ✅ Copy A then B, B lasts the full TTL; unrelated content kept; lock clears (`internal/ui/clipboard_test.go`) |
+| Detail form | ✅ Every field saved, secrets masked, copy buttons copy the right value, new vs existing form (`internal/ui/detail_test.go`) |
 | Import | ✅ A failing reader saves nothing and shows an error (`TestApp_FailingImportSavesNothing`, `_FailingImportShowsErrorNotGroupForm`). ✅ Import adds to the list (`TestApp_ImportAddsSecretToList`) |
 
 ## Acceptance criteria

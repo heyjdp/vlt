@@ -83,7 +83,7 @@ func TestMigration_ResumesAfterCrashMidway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFileAtomic(filepath.Join(dir, migratingFile), wrapped, 0o600); err != nil {
+	if err := writeFileAtomic(filepath.Join(dir, migratingFile), wrapped); err != nil {
 		t.Fatal(err)
 	}
 	partial := New(id, dir, quiet())
@@ -218,7 +218,7 @@ func TestBeginMigration_JoinsMigrationStartedElsewhere(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFileExclusive(filepath.Join(dir, migratingFile), wrapped, 0o600); err != nil {
+	if err := writeFileExclusive(filepath.Join(dir, migratingFile), wrapped); err != nil {
 		t.Fatal(err)
 	}
 
@@ -246,10 +246,10 @@ func TestWriteFileExclusive_FailsIfTargetExists(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "x")
-	if err := writeFileExclusive(path, []byte("first"), 0o600); err != nil {
+	if err := writeFileExclusive(path, []byte("first")); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFileExclusive(path, []byte("second"), 0o600); !errors.Is(err, os.ErrExist) {
+	if err := writeFileExclusive(path, []byte("second")); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("expected os.ErrExist, got %v", err)
 	}
 	got, err := os.ReadFile(path)
@@ -325,10 +325,10 @@ func TestCreateExclusive_RefusesExistingAndWritesNew(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "x.age")
-	if err := createExclusive(path, []byte("first"), 0o600); err != nil {
+	if err := createExclusive(path, []byte("first")); err != nil {
 		t.Fatal(err)
 	}
-	if err := createExclusive(path, []byte("second"), 0o600); !errors.Is(err, os.ErrExist) {
+	if err := createExclusive(path, []byte("second")); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("expected os.ErrExist, got %v", err)
 	}
 	got, err := os.ReadFile(path)

@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -59,7 +58,7 @@ func (s *Store) Dir() string {
 
 // Init creates the vault directory with secure permissions.
 func (s *Store) Init() error {
-	if err := mkdirAllSynced(s.dir, 0o700); err != nil {
+	if err := mkdirAllSynced(s.dir); err != nil {
 		return fmt.Errorf("store.Init: %w", err)
 	}
 	return nil
@@ -85,11 +84,11 @@ func (s *Store) Create(ctx context.Context, secret *Secret) error {
 	if err != nil {
 		return fmt.Errorf("store.Create: %w", err)
 	}
-	if err := mkdirAllSynced(filepath.Dir(path), 0o700); err != nil {
+	if err := mkdirAllSynced(filepath.Dir(path)); err != nil {
 		return fmt.Errorf("store.Create: mkdir: %w", err)
 	}
 
-	err = writeFileExclusive(path, data, 0o600)
+	err = writeFileExclusive(path, data)
 	if errors.Is(err, os.ErrExist) {
 		return fmt.Errorf("store.Create %q in %q: %w", secret.Name, secret.Group, ErrSecretExists)
 	}
@@ -130,7 +129,7 @@ func (s *Store) Update(ctx context.Context, secret *Secret) error {
 	if err != nil {
 		return fmt.Errorf("store.Update: %w", err)
 	}
-	if err := writeFileAtomic(s.path(name, secret.Group), data, 0o600); err != nil {
+	if err := writeFileAtomic(s.path(name, secret.Group), data); err != nil {
 		return fmt.Errorf("store.Update: write: %w", err)
 	}
 
@@ -300,23 +299,6 @@ func (s *Store) List(ctx context.Context) ([]*Secret, error) {
 	return secrets, nil
 }
 
-// Groups returns a sorted list of all group names that exist in the vault.
-func (s *Store) Groups() []string {
-	entries, err := os.ReadDir(s.dir)
-	if err != nil {
-		return nil
-	}
-
-	var groups []string
-	for _, e := range entries {
-		if e.IsDir() {
-			groups = append(groups, e.Name())
-		}
-	}
-	sort.Strings(groups)
-	return groups
-}
-
 // CopyTo copies the wrapped vault key, the format marker, and every .age
 // file from this store's directory into destDir, preserving the group
 // subdirectory structure. It refuses (ErrVaultExists) to copy into a
@@ -331,7 +313,7 @@ func (s *Store) CopyTo(ctx context.Context, destDir string) error {
 	if exists {
 		return fmt.Errorf("store.CopyTo %q: %w", destDir, ErrVaultExists)
 	}
-	if err := mkdirAllSynced(destDir, 0o700); err != nil {
+	if err := mkdirAllSynced(destDir); err != nil {
 		return fmt.Errorf("store.CopyTo: mkdir %q: %w", destDir, err)
 	}
 
@@ -344,7 +326,7 @@ func (s *Store) CopyTo(ctx context.Context, destDir string) error {
 		if err != nil {
 			return fmt.Errorf("store.CopyTo: read %s: %w", name, err)
 		}
-		if err := writeFileAtomic(filepath.Join(destDir, name), data, 0o600); err != nil {
+		if err := writeFileAtomic(filepath.Join(destDir, name), data); err != nil {
 			return fmt.Errorf("store.CopyTo: write %s: %w", name, err)
 		}
 	}
@@ -366,7 +348,7 @@ func (s *Store) CopyTo(ctx context.Context, destDir string) error {
 		srcDir := filepath.Join(s.dir, groupEntry.Name())
 		dstDir := filepath.Join(destDir, groupEntry.Name())
 
-		if err := mkdirAllSynced(dstDir, 0o700); err != nil {
+		if err := mkdirAllSynced(dstDir); err != nil {
 			return fmt.Errorf("store.CopyTo: mkdir %q: %w", dstDir, err)
 		}
 
@@ -386,7 +368,7 @@ func (s *Store) CopyTo(ctx context.Context, destDir string) error {
 			if err != nil {
 				return fmt.Errorf("store.CopyTo: read file %q: %w", entry.Name(), err)
 			}
-			if err := writeFileAtomic(filepath.Join(dstDir, entry.Name()), data, 0o600); err != nil {
+			if err := writeFileAtomic(filepath.Join(dstDir, entry.Name()), data); err != nil {
 				return fmt.Errorf("store.CopyTo: write file %q: %w", entry.Name(), err)
 			}
 		}

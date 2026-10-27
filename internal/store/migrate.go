@@ -43,7 +43,7 @@ func beginMigration(ctx context.Context, dir, passphrase string, log *slog.Logge
 	}
 	// Exclusive create: if another vlt instance started migrating first, use
 	// its key rather than replacing it (which would strand its rewrites).
-	err = writeFileExclusive(filepath.Join(dir, migratingFile), wrapped, 0o600)
+	err = writeFileExclusive(filepath.Join(dir, migratingFile), wrapped)
 	if errors.Is(err, os.ErrExist) {
 		id.Zero()
 		existing, readErr := os.ReadFile(filepath.Join(dir, migratingFile))
@@ -104,7 +104,7 @@ func (s *Store) finishMigration(ctx context.Context, passphrase string, wrapped 
 		}
 	}
 
-	if err := writeFileAtomic(filepath.Join(s.dir, keyFile), wrapped, 0o600); err != nil {
+	if err := writeFileAtomic(filepath.Join(s.dir, keyFile), wrapped); err != nil {
 		return fmt.Errorf("store.migrate: replace %s: %w", keyFile, err)
 	}
 	if err := s.writeFormatMarker(); err != nil {
@@ -150,7 +150,7 @@ func (s *Store) migrateFile(passphrase, path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if err := writeFileAtomic(path, ciphertext, 0o600); err != nil {
+	if err := writeFileAtomic(path, ciphertext); err != nil {
 		return false, err
 	}
 	return true, nil

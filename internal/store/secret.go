@@ -97,11 +97,6 @@ func Slugify(s string) string {
 // DefaultGroup is used when no group is specified.
 const DefaultGroup = "default"
 
-// ValidSecretTypes returns all valid secret types.
-func ValidSecretTypes() []SecretType {
-	return []SecretType{TypePassword, TypeRecord, TypeFile}
-}
-
 // NormalizeGroup returns the slugified group name, falling back to DefaultGroup.
 func NormalizeGroup(group string) string {
 	g := Slugify(group)
