@@ -24,7 +24,7 @@ created: 2026-10-27
 
 ```mermaid
 flowchart TB
-    E["widget.Entry.Text<br/>(passphrase string)"] -->|onUnlock| P["passphrase string"]
+    E["widget.Entry.Text<br/>(passphrase string)"] -->|"onUnlock / onCreate"| P["passphrase string"]
     P -->|"1× scrypt"| U["decrypted vlt.age<br/>[]byte secret key"]
     U -->|"moved, source wiped"| LB["memguard LockedBuffer ✅"]
     LB -->|"string(buf.Bytes())"| S2["string copy<br/>(parse, once)"]

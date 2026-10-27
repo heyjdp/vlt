@@ -62,5 +62,6 @@ Progress is tracked in the [[Roadmap]]. Completed so far:
 - [[F02 Atomic file writes]]: every vault write is atomic
 - [[F01 Scrypt-wrapped identity]]: one scrypt per unlock, single-file passphrase change, crash-safe migration
 - [[F03 Prevent silent overwrites]]: `Create`/`Update` split and `ErrSecretExists`
+- [[F04 Confirm passphrase on vault creation]]: separate create screen with confirmation; unlock only opens
 
 These findings became the five-phase [[Roadmap]]. The storage-format change ([[ADR-001 Scrypt-wrapped X25519 identity]]) goes first because it's cheapest before real vaults exist that would need migrating.

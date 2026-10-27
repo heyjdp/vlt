@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/yourorg/vlt/internal/crypto"
 )
@@ -103,21 +104,38 @@ type formatMarker struct {
 // Exists reports whether dir contains a vault: a wrapped key or legacy
 // sentinel, an in-progress migration, a format marker, or any secret file.
 // A directory for which Exists is true must be opened, never created over.
-func Exists(dir string) bool {
+// A missing dir is not an error. Any other error (e.g. permission denied on
+// dir or a group directory) is returned, because "cannot tell" must not be
+// treated as "no vault" and lead to creating one over existing secrets.
+func Exists(dir string) (bool, error) {
 	for _, name := range []string{keyFile, migratingFile, formatFile} {
-		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
-			return true
+		_, err := os.Stat(filepath.Join(dir, name))
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+			return false, fmt.Errorf("store.Exists: %w", err)
 		}
 	}
 	paths, err := secretFiles(dir)
-	return err == nil && len(paths) > 0
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("store.Exists: %w", err)
+	}
+	return len(paths) > 0, nil
 }
 
 // Create initialises a new vault in dir: it generates a random vault key,
 // stores it encrypted to passphrase in vlt.age, and writes the format marker.
 // It returns ErrVaultExists if dir already holds a vault or secret files.
 func Create(dir, passphrase string, log *slog.Logger, opts ...Option) (*Store, error) {
-	if Exists(dir) {
+	exists, err := Exists(dir)
+	if err != nil {
+		return nil, fmt.Errorf("store.Create: %w", err)
+	}
+	if exists {
 		return nil, fmt.Errorf("store.Create %q: %w", dir, ErrVaultExists)
 	}
 	if err := mkdirAllSynced(dir, 0o700); err != nil {
@@ -136,7 +154,14 @@ func Create(dir, passphrase string, log *slog.Logger, opts ...Option) (*Store, e
 	}
 
 	s := newStore(id, dir, log, o)
-	if err := writeFileAtomic(filepath.Join(dir, keyFile), wrapped, 0o600); err != nil {
+	// Exclusive: another instance creating a vault here at the same moment
+	// must not have its vlt.age replaced.
+	err = writeFileExclusive(filepath.Join(dir, keyFile), wrapped, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		id.Zero()
+		return nil, fmt.Errorf("store.Create %q: %w", dir, ErrVaultExists)
+	}
+	if err != nil {
 		id.Zero()
 		return nil, fmt.Errorf("store.Create: write key: %w", err)
 	}

@@ -306,7 +306,11 @@ func (s *Store) Groups() []string {
 // another vault's vlt.age would make its secrets unrecoverable. An open
 // Store never has a migration in progress, so vlt.migrating.age is not copied.
 func (s *Store) CopyTo(destDir string) error {
-	if Exists(destDir) {
+	exists, err := Exists(destDir)
+	if err != nil {
+		return fmt.Errorf("store.CopyTo: %w", err)
+	}
+	if exists {
 		return fmt.Errorf("store.CopyTo %q: %w", destDir, ErrVaultExists)
 	}
 	if err := mkdirAllSynced(destDir, 0o700); err != nil {

@@ -11,6 +11,7 @@ type UnlockScreen struct {
 	window     fyne.Window
 	onUnlock   func(passphrase string)
 	entry      *widget.Entry
+	unlockBtn  *widget.Button
 	errorLabel *widget.Label
 	content    *fyne.Container
 }
@@ -31,10 +32,10 @@ func NewUnlockScreen(window fyne.Window, onUnlock func(passphrase string)) *Unlo
 	s.errorLabel = widget.NewLabel("")
 	s.errorLabel.Hide()
 
-	unlockBtn := widget.NewButton("Unlock", func() {
+	s.unlockBtn = widget.NewButton("Unlock", func() {
 		s.submit()
 	})
-	unlockBtn.Importance = widget.HighImportance
+	s.unlockBtn.Importance = widget.HighImportance
 
 	title := widget.NewLabel("vlt — Secret Manager")
 	title.Alignment = fyne.TextAlignCenter
@@ -49,7 +50,7 @@ func NewUnlockScreen(window fyne.Window, onUnlock func(passphrase string)) *Unlo
 		widget.NewSeparator(),
 		s.entry,
 		s.errorLabel,
-		unlockBtn,
+		s.unlockBtn,
 	)
 
 	s.content = container.NewCenter(form)

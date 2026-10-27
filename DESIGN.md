@@ -174,7 +174,8 @@ vlt/
 │   │   └── secret.go        # Secret types and JSON envelope schema
 │   └── ui/
 │       ├── app.go           # Fyne app and window bootstrap
-│       ├── unlock.go        # Passphrase entry screen
+│       ├── unlock.go        # Passphrase entry screen (existing vault)
+│       ├── create.go        # Create-vault screen (passphrase + confirmation)
 │       ├── list.go          # Secret browser (left panel)
 │       ├── detail.go        # Secret view/edit (right panel)
 │       └── settings.go      # Vault path, lock timeout, clipboard TTL
@@ -195,7 +196,8 @@ vlt/
 - `atomic.go` — temp-file + fsync + rename writes used for every vault file
 
 **`internal/ui`**
-- `unlock.go` — passphrase entry dialog; passes the passphrase to `App`, which calls `store.Open` or `store.Create`; transitions to main view
+- `unlock.go` — passphrase entry for an existing vault; `App` calls `store.Open` and transitions to the main view
+- `create.go` — shown instead of `unlock.go` when `store.Exists` is false: displays the target directory, takes the passphrase twice (at least 12 characters excluding surrounding spaces; five or more random words recommended), then `App` calls `store.Create`. If `store.Exists` returns an error (directory unreadable), an error screen with Retry is shown instead of either screen
 - `list.go` — category tree + secret list; filters by search query; fires selection events
 - `detail.go` — renders the correct form for the secret type; handles clipboard copy with TTL countdown
 - `settings.go` — vault path picker, auto-lock timeout slider, clipboard TTL slider

@@ -27,11 +27,14 @@ created: 2026-10-27
 
 ## Problem
 These all run synchronously on the Fyne main goroutine:
-- `onUnlock`: `store.Open` (one scrypt, or one per secret during the one-time migration of a format-1 vault) or `store.Create`
+- `onUnlock`: `store.Open` (one scrypt, or one per secret during the one-time migration of a format-1 vault); `onCreate`: `store.Create` (one scrypt)
 - `saveSecret` and import: encrypt
 - the `onSave` → `SecretList.Refresh` → `Store.List` chain
 
 `Store.List` ignores its context (`_ = ctx`, `internal/store/store.go:261`), so `Lock()` can't cancel a running list. Even after [[F01 Scrypt-wrapped identity]], unlock still costs one scrypt (about 0.75 s), and that shouldn't freeze the window.
+
+## Note from F04 verification
+Under `fyne/test`, `fyne.Do` runs callbacks inline on the caller's goroutine. The `go a.secretList.Refresh(ctx)` in `showMainView` therefore races with test-driven `Lock()` under `-race`. The fix should give background work an owner that `Lock` waits on or cancels, so app-level tests can enter the main view.
 
 ## Fix
 - Run store calls in goroutines and marshal results back with `fyne.Do` (pattern from `CLAUDE.md` §Fyne GUI Guidelines).

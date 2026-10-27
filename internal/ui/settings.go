@@ -231,7 +231,7 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 		}
 
 		dialog.ShowConfirm("Switch Vault",
-			fmt.Sprintf("Switch to vault at:\n  %s\n\nYou will be locked and must re-enter your passphrase.", newDir),
+			fmt.Sprintf("Switch to vault at:\n  %s\n\nThe app will lock. If a vault exists there you will unlock it with its passphrase; otherwise you will be asked to create one.", newDir),
 			func(confirmed bool) {
 				if !confirmed {
 					return

@@ -7,6 +7,7 @@ vlt replaces ad-hoc PGP-encrypted text file workflows with a structured, portabl
 ## Features
 
 - **Passphrase-only unlock** — no external key files, no OS keychain dependency
+- **Safe vault creation** — when no vault exists at the configured location (first run, or after switching to an empty or missing folder), a dedicated screen shows where the vault will be created and asks for the passphrase twice (at least 12 characters not counting leading or trailing spaces; five or more random words recommended), so a typo can never become the passphrase. If the vault directory cannot be read (for example, permission denied), vlt shows the error and a Retry button rather than offering to create a vault over it
 - **age encryption** — each secret is an individual `.age` file encrypted to a random X25519 vault key; the vault key is encrypted to your passphrase with scrypt, so unlocking costs one scrypt derivation however many secrets you have
 - **Secure memory (best-effort)** — the vault key's encoded form is held in mlock'd memory via memguard and destroyed on lock; the parsed key and transient copies live on the Go heap until garbage-collected
 - **Secret types** — passwords, structured login records (URL/username/password/TOTP), and encrypted files
@@ -175,6 +176,7 @@ The test suite covers:
 
 - **crypto** — vault-key generation, wrap/unwrap with a passphrase, wrong-passphrase rejection, zeroing, encrypt/decrypt round-trips, X25519-only secret encryption, legacy passphrase decryption
 - **store** — secret types and JSON marshalling, slugification, name validation, group normalisation, CRUD operations (create/update/get/delete/list), refusal to overwrite on create and on slug collision, group listing, vault create/open/exists, one-scrypt-per-unlock check, passphrase change (only `vlt.age` rewritten, failures keep the old passphrase), format-1 migration (including resume after a crash), atomic writes, vault copy
+- **ui** — new-vault passphrase validation, create-vault screen (mismatch rejected and confirmation cleared; both entries cleared on success), and the app choosing the create screen for a missing vault and the unlock screen once it exists (headless `fyne/test`)
 
 All tests use `t.Parallel()`, the race detector, and `t.TempDir()` for filesystem isolation.
 
@@ -223,7 +225,8 @@ internal/
 │   └── atomic.go            Atomic file writes
 ├── ui/
 │   ├── app.go               Lock/unlock state machine, toolbar, layout
-│   ├── unlock.go            Passphrase entry screen
+│   ├── unlock.go            Passphrase entry screen (existing vault)
+│   ├── create.go            Create-vault screen (passphrase + confirmation)
 │   ├── list.go              Secret browser with search/filter
 │   ├── detail.go            View/edit forms for all secret types, clipboard copy
 │   ├── fileops.go           File import (picker, base64, MIME) and export

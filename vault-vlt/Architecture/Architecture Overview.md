@@ -53,9 +53,12 @@ graph TD
 ```mermaid
 stateDiagram-v2
     [*] --> Locked
+    Locked --> Creating: no vault at path (create screen)
+    Creating --> Creating: mismatch / too short
+    Creating --> Unlocked: confirmed, vault created
     Locked --> Unlocking: passphrase submitted
     Unlocking --> Locked: wrong passphrase / I/O error
-    Unlocking --> Unlocked: vault key unwrapped (or created / migrated)
+    Unlocking --> Unlocked: vault key unwrapped (or migrated)
     Unlocked --> Locked: Lock button
     Unlocked --> Locked: auto-lock timer fires
     Unlocked --> Locked: passphrase changed / vault moved / switched

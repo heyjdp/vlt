@@ -164,16 +164,71 @@ func TestStore_Create_WritesFormatMarker(t *testing.T) {
 	}
 }
 
+func mustExist(t *testing.T, dir string) bool {
+	t.Helper()
+	ok, err := store.Exists(dir)
+	if err != nil {
+		t.Fatalf("Exists: %v", err)
+	}
+	return ok
+}
+
 func TestStore_Exists(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if store.Exists(dir) {
+	if mustExist(t, dir) {
 		t.Fatal("empty directory should not be a vault")
 	}
+	if mustExist(t, filepath.Join(dir, "missing")) {
+		t.Fatal("missing directory should not be a vault")
+	}
 	createVault(t, dir)
-	if !store.Exists(dir) {
+	if !mustExist(t, dir) {
 		t.Fatal("created vault should exist")
+	}
+}
+
+func TestStore_Exists_ReportsUnreadableGroupInsteadOfNoVault(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("permission semantics need a non-root Unix user")
+	}
+
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "work")
+	if err := os.Mkdir(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+
+	if _, err := store.Exists(dir); err == nil {
+		t.Fatal("expected an error when a group directory cannot be read")
+	}
+	if _, err := store.Create(dir, testPass, quietLog(), store.WithWorkFactor(testWorkFactor)); err == nil {
+		t.Fatal("Create must refuse a directory it cannot fully inspect")
+	}
+}
+
+func TestStore_Create_RefusesDirectoryWithOnlySecretFiles(t *testing.T) {
+	t.Parallel()
+
+	src := createVault(t, t.TempDir())
+	if err := src.Create(context.Background(), testutil.PasswordSecret("a", "1", "work")); err != nil {
+		t.Fatal(err)
+	}
+	dest := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dest, "work"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, "work", "orphan.age"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := src.CopyTo(dest); !errors.Is(err, store.ErrVaultExists) {
+		t.Fatalf("CopyTo onto loose secret files: expected ErrVaultExists, got %v", err)
 	}
 }
 

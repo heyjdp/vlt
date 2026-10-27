@@ -146,7 +146,7 @@ func TestStore_Open_MigratesLegacyVaultWithoutSentinel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !store.Exists(dir) {
+	if !mustExist(t, dir) {
 		t.Fatal("a directory of legacy secrets must count as an existing vault")
 	}
 	if _, err := store.Create(dir, testPass, quietLog(), store.WithWorkFactor(testWorkFactor)); !errors.Is(err, store.ErrVaultExists) {

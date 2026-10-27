@@ -5,12 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image/color"
 	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
@@ -38,6 +40,7 @@ type App struct {
 
 	// UI components
 	unlockScreen *UnlockScreen
+	createScreen *CreateScreen
 	mainContent  *fyne.Container
 	secretList   *SecretList
 	detailView   *DetailView
@@ -59,42 +62,83 @@ func NewApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logge
 	return app
 }
 
-// showUnlockScreen displays the passphrase entry screen.
+// showUnlockScreen displays the passphrase entry screen, or the create-vault
+// screen (passphrase entered twice) if no vault exists at the configured
+// location.
 func (a *App) showUnlockScreen() {
-	a.unlockScreen = NewUnlockScreen(a.window, a.onUnlock)
-	a.window.SetContent(container.NewBorder(
-		nil,
-		a.statusBar,
-		nil,
-		nil,
-		a.unlockScreen.Content(),
-	))
+	a.unlockScreen, a.createScreen = nil, nil
+
+	var content fyne.CanvasObject
+	exists, err := store.Exists(a.config.VaultDir)
+	switch {
+	case err != nil:
+		// Never offer to create a vault over a directory we cannot inspect.
+		content = a.vaultErrorContent(err)
+	case exists:
+		a.unlockScreen = NewUnlockScreen(a.window, a.onUnlock)
+		content = a.unlockScreen.Content()
+	default:
+		a.createScreen = NewCreateScreen(a.config.VaultDir, a.onCreate)
+		content = a.createScreen.Content()
+	}
+	a.window.SetContent(container.NewBorder(nil, a.statusBar, nil, nil, content))
 }
 
-// onUnlock is called when the user enters a passphrase.
+// vaultErrorContent explains why the vault directory cannot be used and
+// offers a retry (for example after fixing permissions).
+func (a *App) vaultErrorContent(err error) fyne.CanvasObject {
+	msg := widget.NewLabel(fmt.Sprintf("Cannot read the vault directory:\n%s\n\n%v", a.config.VaultDir, err))
+	msg.Wrapping = fyne.TextWrapWord
+	retry := widget.NewButton("Retry", a.showUnlockScreen)
+	width := canvas.NewRectangle(color.Transparent)
+	width.SetMinSize(fyne.NewSize(createFormWidth, 0))
+	return container.NewCenter(container.NewStack(width, container.NewVBox(msg, retry)))
+}
+
+// onUnlock is called when the user enters a passphrase for an existing vault.
 func (a *App) onUnlock(passphrase string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	var (
-		s   *store.Store
-		err error
-	)
-	if store.Exists(a.config.VaultDir) {
-		s, err = store.Open(context.Background(), a.config.VaultDir, passphrase, a.log)
-	} else {
-		s, err = store.Create(a.config.VaultDir, passphrase, a.log)
-	}
-	if err != nil {
-		if errors.Is(err, store.ErrWrongPassphrase) {
-			a.unlockScreen.ShowError("Incorrect passphrase")
+	s, err := store.Open(context.Background(), a.config.VaultDir, passphrase, a.log)
+	switch {
+	case errors.Is(err, store.ErrWrongPassphrase):
+		a.unlockScreen.ShowError("Incorrect passphrase")
+		return
+	case errors.Is(err, store.ErrVaultNotFound):
+		if exists, _ := store.Exists(a.config.VaultDir); exists {
+			// Leftovers (e.g. a stale vlt.json) but nothing to unlock.
+			a.unlockScreen.ShowError("No vault key or secrets found in " + a.config.VaultDir)
 			return
 		}
+		// The vault disappeared since the screen was chosen; offer to create one.
+		a.showUnlockScreen()
+		return
+	case err != nil:
 		a.unlockScreen.ShowError("Failed to open vault: " + err.Error())
 		return
 	}
+	a.unlocked(s)
+}
 
+// onCreate is called with a confirmed passphrase for a new vault.
+func (a *App) onCreate(passphrase string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	s, err := store.Create(a.config.VaultDir, passphrase, a.log)
+	if err != nil {
+		a.createScreen.ShowError("Failed to create vault: " + err.Error())
+		return
+	}
+	a.unlocked(s)
+}
+
+// unlocked switches to the main view for an opened or newly created vault.
+// The caller holds a.mu.
+func (a *App) unlocked(s *store.Store) {
 	a.store = s
+	a.unlockScreen, a.createScreen = nil, nil
 	a.log.Info("vault unlocked", "dir", a.config.VaultDir)
 
 	a.showMainView()

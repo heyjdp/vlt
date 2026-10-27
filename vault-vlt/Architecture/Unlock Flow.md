@@ -10,7 +10,7 @@ created: 2026-10-27
 
 ## Current flow (after F01)
 
-`App.onUnlock` (`internal/ui/app.go`) runs on the Fyne main goroutine while holding `App.mu`.
+`App.showUnlockScreen` checks `store.Exists` first and shows either the unlock screen or the create-vault screen. `onUnlock` (existing vault) and `onCreate` (new vault) run on the Fyne main goroutine while holding `App.mu`.
 
 ```mermaid
 sequenceDiagram
@@ -18,12 +18,12 @@ sequenceDiagram
     actor User
     participant A as App (UI thread)
     participant S as store
-    User->>A: passphrase
     A->>S: Exists(dir)?
     alt no vault
+        User->>A: passphrase ×2 (create screen, ≥12 chars, must match)
         S->>S: Create: new X25519 key, wrap (scrypt)
-        Note right of S: no confirm ⚠ F04
     else vault exists
+        User->>A: passphrase
         S->>S: Open: unwrap vlt.age (1× scrypt)
         opt format-1 vault
             S->>S: migrate (1× scrypt per secret, once)

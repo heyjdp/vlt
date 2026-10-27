@@ -51,7 +51,7 @@ $$
 
 ## Implications for vlt
 
-- **Recommend 5+ Diceware words** in the UI when creating a vault ([[F04 Confirm passphrase on vault creation]]).
+- The create-vault screen recommends five or more random words and enforces a 12-character floor ([[F04 Confirm passphrase on vault creation]]).
 - [[ADR-001 Scrypt-wrapped X25519 identity|ADR-001]] leaves these numbers unchanged. The attacker still needs one scrypt per guess against `vlt.age`.
 - Raising the work factor to $\log_2 N = 19$ doubles both $\mathbb{E}[T]$ and the unlock time. With a single scrypt per unlock that becomes affordable, which it isn't today.
 
