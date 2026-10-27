@@ -1,0 +1,6 @@
+/* Scale Mermaid diagrams down to the reading width instead of overflowing. */
+.markdown-rendered .mermaid svg,
+.markdown-source-view .mermaid svg {
+  max-width: 100%;
+  height: auto;
+}

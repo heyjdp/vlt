@@ -4,3 +4,7 @@ coverage.out
 fyne-cross/
 *.app
 .DS_Store
+
+# Obsidian per-user UI state
+vault-vlt/.obsidian/workspace*.json
+claude.resume

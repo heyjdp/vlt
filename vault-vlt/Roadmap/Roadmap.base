@@ -1,0 +1,86 @@
+filters:
+  and:
+    - file.hasTag("fix")
+    - 'file.ext == "md"'
+    - '!file.inFolder("Templates")'
+
+formulas:
+  severity_rank: 'if(severity == "critical", 1, if(severity == "high", 2, if(severity == "medium", 3, 4)))'
+  severity_label: 'if(severity == "critical", "🔴 critical", if(severity == "high", "🟠 high", if(severity == "medium", "🟡 medium", "🟢 low")))'
+  status_icon: 'if(status == "done", "✅", if(status == "in-progress", "🚧", "⬜"))'
+  phase_label: '"Phase " + phase.toString()'
+
+properties:
+  id:
+    displayName: ID
+  area:
+    displayName: Area
+  review_finding:
+    displayName: Finding
+  formula.severity_label:
+    displayName: Severity
+  formula.status_icon:
+    displayName: ""
+  formula.phase_label:
+    displayName: Phase
+  formula.severity_rank:
+    displayName: Rank
+
+views:
+  - type: table
+    name: Open by phase
+    filters:
+      and:
+        - 'status != "done"'
+    groupBy:
+      property: formula.phase_label
+      direction: ASC
+    order:
+      - formula.status_icon
+      - id
+      - file.name
+      - formula.severity_label
+      - area
+      - review_finding
+    sort:
+      - property: formula.severity_rank
+        direction: ASC
+      - property: id
+        direction: ASC
+
+  - type: table
+    name: All fixes
+    order:
+      - formula.status_icon
+      - id
+      - file.name
+      - formula.phase_label
+      - formula.severity_label
+      - area
+      - status
+    sort:
+      - property: id
+        direction: ASC
+
+  - type: table
+    name: Progress
+    groupBy:
+      property: status
+      direction: ASC
+    order:
+      - id
+      - file.name
+      - formula.phase_label
+    summaries:
+      id: Filled
+
+  - type: cards
+    name: Board
+    groupBy:
+      property: status
+      direction: DESC
+    order:
+      - file.name
+      - formula.severity_label
+      - formula.phase_label
+      - area
