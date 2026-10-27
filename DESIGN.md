@@ -112,7 +112,7 @@ For structured login records with URL, username, password, and optional TOTP.
 
 ### Type: `file`
 
-For arbitrary binary files, SSH private keys, TLS certificates, etc. File content is base64-encoded inside the JSON envelope. Size limit: **10 MB** per file secret.
+For arbitrary binary files, SSH private keys, TLS certificates, etc. File content is base64-encoded inside the JSON envelope. Size limit: **10 MiB** per file secret.
 
 ```json
 {
@@ -232,10 +232,10 @@ vlt/
 - Implemented client-side on the in-memory secret list — no disk reads during search
 
 ### File Import / Export
-- **Import:** file picker → read → base64 encode → wrap in `file` envelope → encrypt → save
-- **Export:** decrypt secret → base64 decode → write to user-selected path via file picker
+- **Import:** file picker → read up to 10 MiB (in the background; any read error aborts the import, and files over the limit are rejected) → MIME detect, base64 encode, SHA-256 → choose group → wrap in `file` envelope → encrypt → save (`Create`, asking before replacing) → completion dialog shows the SHA-256
+- **Export:** base64 decode (in the background) → choose path → write and close (in the background; a failed write or close is reported and the partial file deleted where possible). The decoded plaintext is wiped after writing, on cancel, on error, and if the vault locks first; an export confirmed after a lock writes nothing
+- Locking dismisses every open dialog (Fyne draws dialogs, file pickers included, inside the window), so no dialog outlives the session
 - MIME type is detected at import time using Go's `net/http.DetectContentType`
-- Hard size limit of **10 MB** enforced at import
 
 ### Git Integration (Optional)
 - On startup, detect if the vault directory is inside a git repository (`git rev-parse`)
@@ -295,7 +295,7 @@ For macOS, wrap with `fyne package` to produce a proper `.app` bundle. For Windo
 - [ ] File import via file picker
 - [ ] File export to disk
 - [ ] MIME detection
-- [ ] 10 MB size limit enforcement
+- [ ] 10 MiB size limit enforcement
 
 ### Phase 4 — Polish
 - [x] Clipboard TTL with status bar countdown

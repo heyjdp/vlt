@@ -171,7 +171,7 @@ func TestApp_ImportReplacingOpenSecretRefreshesItsForm(t *testing.T) {
 	if err := app.store.Update(context.Background(), replacement); err != nil {
 		t.Fatal(err)
 	}
-	dv.fileOps.importDone(replacement, 1)
+	dv.fileOps.importDone(replacement, importedFile{size: 1})
 
 	if dv.current == nil || dv.current.Type != store.TypeFile {
 		t.Fatalf("the open form should be re-rendered for the imported file, got %+v", dv.current)

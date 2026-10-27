@@ -67,5 +67,6 @@ Progress is tracked in the [[Roadmap]]. Completed so far:
 - [[F05 Refresh list after edit and delete]]: saves, imports and deletes update the list in place; the highlight follows the selected secret
 - [[F07 Inactivity-based auto-lock]]: real inactivity, a 30 s warning, generation-checked timers
 - [[F08 Correct clipboard clearing]]: per-copy countdown, clears only vlt's value, cleared on lock and quit
+- [[F09 Fail import on read errors]]: read errors and oversized files fail the import; file I/O runs in the background; dialogs are dismissed on lock
 
 These findings became the five-phase [[Roadmap]]. The storage-format change ([[ADR-001 Scrypt-wrapped X25519 identity]]) goes first because it's cheapest before real vaults exist that would need migrating.

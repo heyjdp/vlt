@@ -74,8 +74,8 @@ Mutation testing showed nine surviving mutants. Each now has a test.
 
 The F04 note (`fyne/test` runs `fyne.Do` inline) was solved with an injectable runner rather than making `Lock` wait.
 
-> [!todo] Follow-up outside F10's scope
-> Import still reads up to 10 MB and base64-encodes it on the main goroutine, and export writes on it. These are file I/O, not store calls. They're handled with [[F09 Fail import on read errors]].
+> [!done] Follow-up outside F10's scope
+> Import used to read up to 10 MiB and base64-encode it on the main goroutine, and export wrote on it. This was moved to the background in [[F09 Fail import on read errors]].
 
 ## Related
 - [[Scrypt Cost Model]] · [[F05 Refresh list after edit and delete]]

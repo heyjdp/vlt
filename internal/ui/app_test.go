@@ -197,7 +197,7 @@ func TestApp_ImportAddsSecretToList(t *testing.T) {
 	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers)
 	unlock(app)
 
-	app.detailView.fileOps.importSecret(testutil.FileSecret("id_rsa", "id_rsa", "eA==", "keys"), 1)
+	app.detailView.fileOps.importSecret(testutil.FileSecret("id_rsa", "id_rsa", "eA==", "keys"), importedFile{size: 1})
 
 	if len(app.secretList.secrets) != 1 || app.secretList.secrets[0].Name != "id_rsa" {
 		t.Fatal("an imported file should be added to the list")

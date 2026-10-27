@@ -341,10 +341,23 @@ func (a *App) Lock() {
 
 	fyne.Do(func() {
 		a.hideLockWarning()
+		a.dismissDialogs()
 		a.clipboard.Clear()
 		a.statusBar.SetText("Locked")
 		a.showUnlockScreen()
 	})
+}
+
+// dismissDialogs removes every dialog (Fyne draws dialogs, including file
+// pickers, as overlays inside the window) so none outlives the session: an
+// export dialog left open must not write plaintext after a lock, and a
+// passphrase form must not linger over the unlock screen. Dialog callbacks
+// are not run.
+func (a *App) dismissDialogs() {
+	overlays := a.window.Canvas().Overlays()
+	for top := overlays.Top(); top != nil; top = overlays.Top() {
+		overlays.Remove(top)
+	}
 }
 
 // quit clears any secret vlt put on the clipboard and exits. It runs on the

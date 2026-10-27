@@ -154,11 +154,8 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 				}
 
 				ss.statusBar.SetText("Passphrase changed")
-				dialog.ShowInformation("Passphrase Changed",
-					"Your vault key is now protected by the new passphrase.\nThe vault will lock; unlock it with the new passphrase.",
-					ss.window,
-				)
-				ss.onRelock()
+				ss.relockThenInform("Passphrase Changed",
+					"Your vault key is now protected by the new passphrase.\nThe vault has locked; unlock it with the new passphrase.")
 			})
 	})
 	changeBtn.Importance = widget.HighImportance
@@ -294,11 +291,17 @@ func (ss *SettingsScreen) vaultMoved(newDir string, currentLabel *widget.Label) 
 	ss.log.Info("vault moved", "to", newDir)
 	ss.statusBar.SetText("Vault moved to " + newDir)
 
-	dialog.ShowInformation("Vault Moved",
-		fmt.Sprintf("Secrets copied to:\n  %s\n\nYou will be locked and must re-enter your passphrase.", newDir),
-		ss.window,
-	)
+	ss.relockThenInform("Vault Moved",
+		fmt.Sprintf("Secrets copied to:\n  %s\n\nThe vault has locked; unlock it at its new location.", newDir))
+}
+
+// relockThenInform locks the vault, then shows a message on top of the
+// unlock screen. Lock dismisses open dialogs from a queued fyne.Do, so the
+// message is queued after it rather than shown first.
+func (ss *SettingsScreen) relockThenInform(title, message string) {
 	ss.onRelock()
+	window := ss.window
+	fyne.Do(func() { dialog.ShowInformation(title, message, window) })
 }
 
 func (ss *SettingsScreen) switchVault(newDir string, currentLabel *widget.Label) {
