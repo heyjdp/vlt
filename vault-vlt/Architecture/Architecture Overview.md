@@ -45,7 +45,7 @@ graph TD
 | `cmd/vlt` | Read env config, set up `slog`, create the Fyne app and window | `main.go` |
 | `internal/crypto` | Generate the X25519 vault key and hold it in memguard; wrap/unwrap it with the passphrase (scrypt); encrypt and decrypt secrets to it | `identity.go`, `vault.go` |
 | `internal/store` | `Secret` JSON envelope, slugs and groups, directory CRUD, vault create/open/change-passphrase, format-1 migration, atomic writes, copy | `secret.go`, `store.go`, `vault.go`, `migrate.go`, `atomic.go` |
-| `internal/ui` | Lock state machine, screens, background runner, clipboard TTL, file import/export, settings | `app.go`, `runner.go`, `activity.go`, `create.go`, `unlock.go`, `detail.go`, `list.go`, `fileops.go`, `settings.go` |
+| `internal/ui` | Lock state machine, screens, background runner, clipboard TTL, file import/export, settings | `app.go`, `runner.go`, `activity.go`, `clipboard.go`, `create.go`, `unlock.go`, `detail.go`, `list.go`, `fileops.go`, `settings.go` |
 | `internal/testutil` | Test identities and secret builders | `fixtures.go` |
 
 ## Lock state machine

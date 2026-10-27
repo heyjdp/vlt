@@ -52,6 +52,7 @@ type App struct {
 	// UI components
 	lockWarning  *dialog.ConfirmDialog
 	tracker      *activityTracker
+	clipboard    *clipboardClearer
 	unlockScreen *UnlockScreen
 	createScreen *CreateScreen
 	mainContent  *fyne.Container
@@ -77,7 +78,18 @@ func newApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logge
 		newTimer: timers,
 	}
 
+	// Quitting is a lock-equivalent for the clipboard: the system clipboard
+	// outlives the process, so a copied secret is cleared first. Closing the
+	// window goes through the close intercept; the Quit menu item (Cmd+Q on
+	// macOS) bypasses it, so it gets its own action.
+	window.SetCloseIntercept(app.quit)
+	quitItem := fyne.NewMenuItem("Quit", app.quit)
+	quitItem.IsQuit = true
+	window.SetMainMenu(fyne.NewMainMenu(fyne.NewMenu("File", quitItem)))
+
 	app.statusBar = widget.NewLabel("Locked")
+	app.clipboard = newClipboardClearer(fyneApp.Clipboard(), app.statusBar,
+		func() time.Duration { return time.Duration(app.config.ClipboardTTLs) * time.Second }, timers)
 	app.showUnlockScreen()
 
 	return app
@@ -230,7 +242,7 @@ func (a *App) unlocked(s *store.Store) {
 // timer may clear concurrently. session is bound to the session context:
 // work still in flight when the vault locks has its result dropped.
 func (a *App) showMainView(s *store.Store, session runner) {
-	a.detailView = NewDetailView(a.window, s, a.config.ClipboardTTLs, a.statusBar, a.log, session)
+	a.detailView = NewDetailView(a.window, s, a.clipboard.Copy, a.statusBar, a.log, session)
 	a.secretList = NewSecretList(a.window, s, a.detailView, a.log, session)
 
 	// Every save, delete and import updates the list in place, whether the
@@ -307,8 +319,9 @@ func (a *App) showMainView(s *store.Store, session runner) {
 	a.secretList.Refresh()
 }
 
-// Lock zeros the vault key, cancels the session, and returns to the unlock
-// screen. It may be called from any goroutine (the auto-lock timer calls it).
+// Lock zeros the vault key, cancels the session, clears any secret vlt copied
+// to the clipboard, and returns to the unlock screen. It may be called from
+// any goroutine (the auto-lock timer calls it).
 func (a *App) Lock() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -328,9 +341,17 @@ func (a *App) Lock() {
 
 	fyne.Do(func() {
 		a.hideLockWarning()
+		a.clipboard.Clear()
 		a.statusBar.SetText("Locked")
 		a.showUnlockScreen()
 	})
+}
+
+// quit clears any secret vlt put on the clipboard and exits. It runs on the
+// main goroutine (window close intercept or the Quit menu item).
+func (a *App) quit() {
+	a.clipboard.Clear()
+	a.fyneApp.Quit()
 }
 
 // lockTimeout returns the configured auto-lock timeout; 0 disables it.

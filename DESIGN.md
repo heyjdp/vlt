@@ -178,6 +178,7 @@ vlt/
 │       ├── create.go        # Create-vault screen (passphrase + confirmation)
 │       ├── runner.go        # Background execution of vault I/O
 │       ├── activity.go      # Input tracking for auto-lock
+│       ├── clipboard.go     # Clipboard copy with auto-clear
 │       ├── list.go          # Secret browser (left panel)
 │       ├── detail.go        # Secret view/edit (right panel)
 │       └── settings.go      # Vault path, lock timeout, clipboard TTL
@@ -202,7 +203,8 @@ vlt/
 - `create.go` — shown instead of `unlock.go` when `store.Exists` is false: displays the target directory, takes the passphrase twice (at least 12 characters excluding surrounding spaces; five or more random words recommended), then `App` calls `store.Create`. If `store.Exists` returns an error (directory unreadable), an error screen with Retry is shown instead of either screen
 - `runner.go` — every blocking store call (unlock/create scrypt, list, save, delete, import, passphrase change, vault copy) runs off the Fyne main goroutine via `background`, which delivers the result with `fyne.Do`. Unlock and create show a progress bar with input disabled; save and passphrase change disable their button and show status text. After unlock, components share a runner bound to the session context: `Lock` cancels it, store calls receive it, and any result that arrives after the lock is dropped rather than shown or acted on. An unlock or create result for a screen that has since been replaced is discarded and its store closed. Saves, deletes and imports update the list row in place instead of re-listing (changes made during the first load are replayed onto it). Tests inject an inline or queued runner so app-level tests are deterministic
 - `list.go` — secret list; filters by search query; fires selection events. `Upsert`/`Remove` update rows in place, keep the current filter, and keep the highlight on the selected secret (moving it if its row moves, clearing it if the secret is deleted or filtered out)
-- `detail.go` — renders the correct form for the secret type; handles clipboard copy with TTL countdown
+- `detail.go` — renders the correct form for the secret type; its copy buttons call the app's `clipboardClearer`
+- `clipboard.go` — one `clipboardClearer` per app: per-copy countdown, clears only vlt's own value (SHA-256 check), cleared on lock
 - `settings.go` — vault path picker, auto-lock timeout slider, clipboard TTL slider
 - `app.go` — wires everything together; manages lock/unlock state; runs the inactivity timer
 
@@ -211,9 +213,11 @@ vlt/
 ## UX Features
 
 ### Clipboard Safety
-- Copying any secret value clears the clipboard after a configurable TTL (default: **30 seconds**)
+- Copying any secret value clears the clipboard after a configurable TTL (default: **30 seconds**); the TTL is read at each copy, so a Settings change applies to the next copy
 - A countdown is shown in the status bar while a value is in the clipboard
-- Implemented via a goroutine that writes an empty string to the clipboard on expiry
+- Implemented by one `clipboardClearer` per app (`clipboard.go`), driven by one-second timers. Each copy starts a new countdown generation, so an earlier copy can never cut a later one short
+- On expiry the clipboard is cleared only if it still holds the value vlt copied (compared by SHA-256, so no second plaintext copy is kept). Content copied from elsewhere in the meantime is left alone
+- Locking the vault or quitting clears vlt's value immediately and stops the countdown (quit is intercepted on window close and via the Quit menu item, because the system clipboard outlives the process). An empty clipboard read, which Fyne returns when the OS clipboard is locked by another program, is treated as vlt's value and cleared
 
 ### Session Lock
 - Auto-lock after N minutes of inactivity (default: **5 minutes**)
@@ -294,7 +298,7 @@ For macOS, wrap with `fyne package` to produce a proper `.app` bundle. For Windo
 - [ ] 10 MB size limit enforcement
 
 ### Phase 4 — Polish
-- [ ] Clipboard TTL with status bar countdown
+- [x] Clipboard TTL with status bar countdown
 - [ ] Auto-lock with inactivity timer
 - [ ] Search / filter
 - [ ] Settings screen (vault path, lock timeout, clipboard TTL)

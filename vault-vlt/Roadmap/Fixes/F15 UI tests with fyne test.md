@@ -40,7 +40,7 @@ Auto-lock is tested with an injectable `timerFactory` whose fake timers are fire
 | Edit | ✅ Editing a secret selected from a search-filtered list updates its row (`TestApp_SelectThenEditUpdatesFilteredRow`, `TestApp_SaveFromListSelectionUpdatesList`) |
 | Delete | ✅ Deleting a selected secret removes its row and clears the selection (`TestApp_SelectThenDeleteRemovesRowAndClearsSelection`, `TestApp_DeleteRemovesSecretFromList`). The confirmation dialog itself (`confirmDelete`) is not yet driven by a test |
 | Auto-lock | ✅ Typing postpones it; idleness locks; warning works (`internal/ui/activity_test.go`). No secrets referenced after lock: see [[F11 Memory hygiene and honest docs]] |
-| Clipboard | Copy A then B, B lasts the full TTL ([[F08 Correct clipboard clearing]]) |
+| Clipboard | ✅ Copy A then B, B lasts the full TTL; unrelated content kept; lock clears (`internal/ui/clipboard_test.go`) |
 | Import | A failing reader saves nothing ([[F09 Fail import on read errors]]). ✅ Import adds to the list (`TestApp_ImportAddsSecretToList`) |
 
 ## Acceptance criteria

@@ -26,7 +26,7 @@ created: 2026-10-27
 `Config` is built from environment variables in `main.go` and only changed in memory by `SettingsScreen`:
 - After **Move Vault**, the next launch opens the *old* directory.
 - Auto-lock and clipboard TTL changes are lost on restart.
-- `DetailView` copies `clipboardTTL` when it's constructed (`internal/ui/detail.go:36`), so a TTL change doesn't apply until the next unlock.
+- ~~`DetailView` copies `clipboardTTL` when it's constructed, so a TTL change doesn't apply until the next unlock~~ (fixed in [[F08 Correct clipboard clearing]]: the TTL is read at each copy)
 
 ## Fix
 - Store non-secret settings with `fyne.App.Preferences()` (keys `vaultDir`, `lockTimeoutMs`, `clipboardTTLs`), or in a small JSON file in the OS config dir.
@@ -36,7 +36,7 @@ created: 2026-10-27
 
 ## Acceptance criteria
 - [ ] Moving the vault and relaunching opens the new location
-- [ ] A TTL change applies to the next copy without relocking
+- [x] A TTL change applies to the next copy without relocking (F08: `TestApp_ClipboardTTLChangeAppliesToNextCopy`)
 - [ ] Out-of-range env values are clamped and logged
 
 ## Related

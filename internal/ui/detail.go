@@ -18,15 +18,16 @@ import (
 // DetailView displays and edits a secret's details. Its methods must be
 // called on the Fyne main goroutine; store calls run in the background.
 type DetailView struct {
-	window       fyne.Window
-	store        *store.Store
-	clipboardTTL int
-	statusBar    *widget.Label
-	log          *slog.Logger
-	run          runner
-	groups       func() []string
-	onSaved      func(*store.Secret)
-	onDeleted    func(*store.Secret)
+	window fyne.Window
+	store  *store.Store
+	// copyValue copies a secret value to the clipboard (with auto-clear).
+	copyValue func(string)
+	statusBar *widget.Label
+	log       *slog.Logger
+	run       runner
+	groups    func() []string
+	onSaved   func(*store.Secret)
+	onDeleted func(*store.Secret)
 
 	content *fyne.Container
 	// current is the existing secret shown in the panel, or nil when the
@@ -44,17 +45,18 @@ type DetailView struct {
 	fileOps  *FileOps
 }
 
-// NewDetailView creates a new detail panel.
-func NewDetailView(window fyne.Window, s *store.Store, clipboardTTL int, statusBar *widget.Label, log *slog.Logger, run runner) *DetailView {
+// NewDetailView creates a new detail panel. copyValue puts a secret value on
+// the clipboard; the app's clipboardClearer clears it after the TTL.
+func NewDetailView(window fyne.Window, s *store.Store, copyValue func(string), statusBar *widget.Label, log *slog.Logger, run runner) *DetailView {
 	dv := &DetailView{
-		window:       window,
-		store:        s,
-		clipboardTTL: clipboardTTL,
-		statusBar:    statusBar,
-		log:          log,
-		run:          run,
-		groups:       func() []string { return nil },
-		activity:     noActivity,
+		window:    window,
+		store:     s,
+		copyValue: copyValue,
+		statusBar: statusBar,
+		log:       log,
+		run:       run,
+		groups:    func() []string { return nil },
+		activity:  noActivity,
 	}
 
 	dv.content = container.NewVBox(
@@ -186,7 +188,7 @@ func (dv *DetailView) showPasswordDetail(secret *store.Secret, isNew bool) {
 	notesEntry.SetMinRowsVisible(3)
 
 	copyBtn := widget.NewButton("Copy Password", func() {
-		dv.copyToClipboard(secret.Value)
+		dv.copyValue(secret.Value)
 	})
 	if isNew {
 		copyBtn.Disable()
@@ -278,10 +280,10 @@ func (dv *DetailView) showRecordDetail(secret *store.Secret, isNew bool) {
 	notesEntry.SetMinRowsVisible(3)
 
 	copyPassBtn := widget.NewButton("Copy Password", func() {
-		dv.copyToClipboard(secret.Password)
+		dv.copyValue(secret.Password)
 	})
 	copyUserBtn := widget.NewButton("Copy Username", func() {
-		dv.copyToClipboard(secret.Username)
+		dv.copyValue(secret.Username)
 	})
 	if isNew {
 		copyPassBtn.Disable()
@@ -482,27 +484,6 @@ func (dv *DetailView) exportFile(secret *store.Secret) {
 		return
 	}
 	dv.fileOps.ExportFile(secret)
-}
-
-// copyToClipboard copies a value to the clipboard with TTL countdown.
-func (dv *DetailView) copyToClipboard(value string) {
-	dv.window.Clipboard().SetContent(value)
-	ttl := dv.clipboardTTL
-
-	dv.statusBar.SetText(fmt.Sprintf("Copied to clipboard (clearing in %ds)", ttl))
-
-	go func() {
-		for i := ttl; i > 0; i-- {
-			time.Sleep(1 * time.Second)
-			fyne.Do(func() {
-				dv.statusBar.SetText(fmt.Sprintf("Clipboard clears in %ds", i-1))
-			})
-		}
-		fyne.Do(func() {
-			dv.window.Clipboard().SetContent("")
-			dv.statusBar.SetText("Clipboard cleared")
-		})
-	}()
 }
 
 // parseTags splits a comma-separated string into tags.

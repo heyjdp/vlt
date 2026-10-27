@@ -37,7 +37,7 @@ See [[Security Model#Where key material lives (after F01)]]. In short:
 
 ## Fix
 - Clear the unlock and change-passphrase entries right after reading them, on **every** path.
-- In `Lock()`, nil out `secretList`, `detailView` and `unlockScreen`, and clear the clipboard ([[F08 Correct clipboard clearing]]).
+- In `Lock()`, nil out `secretList`, `detailView` and `unlockScreen`. The clipboard is already cleared on lock by [[F08 Correct clipboard clearing]].
 - ✅ The passphrase is discarded after unwrapping (F01). Remaining: decide whether to parse the key per operation (more transient copies) or keep one parsed copy (current), and document the trade-off.
 - Rewrite the README and DESIGN security sections to describe **best-effort** protection and its limits (Go strings, GC, Fyne widgets).
 

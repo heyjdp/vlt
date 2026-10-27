@@ -8,11 +8,13 @@ tags:
   - ui
   - security
 severity: high
-status: todo
+status: done
 phase: 2
 area: ui
 review_finding: "#8"
 files:
+  - internal/ui/clipboard.go
+  - internal/ui/clipboard_test.go
   - internal/ui/detail.go
   - internal/ui/app.go
 depends_on: []
@@ -40,10 +42,26 @@ Two goroutines also write competing countdowns to the status bar. Other problems
 - `Lock()` clears immediately (with the same check) and cancels the countdown.
 - Use a `time.Ticker` for the status countdown, stopped via the context.
 
+## As shipped
+- `clipboardClearer` (`clipboard.go`), one per app, uses chained one-second timers from the app's `timerFactory` instead of a `time.Timer` plus `time.Ticker`.
+- Each copy starts a new generation; ticks of older generations do nothing. This replaces the planned cancel context.
+- On expiry, `Lock` or quit, the clipboard is cleared only if it still holds vlt's value (SHA-256 comparison). An empty read, meaning the OS clipboard couldn't be read, is treated as vlt's value.
+- Quit is intercepted on window close and through a *Quit* menu item.
+- The TTL is read at each copy. A non-positive TTL falls back to 30 s, and empty values aren't copied.
+
 ## Acceptance criteria
-- [ ] Copy A then B: B survives a full $\tau$
-- [ ] An unrelated copy after vlt's copy isn't wiped
-- [ ] Lock clears the clipboard and leaves no goroutines (check `runtime.NumGoroutine` or goleak in the test)
+- [x] Copy A then B: B survives a full TTL: `TestClipboard_SecondCopyGetsTheFullTTL`
+- [x] An unrelated copy isn't wiped: `TestClipboard_LeavesUnrelatedContentAlone`, `_ClearLeavesUnrelatedContentAlone`
+- [x] Lock clears the clipboard and leaves no goroutines: `TestApp_LockClearsCopiedSecret`, `TestClipboard_ClearWipesImmediatelyAndStops`, `_RealTimersLeaveNoGoroutines` (real timers with `runtime.NumGoroutine`, not goleak)
+- [x] Quit clears too: `TestApp_QuitClearsCopiedSecret`
+
+## Outcome
+Verification found and fixed:
+- Quitting left a copied secret on the system clipboard. Fyne's `OnStopped` runs after GLFW shuts down, so close and quit are intercepted instead.
+- On Windows, a blocked clipboard read returning "" made the digest check skip the wipe.
+- A surviving test mutant: copy not stopping the previous timer.
+
+As a side effect, this also removed the deprecated `Window.Clipboard` calls (SA1019).
 
 ## Related
 - [[Security Model]] · [[F06 Persist settings]]

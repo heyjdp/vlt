@@ -13,7 +13,7 @@ vlt replaces ad-hoc PGP-encrypted text file workflows with a structured, portabl
 - **Secret types** — passwords, structured login records (URL/username/password/TOTP), and encrypted files
 - **Groups** — organise secrets into groups (work, personal, etc.) with a dropdown that shows existing groups and accepts new ones
 - **Search** — instant filter across secret names, groups, and tags
-- **Clipboard safety** — copied values are cleared after a configurable TTL (default 30s) with a countdown in the status bar
+- **Clipboard safety** — copied values are cleared after a configurable TTL (default 30s) with a countdown in the status bar. Each copy gets its own full TTL; the clipboard is cleared only if it still holds the value vlt copied (anything you copied since from another app is left alone); locking the vault or quitting vlt clears it immediately
 - **Auto-lock** — vault locks after a configurable period of inactivity (default 5 minutes), zeroing the vault key from memory. Typing, pressing buttons, selecting secrets, moving sliders and answering dialogs count as activity; scrolling and pointer movement do not. With a timeout of a minute or more, a warning appears 30 seconds before locking: *Stay unlocked* (or any other input) restarts the countdown and *Lock now* locks immediately
 - **File import/export** — import files via picker (base64-encoded, MIME detected, 10 MB limit), export to disk via save dialog
 - **Passphrase verification** — a wrong passphrase fails immediately when `vlt.age` (the wrapped vault key) cannot be decrypted
@@ -176,7 +176,7 @@ The test suite covers:
 
 - **crypto** — vault-key generation, wrap/unwrap with a passphrase, wrong-passphrase rejection, zeroing, encrypt/decrypt round-trips, X25519-only secret encryption, legacy passphrase decryption
 - **store** — secret types and JSON marshalling, slugification, name validation, group normalisation, CRUD operations (create/update/get/delete/list), refusal to overwrite on create and on slug collision, group listing, vault create/open/exists, one-scrypt-per-unlock check, passphrase change (only `vlt.age` rewritten, failures keep the old passphrase), format-1 migration (including resume after a crash), atomic writes, vault copy, `List` stopping when its context is cancelled
-- **ui** — new-vault passphrase validation, create-vault screen (mismatch rejected and confirmation cleared; both entries cleared on success), choosing the create, unlock or error screen; unlock and create running off the UI thread with progress shown; stale unlock results discarded after a vault switch; secrets loaded into the list; saves, deletes and imports updating the list in place, including for secrets selected from a search-filtered list (a delete clears the highlight only if it was on that secret; changes made during the first load are kept; an import that replaces the open secret re-renders its form); work completing after lock being dropped; and lock cancelling the initial list load (headless `fyne/test` with inline and queued runners); auto-lock reset by typing in forms, search and list selection, locking when idle, the pre-lock warning and its dismissal, timeout changes applied on next activity, and no timers when disabled (fake timers fired by hand)
+- **ui** — new-vault passphrase validation, create-vault screen (mismatch rejected and confirmation cleared; both entries cleared on success), choosing the create, unlock or error screen; unlock and create running off the UI thread with progress shown; stale unlock results discarded after a vault switch; secrets loaded into the list; saves, deletes and imports updating the list in place, including for secrets selected from a search-filtered list (a delete clears the highlight only if it was on that secret; changes made during the first load are kept; an import that replaces the open secret re-renders its form); work completing after lock being dropped; and lock cancelling the initial list load (headless `fyne/test` with inline and queued runners); auto-lock reset by typing in forms, search and list selection, locking when idle, the pre-lock warning and its dismissal, timeout changes applied on next activity, and no timers when disabled (fake timers fired by hand); clipboard clearing after the TTL, a second copy getting its own full TTL, unrelated clipboard content left alone, lock clearing the clipboard, a TTL change applying to the next copy, and a non-positive TTL falling back to the default
 
 All tests use `t.Parallel()`, the race detector, and `t.TempDir()` for filesystem isolation.
 
@@ -229,6 +229,7 @@ internal/
 │   ├── create.go            Create-vault screen (passphrase + confirmation)
 │   ├── runner.go            Runs vault I/O off the UI thread, results via fyne.Do
 │   ├── activity.go          Tracks user input for the auto-lock countdown
+│   ├── clipboard.go         Copies secrets and clears them after the TTL or on lock
 │   ├── list.go              Secret browser with search/filter
 │   ├── detail.go            View/edit forms for all secret types, clipboard copy
 │   ├── fileops.go           File import (picker, base64, MIME) and export
