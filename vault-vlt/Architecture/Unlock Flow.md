@@ -10,7 +10,7 @@ created: 2026-10-27
 
 ## Current flow (after F10)
 
-`App.showUnlockScreen` checks `store.Exists` first and shows either the unlock screen or the create-vault screen. `onUnlock` (existing vault) and `onCreate` (new vault) run in the background via `runner.background`. Their results return through `fyne.Do`, and a result for a screen that has since been replaced is discarded.
+`App.showUnlockScreen` checks `store.Exists` first and shows either the unlock screen or the create-vault screen. The passphrase entry is cleared as soon as it's read, and the passphrase is used once to unwrap `vlt.age` and then dropped. `onUnlock` (existing vault) and `onCreate` (new vault) run in the background via `runner.background`. Their results return through `fyne.Do`, and a result for a screen that has since been replaced is discarded.
 
 ```mermaid
 sequenceDiagram

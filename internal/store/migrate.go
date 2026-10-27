@@ -129,7 +129,8 @@ func (s *Store) migrateFile(passphrase, path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if _, err := crypto.Decrypt(s.id, data); err == nil {
+	if probe, err := crypto.Decrypt(s.id, data); err == nil {
+		crypto.Wipe(probe) // already migrated; the plaintext is not needed
 		return false, nil
 	}
 

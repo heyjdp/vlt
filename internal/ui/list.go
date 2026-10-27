@@ -248,3 +248,15 @@ func (sl *SecretList) syncSelection() {
 	sl.list.UnselectAll()
 	sl.reselecting = false
 }
+
+// clear drops every loaded secret (used when the vault locks).
+func (sl *SecretList) clear() {
+	for _, s := range sl.secrets {
+		*s = store.Secret{} // empty the struct itself, not just the slice
+	}
+	sl.secrets, sl.filtered, sl.replay, sl.selected = nil, nil, nil, nil
+	sl.searchEntry.OnChanged = nil // clearing the search is not user activity
+	sl.searchEntry.SetText("")
+	sl.list.OnSelected, sl.list.OnUnselected = nil, nil
+	sl.list.Refresh()
+}

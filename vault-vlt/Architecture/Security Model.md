@@ -14,8 +14,8 @@ created: 2026-10-27
 |---|---|---|---|
 | Vault files at rest | Offline brute force | age scrypt, $N=2^{18}$ | Depends on passphrase strength ([[Passphrase Strength]]) |
 | Vault key in RAM | Memory dump, swap, core file | Encoded key in `memguard.LockedBuffer` | Parsed key and string copies on the Go heap (below) |
-| Passphrase in RAM | Same | Used only to unwrap `vlt.age`, then dropped | Lives in Fyne entry text and Go strings ([[F11 Memory hygiene and honest docs]]) |
-| Decrypted secrets in RAM | Same | none | Held as Go `string`s, kept after lock |
+| Passphrase in RAM | Same | Entries cleared on read; used only to unwrap `vlt.age`, then dropped ([[F11 Memory hygiene and honest docs]]) | Go strings reachable until GC |
+| Decrypted secrets in RAM | Same | Emptied and dereferenced on lock; byte buffers vlt owns zeroed ([[F11 Memory hygiene and honest docs]]) | Strings on the heap until GC, not overwritten; library-internal copies |
 | Clipboard | Other apps, clipboard history | TTL clear of vlt's own value; cleared on lock ([[F08 Correct clipboard clearing]]) | OS clipboard history or managers may keep a copy |
 | Unattended session | Shoulder surfing | Auto-lock on real inactivity, with a 30 s warning ([[F07 Inactivity-based auto-lock]]) | Scrolling and pointer movement don't count as activity |
 | Vault integrity | Crash mid-write, partial re-encrypt | Per-file atomic writes ([[F02 Atomic file writes]]); passphrase change rewrites one file and migration is resumable ([[F01 Scrypt-wrapped identity]]) | Concurrent writers other than migration are not coordinated |
@@ -24,7 +24,7 @@ created: 2026-10-27
 
 ```mermaid
 flowchart TB
-    E["widget.Entry.Text<br/>(passphrase string)"] -->|"onUnlock / onCreate"| P["passphrase string"]
+    E["widget.Entry.Text<br/>(cleared on read)"] -->|"onUnlock / onCreate"| P["passphrase string"]
     P -->|"1× scrypt"| U["decrypted vlt.age<br/>[]byte secret key"]
     U -->|"moved, source wiped"| LB["memguard LockedBuffer ✅"]
     LB -->|"string(buf.Bytes())"| S2["string copy<br/>(parse, once)"]
@@ -41,10 +41,10 @@ The passphrase is no longer held for the session. It is used once to unwrap `vlt
 
 Perfect memory hygiene isn't achievable in Go with a GUI toolkit that hands back `string`s. A reasonable target:
 
-1. Clear the unlock entry right after reading it.
-2. On lock, drop every reference to decrypted secrets (`secretList`, `detailView`). The clipboard is already cleared on lock (✅ F08).
+1. ✅ Clear the unlock entry right after reading it (F11).
+2. ✅ On lock, empty and drop every reference to decrypted secrets (F11). The clipboard is cleared on lock (F08).
 3. ✅ Done in [[F01 Scrypt-wrapped identity]]: the long-lived secret is the X25519 vault key, and the passphrase is used only to unwrap it.
-4. Document the remaining limits plainly.
+4. ✅ Document the remaining limits plainly (F11).
 
 ## Related
 - [[Architecture Overview]]

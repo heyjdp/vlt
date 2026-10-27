@@ -227,6 +227,7 @@ func Open(ctx context.Context, dir, passphrase string, log *slog.Logger, opts ..
 		return s, nil
 
 	case string(plaintext) == legacySentinel:
+		crypto.Wipe(plaintext)
 		return beginMigration(ctx, dir, passphrase, log, o)
 
 	default:

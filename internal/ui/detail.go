@@ -559,3 +559,39 @@ func trimSpace(s string) string {
 	}
 	return s[start:end]
 }
+
+// clear drops the shown secret and its form (used when the vault locks). The
+// form's entries are blanked first: Fyne's renderer cache can keep the
+// widgets reachable for a while after they leave the window.
+func (dv *DetailView) clear() {
+	dv.onRender = nil // blanking is not a render the tracker should see
+	for _, obj := range dv.content.Objects {
+		blankEntries(obj)
+	}
+	if dv.current != nil {
+		*dv.current = store.Secret{}
+	}
+	if dv.fileOps != nil {
+		dv.fileOps.dropPending()
+	}
+	dv.current = nil
+	dv.content.Objects = nil
+	dv.content.Refresh()
+	dv.onSaved, dv.onDeleted, dv.onRender = nil, nil, nil
+}
+
+// blankEntries empties every entry in obj's tree without firing callbacks.
+func blankEntries(obj fyne.CanvasObject) {
+	switch w := obj.(type) {
+	case *fyne.Container:
+		for _, child := range w.Objects {
+			blankEntries(child)
+		}
+	case *widget.Entry:
+		w.OnChanged = nil
+		w.SetText("")
+	case *widget.SelectEntry:
+		w.OnChanged = nil
+		w.SetText("")
+	}
+}

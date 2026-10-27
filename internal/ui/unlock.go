@@ -80,9 +80,12 @@ func (s *UnlockScreen) PassphraseEntry() *widget.Entry {
 	return s.entry
 }
 
-// submit handles the unlock button press.
+// submit hands the passphrase to onUnlock. The entry is cleared as soon as
+// it is read (SetText also clears the entry's undo history), so the
+// passphrase does not stay in the widget while the vault is open.
 func (s *UnlockScreen) submit() {
 	passphrase := s.entry.Text
+	s.entry.SetText("")
 	if passphrase == "" {
 		s.ShowError("Passphrase cannot be empty")
 		return

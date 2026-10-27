@@ -37,6 +37,9 @@ type FileOps struct {
 	// activity reports user input in the file and form dialogs, which are
 	// outside the instrumented widget tree.
 	activity func()
+	// pending is decoded file content waiting for the user to pick an export
+	// path; dropPending wipes it if the dialog is dismissed by a lock.
+	pending []byte
 }
 
 // NewFileOps creates a file operations handler. groups supplies group
@@ -286,7 +289,10 @@ func (fo *FileOps) ExportFile(secret *store.Secret) {
 
 // askExportPath shows the save dialog and writes data to the chosen file.
 func (fo *FileOps) askExportPath(name, filename string, data []byte) {
+	fo.dropPending()
+	fo.pending = data
 	fd := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
+		fo.pending = nil
 		fo.saveExport(writer, err, name, filename, data)
 	}, fo.window)
 
@@ -340,6 +346,15 @@ func (fo *FileOps) saveExport(writer fyne.URIWriteCloser, err error, name, filen
 				fo.window,
 			)
 		})
+}
+
+// dropPending wipes decoded export content whose save dialog never
+// completed (for example because a lock dismissed it).
+func (fo *FileOps) dropPending() {
+	if fo.pending != nil {
+		crypto.Wipe(fo.pending)
+		fo.pending = nil
+	}
 }
 
 // writeExport writes data to w and closes it, then wipes data. A failed

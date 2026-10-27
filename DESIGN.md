@@ -311,9 +311,14 @@ For macOS, wrap with `fyne package` to produce a proper `.app` bundle. For Windo
 ## Security Considerations
 
 - The passphrase is never stored on disk; on disk, only the passphrase-encrypted vault key (`vlt.age`) and secrets encrypted to it exist
-- The vault key's encoded form is held in a `memguard.LockedBuffer` (mlock'd, guard pages) and explicitly zeroed on lock; age's parsed key and transient string copies live on the Go heap until garbage-collected, so this is best-effort
-- Secret plaintext exists in memory only during the active session and is not cached between operations
+
+**Memory protection is best-effort.** Go strings are immutable and cannot be wiped, the garbage collector may copy memory, and Fyne keeps widget text as strings. vlt therefore limits *how long* and *where* secrets are reachable rather than promising they are erased:
+
+- The passphrase is read from the unlock (or change-passphrase) entry and the entry is cleared immediately, on every path (`SetText` also clears the entry's undo history). It is used once to unwrap `vlt.age` and is not kept for the session
+- The vault key's encoded form is held in a `memguard.LockedBuffer` (mlock'd, guard pages) and destroyed on lock and exit. age's parsed `X25519Identity` is kept alongside it for the session (parsing once, rather than per operation, avoids a fresh heap copy of the key for every secret); it and one transient string copy remain on the Go heap until garbage-collected
+- Decrypted secrets are held, as Go strings, by the secret list and the detail panel while the vault is unlocked. On lock, vlt empties every loaded secret struct and blanks the detail form's entries (Fyne's renderer cache can keep old widgets reachable for a minute or more after they leave the window, so emptying beats merely dropping), then drops its references to the list, detail panel, main view and activity tracker, dismisses open dialogs (wiping a pending export buffer), and clears the clipboard if it still holds the value vlt copied. The strings are reclaimed by the garbage collector, not overwritten; background work still in flight at the lock keeps its own copy until it completes and its result is dropped
+- Decrypted JSON and file buffers (`[]byte`) that vlt owns are zeroed once parsed, encoded or written (including every secret read while listing the vault). Intermediate copies made inside `io.ReadAll`, age and `encoding/json` are not
 - The vault directory should be on a local filesystem — storing it on a network share or cloud-synced folder is the user's responsibility
 - All vault writes go through a temp-file + fsync + rename + directory-fsync helper, so a crash or full disk never leaves a truncated `.age` file (directory fsync is skipped on Windows). Atomicity is per file, so multi-file operations are ordered so any interrupted prefix leaves the vault readable: passphrase change rewrites only `vlt.age`, and format-1 migration writes the new key to a staging file before touching secrets and swaps `vlt.age` only after every secret is re-encrypted
-- File permissions on the vault directory should be set to `0700` on creation (Unix); `vlt` enforces this on startup and warns if they have been widened
+- vlt creates vault directories with mode `0700` and files with `0600` (Unix). A directory that already existed keeps its mode, and vlt does not re-check or repair permissions later, so permissions widened by other tools stay widened
 

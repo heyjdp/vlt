@@ -117,9 +117,14 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 	changeBtn = widget.NewButton("Change Passphrase", func() {
 		errorLabel.Hide()
 
+		// Read, then clear, the passphrase entries on every path so no
+		// passphrase lingers in a widget.
 		current := currentEntry.Text
 		newPass := newEntry.Text
 		confirm := confirmEntry.Text
+		currentEntry.SetText("")
+		newEntry.SetText("")
+		confirmEntry.SetText("")
 
 		if current == "" || newPass == "" || confirm == "" {
 			errorLabel.SetText("All fields are required")
@@ -147,9 +152,6 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 			},
 			func(_ none, err error) {
 				changeBtn.Enable()
-				currentEntry.SetText("")
-				newEntry.SetText("")
-				confirmEntry.SetText("")
 				if err != nil {
 					ss.statusBar.SetText("")
 					if errors.Is(err, store.ErrWrongPassphrase) {

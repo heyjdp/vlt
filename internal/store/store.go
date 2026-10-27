@@ -286,7 +286,9 @@ func (s *Store) List(ctx context.Context) ([]*Secret, error) {
 			}
 
 			var secret Secret
-			if err := json.Unmarshal(plaintext, &secret); err != nil {
+			err = json.Unmarshal(plaintext, &secret)
+			crypto.Wipe(plaintext)
+			if err != nil {
 				s.log.Warn("failed to unmarshal secret", "path", path, "err", err)
 				continue
 			}

@@ -69,5 +69,6 @@ Progress is tracked in the [[Roadmap]]. Completed so far:
 - [[F08 Correct clipboard clearing]]: per-copy countdown, clears only vlt's value, cleared on lock and quit
 - [[F09 Fail import on read errors]]: read errors and oversized files fail the import; file I/O runs in the background; dialogs are dismissed on lock
 - [[F06 Persist settings]]: settings saved per change in Fyne preferences; env values never saved; a new vault path saved only once opened
+- [[F11 Memory hygiene and honest docs]]: passphrase entries cleared on read; lock empties secrets and drops references; docs state best-effort limits
 
 These findings became the five-phase [[Roadmap]]. The storage-format change ([[ADR-001 Scrypt-wrapped X25519 identity]]) goes first because it's cheapest before real vaults exist that would need migrating.

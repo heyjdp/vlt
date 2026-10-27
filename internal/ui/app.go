@@ -320,8 +320,6 @@ func (a *App) showMainView(s *store.Store, session runner) {
 // any goroutine (the auto-lock timer calls it).
 func (a *App) Lock() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	if a.store != nil {
 		a.store.Close()
 	}
@@ -332,13 +330,16 @@ func (a *App) Lock() {
 	a.stopLockTimers()
 
 	a.store = nil
-	a.tracker = nil
+	a.mu.Unlock()
 	a.log.Info("vault locked")
 
+	// UI work runs without a.mu held: widget callbacks may call back into
+	// the app (for example resetLockTimer), and fyne.Do can run inline.
 	fyne.Do(func() {
 		a.hideLockWarning()
 		a.dismissDialogs()
 		a.clipboard.Clear()
+		a.dropSession()
 		a.statusBar.SetText("Locked")
 		a.showUnlockScreen()
 	})
@@ -364,6 +365,27 @@ func (a *App) saveSetting(setting string) {
 	case prefClipboardTTL:
 		SaveClipboardTTL(prefs, a.config.ClipboardTTLs)
 	}
+}
+
+// dropSession releases the references vlt holds to decrypted secrets: it
+// empties every loaded secret struct (so anything still pointing at one,
+// such as a closure in a widget held by Fyne's renderer cache, reaches only
+// empty fields), blanks the detail form's entries, wipes a pending export
+// buffer, and drops the list, detail panel, main view and activity tracker.
+// Go cannot wipe the strings themselves; they become unreachable and are
+// reclaimed by the garbage collector. Background work still in flight holds
+// its own copy until it completes and its result is dropped. It runs on the
+// main goroutine.
+func (a *App) dropSession() {
+	if a.detailView != nil {
+		a.detailView.clear()
+	}
+	if a.secretList != nil {
+		a.secretList.clear()
+	}
+	a.secretList, a.detailView, a.mainContent, a.tracker = nil, nil, nil, nil
+	a.window.Canvas().SetOnTypedKey(nil)
+	a.window.Canvas().SetOnTypedRune(nil)
 }
 
 // dismissDialogs removes every dialog (Fyne draws dialogs, including file
