@@ -20,26 +20,28 @@ import (
 
 const maxFileSize = 10 * 1024 * 1024 // 10 MB
 
-// FileOps handles file import and export operations.
+// FileOps handles file import and export operations. Store calls run in the
+// background.
 type FileOps struct {
-	window    fyne.Window
+	window     fyne.Window
 	vaultStore *store.Store
-	log       *slog.Logger
-	onSave    func()
+	log        *slog.Logger
+	run        runner
+	groups     func() []string
+	onSaved    func(*store.Secret)
 }
 
-// NewFileOps creates a file operations handler.
-func NewFileOps(window fyne.Window, s *store.Store, log *slog.Logger) *FileOps {
+// NewFileOps creates a file operations handler. groups supplies group
+// suggestions and onSaved is called with each imported secret.
+func NewFileOps(window fyne.Window, s *store.Store, log *slog.Logger, run runner, groups func() []string, onSaved func(*store.Secret)) *FileOps {
 	return &FileOps{
-		window:    window,
+		window:     window,
 		vaultStore: s,
-		log:       log,
+		log:        log,
+		run:        run,
+		groups:     groups,
+		onSaved:    onSaved,
 	}
-}
-
-// SetOnSave sets a callback invoked after a successful import.
-func (fo *FileOps) SetOnSave(fn func()) {
-	fo.onSave = fn
 }
 
 // ImportFile opens a file picker and imports the selected file as a file secret.
@@ -91,8 +93,7 @@ func (fo *FileOps) processImport(reader fyne.URIReadCloser) {
 	encoded := base64.StdEncoding.EncodeToString(data)
 
 	// Ask for group before saving
-	groups := fo.vaultStore.Groups()
-	groupEntry := widget.NewSelectEntry(groups)
+	groupEntry := widget.NewSelectEntry(fo.groups())
 	groupEntry.SetPlaceHolder("Group (e.g. work, personal)")
 
 	dialog.ShowForm("Import File — Select Group",
@@ -119,30 +120,50 @@ func (fo *FileOps) processImport(reader fyne.URIReadCloser) {
 				Value:            encoded,
 			}
 
-			err := fo.vaultStore.Create(context.Background(), secret)
+			fo.importSecret(secret, totalRead)
+		},
+		fo.window,
+	)
+}
+
+// importSecret creates an imported file secret in the background, asking
+// before replacing an existing one.
+func (fo *FileOps) importSecret(secret *store.Secret, size int) {
+	background(fo.run,
+		func(ctx context.Context) (none, error) { return none{}, fo.vaultStore.Create(ctx, secret) },
+		func(_ none, err error) {
 			if errors.Is(err, store.ErrSecretExists) {
-				fo.confirmReplace(secret, totalRead)
+				fo.confirmReplace(secret, size)
 				return
 			}
 			if err != nil {
 				dialog.ShowError(fmt.Errorf("failed to save file secret: %w", err), fo.window)
 				return
 			}
-			fo.importDone(secret, totalRead)
-		},
-		fo.window,
-	)
+			fo.importDone(secret, size)
+		})
 }
 
 // confirmReplace asks before overwriting an existing secret with an import.
 // If the file is held by a differently named secret (same slug), replacing
 // is impossible and the user is told to rename instead.
 func (fo *FileOps) confirmReplace(secret *store.Secret, size int) {
-	existing, err := fo.vaultStore.Get(context.Background(), secret.Name, secret.Group)
-	if err != nil {
-		dialog.ShowError(fmt.Errorf("import failed: %w", err), fo.window)
-		return
-	}
+	background(fo.run,
+		func(ctx context.Context) (*store.Secret, error) {
+			return fo.vaultStore.Get(ctx, secret.Name, secret.Group)
+		},
+		func(existing *store.Secret, err error) {
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("import failed: %w", err), fo.window)
+				return
+			}
+			fo.askReplace(secret, existing, size)
+		})
+}
+
+// askReplace shows the replace confirmation for an import whose name is
+// already taken by existing.
+func (fo *FileOps) askReplace(secret, existing *store.Secret, size int) {
 	if existing.Name != secret.Name {
 		dialog.ShowError(fmt.Errorf("cannot import %q: its filename is already used by %q in group %q; rename the file and import again",
 			secret.Name, existing.Name, secret.Group), fo.window)
@@ -154,11 +175,15 @@ func (fo *FileOps) confirmReplace(secret *store.Secret, size int) {
 			if !replace {
 				return
 			}
-			if err := fo.vaultStore.Update(context.Background(), secret); err != nil {
-				dialog.ShowError(fmt.Errorf("replace failed: %w", err), fo.window)
-				return
-			}
-			fo.importDone(secret, size)
+			background(fo.run,
+				func(ctx context.Context) (none, error) { return none{}, fo.vaultStore.Update(ctx, secret) },
+				func(_ none, err error) {
+					if err != nil {
+						dialog.ShowError(fmt.Errorf("replace failed: %w", err), fo.window)
+						return
+					}
+					fo.importDone(secret, size)
+				})
 		},
 		fo.window,
 	)
@@ -171,8 +196,8 @@ func (fo *FileOps) importDone(secret *store.Secret, size int) {
 		fmt.Sprintf("Imported %q to group %q (%s, %d bytes)", secret.Name, secret.Group, secret.MIMEType, size),
 		fo.window,
 	)
-	if fo.onSave != nil {
-		fo.onSave()
+	if fo.onSaved != nil {
+		fo.onSaved(secret)
 	}
 }
 

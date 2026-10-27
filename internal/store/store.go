@@ -70,7 +70,10 @@ func (s *Store) Init() error {
 // a different name with the same slug (e.g. "GitHub Key" and "github-key"),
 // so it never overwrites. The name must pass NewSecretName. The secret's Name
 // and Group are normalised in place.
-func (s *Store) Create(_ context.Context, secret *Secret) error {
+func (s *Store) Create(ctx context.Context, secret *Secret) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("store.Create: %w", err)
+	}
 	sn, err := NewSecretName(secret.Name)
 	if err != nil {
 		return fmt.Errorf("store.Create: %w", err)
@@ -106,6 +109,9 @@ func (s *Store) Create(_ context.Context, secret *Secret) error {
 // copy. Names that predate NewSecretName's rules are accepted here so legacy
 // secrets stay editable.
 func (s *Store) Update(ctx context.Context, secret *Secret) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("store.Update: %w", err)
+	}
 	name, err := lookupName(secret.Name)
 	if err != nil {
 		return fmt.Errorf("store.Update: %w", err)
@@ -177,7 +183,10 @@ func (s *Store) path(name, group string) string {
 }
 
 // Get decrypts and returns a secret by name and group.
-func (s *Store) Get(_ context.Context, name string, group string) (*Secret, error) {
+func (s *Store) Get(ctx context.Context, name string, group string) (*Secret, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("store.Get: %w", err)
+	}
 	name, err := lookupName(name)
 	if err != nil {
 		return nil, fmt.Errorf("store.Get: %w", err)
@@ -208,7 +217,10 @@ func (s *Store) Get(_ context.Context, name string, group string) (*Secret, erro
 }
 
 // Delete removes a secret from the vault by name and group.
-func (s *Store) Delete(_ context.Context, name string, group string) error {
+func (s *Store) Delete(ctx context.Context, name string, group string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("store.Delete: %w", err)
+	}
 	name, err := lookupName(name)
 	if err != nil {
 		return fmt.Errorf("store.Delete: %w", err)
@@ -227,6 +239,8 @@ func (s *Store) Delete(_ context.Context, name string, group string) error {
 }
 
 // List returns all secrets in the vault by walking every group subdirectory.
+// Files that cannot be read, decrypted or parsed are logged and skipped. It checks
+// ctx before each file and returns ctx's error once it is cancelled.
 func (s *Store) List(ctx context.Context) ([]*Secret, error) {
 	var secrets []*Secret
 
@@ -254,6 +268,9 @@ func (s *Store) List(ctx context.Context) ([]*Secret, error) {
 			if entry.IsDir() || filepath.Ext(entry.Name()) != ".age" {
 				continue
 			}
+			if err := ctx.Err(); err != nil {
+				return nil, fmt.Errorf("store.List: %w", err)
+			}
 
 			path := filepath.Join(groupDir, entry.Name())
 			ciphertext, err := os.ReadFile(path)
@@ -278,7 +295,6 @@ func (s *Store) List(ctx context.Context) ([]*Secret, error) {
 		}
 	}
 
-	_ = ctx
 	return secrets, nil
 }
 
@@ -305,7 +321,7 @@ func (s *Store) Groups() []string {
 // directory that already holds a vault or secret files, since overwriting
 // another vault's vlt.age would make its secrets unrecoverable. An open
 // Store never has a migration in progress, so vlt.migrating.age is not copied.
-func (s *Store) CopyTo(destDir string) error {
+func (s *Store) CopyTo(ctx context.Context, destDir string) error {
 	exists, err := Exists(destDir)
 	if err != nil {
 		return fmt.Errorf("store.CopyTo: %w", err)
@@ -361,6 +377,9 @@ func (s *Store) CopyTo(destDir string) error {
 			if entry.IsDir() || filepath.Ext(entry.Name()) != ".age" {
 				continue
 			}
+			if err := ctx.Err(); err != nil {
+				return fmt.Errorf("store.CopyTo: %w", err)
+			}
 			data, err := os.ReadFile(filepath.Join(srcDir, entry.Name()))
 			if err != nil {
 				return fmt.Errorf("store.CopyTo: read file %q: %w", entry.Name(), err)
@@ -373,9 +392,4 @@ func (s *Store) CopyTo(destDir string) error {
 
 	s.log.Info("vault copied", "from", s.dir, "to", destDir)
 	return nil
-}
-
-// SetDir changes the vault directory the store operates on.
-func (s *Store) SetDir(dir string) {
-	s.dir = dir
 }

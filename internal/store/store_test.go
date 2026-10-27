@@ -414,7 +414,7 @@ func TestStore_CopyTo_IgnoresLeftoverTempFiles(t *testing.T) {
 	}
 
 	destDir := t.TempDir()
-	if err := s.CopyTo(destDir); err != nil {
+	if err := s.CopyTo(context.Background(), destDir); err != nil {
 		t.Fatalf("CopyTo: %v", err)
 	}
 
@@ -451,5 +451,24 @@ func TestStore_VaultStructure_GroupBasedPaths(t *testing.T) {
 	expectedPath := filepath.Join(dir, "work", "my-key.age")
 	if _, err := os.Stat(expectedPath); err != nil {
 		t.Fatalf("expected file at %q: %v", expectedPath, err)
+	}
+}
+
+func TestStore_List_StopsWhenContextCancelled(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	if err := s.Create(context.Background(), testutil.PasswordSecret("a", "1", "work")); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got, err := s.List(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if got != nil {
+		t.Fatalf("a cancelled List must not return partial results, got %d", len(got))
 	}
 }

@@ -47,6 +47,7 @@ type CreateScreen struct {
 	entry      *widget.Entry
 	confirm    *widget.Entry
 	createBtn  *widget.Button
+	progress   *widget.ProgressBarInfinite
 	errorLabel *widget.Label
 	content    *fyne.Container
 }
@@ -65,6 +66,10 @@ func NewCreateScreen(vaultDir string, onCreate func(passphrase string)) *CreateS
 	s.errorLabel = widget.NewLabel("")
 	s.errorLabel.Wrapping = fyne.TextWrapWord
 	s.errorLabel.Hide()
+
+	s.progress = widget.NewProgressBarInfinite()
+	s.progress.Stop()
+	s.progress.Hide()
 
 	s.createBtn = widget.NewButton("Create Vault", s.submit)
 	s.createBtn.Importance = widget.HighImportance
@@ -89,6 +94,7 @@ func NewCreateScreen(vaultDir string, onCreate func(passphrase string)) *CreateS
 		s.entry,
 		s.confirm,
 		s.errorLabel,
+		s.progress,
 		s.createBtn,
 	)
 	width := canvas.NewRectangle(color.Transparent)
@@ -121,4 +127,21 @@ func (s *CreateScreen) submit() {
 	s.confirm.SetText("")
 	s.errorLabel.Hide()
 	s.onCreate(passphrase)
+}
+
+// SetBusy disables input and shows progress while the vault is created.
+func (s *CreateScreen) SetBusy(busy bool) {
+	if busy {
+		s.entry.Disable()
+		s.confirm.Disable()
+		s.createBtn.Disable()
+		s.progress.Show()
+		s.progress.Start()
+		return
+	}
+	s.progress.Stop()
+	s.progress.Hide()
+	s.entry.Enable()
+	s.confirm.Enable()
+	s.createBtn.Enable()
 }

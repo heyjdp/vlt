@@ -43,14 +43,14 @@ Let
 | Save one secret (encrypt + list refresh) | $T_\text{save} = t_s + n\,t_s = (n+1)\,t_s$ |
 | Change passphrase (list + re-encrypt all) | $T_\text{rekey} = 2n\,t_s$ |
 
-The save cost lands **on the UI goroutine**, because `onSave` → `SecretList.Refresh` runs synchronously.
+In format 1 the save cost landed **on the UI goroutine**, because `onSave` → `SecretList.Refresh` ran synchronously. This was fixed in [[F10 Keep vault IO off the UI goroutine]]: saves run in the background and update one row without re-listing.
 
 ### Format 2, current (scrypt wraps one X25519 key)
 
 | Operation | Cost |
 |---|---|
 | Unlock | $T'_\text{unlock} = t_s + n\,t_x$ |
-| Save one secret | $T'_\text{save} \approx (n+1)\,t_x$ (encrypt + list refresh) |
+| Save one secret | $T'_\text{save} \approx t_x$ (encrypt only; one list row updated) |
 | Change passphrase | $T'_\text{rekey} = 2\,t_s$ (rewrap one file) |
 
 ### Speed-up
@@ -62,7 +62,7 @@ $$
 
 ## Worked numbers ($t_s = 0.75\,\text{s}$, $t_x = 0.1\,\text{ms}$)
 
-| $n$ | Unlock, format 1 | Unlock, format 2 | Save, format 1 (UI frozen) |
+| $n$ | Unlock, format 1 | Unlock, format 2 | Save, format 1 (UI frozen before F10) |
 |---:|---:|---:|---:|
 | 10 | 8.3 s | 0.75 s | 8.3 s |
 | 50 | 38 s | 0.76 s | 38 s |

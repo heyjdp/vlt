@@ -176,6 +176,7 @@ vlt/
 │       ├── app.go           # Fyne app and window bootstrap
 │       ├── unlock.go        # Passphrase entry screen (existing vault)
 │       ├── create.go        # Create-vault screen (passphrase + confirmation)
+│       ├── runner.go        # Background execution of vault I/O
 │       ├── list.go          # Secret browser (left panel)
 │       ├── detail.go        # Secret view/edit (right panel)
 │       └── settings.go      # Vault path, lock timeout, clipboard TTL
@@ -198,6 +199,7 @@ vlt/
 **`internal/ui`**
 - `unlock.go` — passphrase entry for an existing vault; `App` calls `store.Open` and transitions to the main view
 - `create.go` — shown instead of `unlock.go` when `store.Exists` is false: displays the target directory, takes the passphrase twice (at least 12 characters excluding surrounding spaces; five or more random words recommended), then `App` calls `store.Create`. If `store.Exists` returns an error (directory unreadable), an error screen with Retry is shown instead of either screen
+- `runner.go` — every blocking store call (unlock/create scrypt, list, save, delete, import, passphrase change, vault copy) runs off the Fyne main goroutine via `background`, which delivers the result with `fyne.Do`. Unlock and create show a progress bar with input disabled; save and passphrase change disable their button and show status text. After unlock, components share a runner bound to the session context: `Lock` cancels it, store calls receive it, and any result that arrives after the lock is dropped rather than shown or acted on. An unlock or create result for a screen that has since been replaced is discarded and its store closed. Saves, deletes and imports update the list row in place instead of re-listing (changes made during the first load are replayed onto it). Tests inject an inline or queued runner so app-level tests are deterministic
 - `list.go` — category tree + secret list; filters by search query; fires selection events
 - `detail.go` — renders the correct form for the secret type; handles clipboard copy with TTL countdown
 - `settings.go` — vault path picker, auto-lock timeout slider, clipboard TTL slider

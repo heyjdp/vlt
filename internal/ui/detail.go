@@ -15,14 +15,18 @@ import (
 	"github.com/yourorg/vlt/internal/store"
 )
 
-// DetailView displays and edits a secret's details.
+// DetailView displays and edits a secret's details. Its methods must be
+// called on the Fyne main goroutine; store calls run in the background.
 type DetailView struct {
 	window       fyne.Window
 	store        *store.Store
 	clipboardTTL int
 	statusBar    *widget.Label
 	log          *slog.Logger
-	onSave       func()
+	run          runner
+	groups       func() []string
+	onSaved      func(*store.Secret)
+	onDeleted    func(*store.Secret)
 
 	content *fyne.Container
 	current *store.Secret
@@ -30,13 +34,15 @@ type DetailView struct {
 }
 
 // NewDetailView creates a new detail panel.
-func NewDetailView(window fyne.Window, s *store.Store, clipboardTTL int, statusBar *widget.Label, log *slog.Logger) *DetailView {
+func NewDetailView(window fyne.Window, s *store.Store, clipboardTTL int, statusBar *widget.Label, log *slog.Logger, run runner) *DetailView {
 	dv := &DetailView{
 		window:       window,
 		store:        s,
 		clipboardTTL: clipboardTTL,
 		statusBar:    statusBar,
 		log:          log,
+		run:          run,
+		groups:       func() []string { return nil },
 	}
 
 	dv.content = container.NewVBox(
@@ -51,9 +57,12 @@ func (dv *DetailView) Content() *fyne.Container {
 	return dv.content
 }
 
-// SetOnSave sets a callback invoked after a successful save.
-func (dv *DetailView) SetOnSave(fn func()) {
-	dv.onSave = fn
+// SetCallbacks sets the functions called after a secret is saved or deleted
+// (used to update the list) and the source of group suggestions. They are
+// set once, when the main view is built, so every save and delete, whether
+// of a new secret or one selected from the list, reaches the list.
+func (dv *DetailView) SetCallbacks(onSaved, onDeleted func(*store.Secret), groups func() []string) {
+	dv.onSaved, dv.onDeleted, dv.groups = onSaved, onDeleted, groups
 }
 
 // SetFileOps sets the file operations handler for import/export.
@@ -107,8 +116,7 @@ func (dv *DetailView) ShowNewRecord() {
 // groupSelect creates a group selector that shows existing groups as a dropdown
 // and allows typing a new group name.
 func (dv *DetailView) groupSelect(current string) *widget.SelectEntry {
-	groups := dv.store.Groups()
-	sel := widget.NewSelectEntry(groups)
+	sel := widget.NewSelectEntry(dv.groups())
 	sel.SetPlaceHolder("Group (e.g. work, personal)")
 	if current != "" {
 		sel.SetText(current)
@@ -149,16 +157,15 @@ func (dv *DetailView) showPasswordDetail(secret *store.Secret, isNew bool) {
 		copyBtn.Disable()
 	}
 
-	saveBtn := widget.NewButton("Save", func() {
+	var saveBtn *widget.Button
+	saveBtn = widget.NewButton("Save", func() {
 		edited := *secret
 		edited.Name = nameEntry.Text
 		edited.Group = groupEntry.Text
 		edited.Value = valueEntry.Text
 		edited.Tags = parseTags(tagsEntry.Text)
 		edited.Notes = notesEntry.Text
-		if dv.saveSecret(&edited, isNew) {
-			*secret = edited
-		}
+		dv.saveSecret(&edited, isNew, saveBtn, func() { *secret = edited })
 	})
 	saveBtn.Importance = widget.HighImportance
 
@@ -247,7 +254,8 @@ func (dv *DetailView) showRecordDetail(secret *store.Secret, isNew bool) {
 		copyUserBtn.Disable()
 	}
 
-	saveBtn := widget.NewButton("Save", func() {
+	var saveBtn *widget.Button
+	saveBtn = widget.NewButton("Save", func() {
 		edited := *secret
 		edited.Name = nameEntry.Text
 		edited.Group = groupEntry.Text
@@ -257,9 +265,7 @@ func (dv *DetailView) showRecordDetail(secret *store.Secret, isNew bool) {
 		edited.TOTPSecret = totpEntry.Text
 		edited.Tags = parseTags(tagsEntry.Text)
 		edited.Notes = notesEntry.Text
-		if dv.saveSecret(&edited, isNew) {
-			*secret = edited
-		}
+		dv.saveSecret(&edited, isNew, saveBtn, func() { *secret = edited })
 	})
 	saveBtn.Importance = widget.HighImportance
 
@@ -332,47 +338,55 @@ func (dv *DetailView) showFileDetail(secret *store.Secret) {
 	dv.content.Refresh()
 }
 
-// saveSecret creates (isNew) or updates a secret, then refreshes the UI, and
-// reports whether it succeeded. Callers pass an edited copy and commit it to
-// the shared *Secret only on success, so a failed save leaves the list's copy
-// unchanged. Creating never overwrites: a name already used in the group,
-// including one that differs only in case or punctuation, is reported.
-func (dv *DetailView) saveSecret(secret *store.Secret, isNew bool) bool {
-	ctx := context.Background()
+// saveSecret creates (isNew) or updates a secret in the background. On
+// success it calls commit on the main goroutine (callers pass an edited copy
+// and commit it to the shared *Secret only then, so a failed save leaves the
+// list's copy unchanged), updates the list, and for a new secret re-renders
+// the form as existing so a second Save updates it. btn is disabled while the
+// save is in flight so a double click cannot submit twice. Creating never
+// overwrites: a name already used in the group, including one that differs
+// only in case or punctuation, is reported.
+func (dv *DetailView) saveSecret(secret *store.Secret, isNew bool, btn *widget.Button, commit func()) {
+	dv.statusBar.SetText("Saving…")
+	btn.Disable()
+	background(dv.run,
+		func(ctx context.Context) (none, error) {
+			if isNew {
+				return none{}, dv.store.Create(ctx, secret)
+			}
+			return none{}, dv.store.Update(ctx, secret)
+		},
+		func(_ none, err error) {
+			btn.Enable()
+			switch {
+			case errors.Is(err, store.ErrSecretExists) && isNew:
+				dv.statusBar.SetText("")
+				dialog.ShowError(fmt.Errorf("a secret named %q (or one whose name differs only in case or punctuation) already exists in group %q; choose a different name",
+					secret.Name, store.NormalizeGroup(secret.Group)), dv.window)
+				return
+			case errors.Is(err, store.ErrSecretExists):
+				dv.statusBar.SetText("")
+				dialog.ShowError(fmt.Errorf("save failed: this secret's file is now held by a different secret: %w", err), dv.window)
+				return
+			case err != nil:
+				dv.statusBar.SetText("")
+				dialog.ShowError(fmt.Errorf("save failed: %w", err), dv.window)
+				return
+			}
 
-	var err error
-	if isNew {
-		err = dv.store.Create(ctx, secret)
-	} else {
-		err = dv.store.Update(ctx, secret)
-	}
-	switch {
-	case errors.Is(err, store.ErrSecretExists) && isNew:
-		dialog.ShowError(fmt.Errorf("a secret named %q (or one whose name differs only in case or punctuation) already exists in group %q; choose a different name",
-			secret.Name, store.NormalizeGroup(secret.Group)), dv.window)
-		return false
-	case errors.Is(err, store.ErrSecretExists):
-		dialog.ShowError(fmt.Errorf("save failed: this secret's file is now held by a different secret: %w", err), dv.window)
-		return false
-	case err != nil:
-		dialog.ShowError(fmt.Errorf("save failed: %w", err), dv.window)
-		return false
-	}
-
-	dv.log.Info("secret saved via UI", "name", secret.Name, "created", isNew)
-	dv.statusBar.SetText("Saved: " + secret.Name)
-	if isNew {
-		// Re-render as an existing secret so a second Save updates it.
-		dv.ShowSecret(secret)
-	}
-
-	if dv.onSave != nil {
-		dv.onSave()
-	}
-	return true
+			commit()
+			dv.log.Info("secret saved via UI", "name", secret.Name, "created", isNew)
+			dv.statusBar.SetText("Saved: " + secret.Name)
+			if dv.onSaved != nil {
+				dv.onSaved(secret)
+			}
+			if isNew {
+				dv.ShowSecret(secret)
+			}
+		})
 }
 
-// confirmDelete shows a confirmation dialog before deleting a secret.
+// confirmDelete asks for confirmation, then deletes the secret.
 func (dv *DetailView) confirmDelete(secret *store.Secret) {
 	dialog.ShowConfirm(
 		"Delete Secret",
@@ -381,8 +395,23 @@ func (dv *DetailView) confirmDelete(secret *store.Secret) {
 			if !confirmed {
 				return
 			}
-			ctx := context.Background()
-			if err := dv.store.Delete(ctx, secret.Name, secret.Group); err != nil {
+			dv.deleteSecret(secret)
+		},
+		dv.window,
+	)
+}
+
+// deleteSecret deletes secret in the background, then clears the detail
+// panel and removes it from the list. Name and group are copied first: the
+// list's *Secret may be rewritten by a save completing meanwhile.
+func (dv *DetailView) deleteSecret(secret *store.Secret) {
+	name, group := secret.Name, secret.Group
+	background(dv.run,
+		func(ctx context.Context) (none, error) {
+			return none{}, dv.store.Delete(ctx, name, group)
+		},
+		func(_ none, err error) {
+			if err != nil {
 				dialog.ShowError(fmt.Errorf("delete failed: %w", err), dv.window)
 				return
 			}
@@ -392,12 +421,10 @@ func (dv *DetailView) confirmDelete(secret *store.Secret) {
 				widget.NewLabel("Secret deleted"),
 			}
 			dv.content.Refresh()
-			if dv.onSave != nil {
-				dv.onSave()
+			if dv.onDeleted != nil {
+				dv.onDeleted(secret)
 			}
-		},
-		dv.window,
-	)
+		})
 }
 
 // exportFile exports a file secret to disk via the file operations handler.

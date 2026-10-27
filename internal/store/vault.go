@@ -272,7 +272,8 @@ func openWithoutKeyFile(ctx context.Context, dir, passphrase string, format int,
 // ChangePassphrase re-encrypts the vault key from oldPass to newPass. Only
 // vlt.age is rewritten, atomically, so an interrupted change leaves the old
 // passphrase working. It returns ErrWrongPassphrase if oldPass is incorrect.
-func (s *Store) ChangePassphrase(oldPass, newPass string) error {
+// ctx is checked before the final write.
+func (s *Store) ChangePassphrase(ctx context.Context, oldPass, newPass string) error {
 	data, err := os.ReadFile(filepath.Join(s.dir, keyFile))
 	if err != nil {
 		return fmt.Errorf("store.ChangePassphrase: %w", err)
@@ -294,6 +295,9 @@ func (s *Store) ChangePassphrase(oldPass, newPass string) error {
 
 	wrapped, err := s.opts.wrap(newPass, s.id)
 	if err != nil {
+		return fmt.Errorf("store.ChangePassphrase: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("store.ChangePassphrase: %w", err)
 	}
 	if err := writeFileAtomic(filepath.Join(s.dir, keyFile), wrapped, 0o600); err != nil {

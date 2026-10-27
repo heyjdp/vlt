@@ -12,6 +12,7 @@ type UnlockScreen struct {
 	onUnlock   func(passphrase string)
 	entry      *widget.Entry
 	unlockBtn  *widget.Button
+	progress   *widget.ProgressBarInfinite
 	errorLabel *widget.Label
 	content    *fyne.Container
 }
@@ -32,6 +33,10 @@ func NewUnlockScreen(window fyne.Window, onUnlock func(passphrase string)) *Unlo
 	s.errorLabel = widget.NewLabel("")
 	s.errorLabel.Hide()
 
+	s.progress = widget.NewProgressBarInfinite()
+	s.progress.Stop()
+	s.progress.Hide()
+
 	s.unlockBtn = widget.NewButton("Unlock", func() {
 		s.submit()
 	})
@@ -50,6 +55,7 @@ func NewUnlockScreen(window fyne.Window, onUnlock func(passphrase string)) *Unlo
 		widget.NewSeparator(),
 		s.entry,
 		s.errorLabel,
+		s.progress,
 		s.unlockBtn,
 	)
 
@@ -83,4 +89,21 @@ func (s *UnlockScreen) submit() {
 	}
 	s.errorLabel.Hide()
 	s.onUnlock(passphrase)
+}
+
+// SetBusy disables input and shows progress while the vault is being opened
+// (scrypt takes about a second; migrating an old vault takes longer).
+func (s *UnlockScreen) SetBusy(busy bool) {
+	if busy {
+		s.entry.Disable()
+		s.unlockBtn.Disable()
+		s.errorLabel.Hide()
+		s.progress.Show()
+		s.progress.Start()
+		return
+	}
+	s.progress.Stop()
+	s.progress.Hide()
+	s.entry.Enable()
+	s.unlockBtn.Enable()
 }

@@ -175,8 +175,8 @@ go tool cover -html=coverage.out
 The test suite covers:
 
 - **crypto** — vault-key generation, wrap/unwrap with a passphrase, wrong-passphrase rejection, zeroing, encrypt/decrypt round-trips, X25519-only secret encryption, legacy passphrase decryption
-- **store** — secret types and JSON marshalling, slugification, name validation, group normalisation, CRUD operations (create/update/get/delete/list), refusal to overwrite on create and on slug collision, group listing, vault create/open/exists, one-scrypt-per-unlock check, passphrase change (only `vlt.age` rewritten, failures keep the old passphrase), format-1 migration (including resume after a crash), atomic writes, vault copy
-- **ui** — new-vault passphrase validation, create-vault screen (mismatch rejected and confirmation cleared; both entries cleared on success), and the app choosing the create screen for a missing vault and the unlock screen once it exists (headless `fyne/test`)
+- **store** — secret types and JSON marshalling, slugification, name validation, group normalisation, CRUD operations (create/update/get/delete/list), refusal to overwrite on create and on slug collision, group listing, vault create/open/exists, one-scrypt-per-unlock check, passphrase change (only `vlt.age` rewritten, failures keep the old passphrase), format-1 migration (including resume after a crash), atomic writes, vault copy, `List` stopping when its context is cancelled
+- **ui** — new-vault passphrase validation, create-vault screen (mismatch rejected and confirmation cleared; both entries cleared on success), choosing the create, unlock or error screen; unlock and create running off the UI thread with progress shown; stale unlock results discarded after a vault switch; secrets loaded into the list; saves, deletes and imports updating the list (including saves made during the first load); work completing after lock being dropped; and lock cancelling the initial list load (headless `fyne/test` with inline and queued runners)
 
 All tests use `t.Parallel()`, the race detector, and `t.TempDir()` for filesystem isolation.
 
@@ -227,6 +227,7 @@ internal/
 │   ├── app.go               Lock/unlock state machine, toolbar, layout
 │   ├── unlock.go            Passphrase entry screen (existing vault)
 │   ├── create.go            Create-vault screen (passphrase + confirmation)
+│   ├── runner.go            Runs vault I/O off the UI thread, results via fyne.Do
 │   ├── list.go              Secret browser with search/filter
 │   ├── detail.go            View/edit forms for all secret types, clipboard copy
 │   ├── fileops.go           File import (picker, base64, MIME) and export

@@ -28,20 +28,20 @@ created: 2026-10-27
 `internal/ui` has **zero tests**, yet most of the bugs in the [[2026-10-27 Code Review]] are in that package.
 
 ## Fix
-Use `fyne.io/fyne/v2/test`, which renders headlessly with no display. Put a small interface in front of the store at the point of use in `ui`, so tests can use an in-memory fake (`internal/testutil.FakeVault`) instead of real scrypt.
+Use `fyne.io/fyne/v2/test`, which renders headlessly with no display. Since F10, tests inject an inline or queued `runner` and use real vaults created with a low scrypt work factor (`store.WithWorkFactor(10)`), so no fake store is needed.
 
 Use a lock-timeout config in milliseconds plus an injectable clock to test auto-lock without sleeping.
 
 ## Test matrix
 | Flow | Test |
 |---|---|
-| Create vault | Mismatched confirm shows an error; matching creates `vlt.age` |
+| Create vault | ✅ Mismatched confirm shows an error; matching creates `vlt.age` (F04, F10) |
 | Unlock | Wrong passphrase shows "Incorrect passphrase"; the entry is cleared afterwards |
-| Edit | Selecting and editing a secret updates its list row ([[F05 Refresh list after edit and delete]]) |
-| Delete | Selecting and deleting a secret removes its row |
+| Edit | ✅ Selecting and editing a secret updates its list row (`TestApp_SaveFromListSelectionUpdatesList`) |
+| Delete | ✅ Selecting and deleting a secret removes its row (`TestApp_DeleteRemovesSecretFromList`) |
 | Auto-lock | Typing postpones it; idleness locks; no secrets referenced after lock |
 | Clipboard | Copy A then B, B lasts the full TTL ([[F08 Correct clipboard clearing]]) |
-| Import | A failing reader saves nothing ([[F09 Fail import on read errors]]) |
+| Import | A failing reader saves nothing ([[F09 Fail import on read errors]]). ✅ Import adds to the list (`TestApp_ImportAddsSecretToList`) |
 
 ## Acceptance criteria
 - [ ] All of the above run in CI under `-race`

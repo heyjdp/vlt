@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,6 +21,7 @@ type SettingsScreen struct {
 	store     *store.Store
 	log       *slog.Logger
 	statusBar *widget.Label
+	run       runner
 	onRelock  func()
 
 	content *fyne.Container
@@ -32,6 +34,7 @@ func NewSettingsScreen(
 	s *store.Store,
 	statusBar *widget.Label,
 	log *slog.Logger,
+	run runner,
 	onRelock func(),
 ) *SettingsScreen {
 	ss := &SettingsScreen{
@@ -40,6 +43,7 @@ func NewSettingsScreen(
 		store:     s,
 		log:       log,
 		statusBar: statusBar,
+		run:       run,
 		onRelock:  onRelock,
 	}
 
@@ -97,7 +101,8 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 	errorLabel := widget.NewLabel("")
 	errorLabel.Hide()
 
-	changeBtn := widget.NewButton("Change Passphrase", func() {
+	var changeBtn *widget.Button
+	changeBtn = widget.NewButton("Change Passphrase", func() {
 		errorLabel.Hide()
 
 		current := currentEntry.Text
@@ -109,8 +114,8 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 			errorLabel.Show()
 			return
 		}
-		if newPass != confirm {
-			errorLabel.SetText("New passphrase and confirmation do not match")
+		if err := validateNewPassphrase(newPass, confirm); err != nil {
+			errorLabel.SetText("New " + err.Error())
 			errorLabel.Show()
 			return
 		}
@@ -120,30 +125,37 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 			return
 		}
 
-		// Only vlt.age (the wrapped vault key) is rewritten; secrets are untouched.
-		if err := ss.store.ChangePassphrase(current, newPass); err != nil {
-			if errors.Is(err, store.ErrWrongPassphrase) {
-				errorLabel.SetText("Current passphrase is incorrect")
-			} else {
-				errorLabel.SetText("Passphrase change failed: " + err.Error())
-			}
-			errorLabel.Show()
-			return
-		}
+		// Only vlt.age (the wrapped vault key) is rewritten; secrets are
+		// untouched. Two scrypt derivations, so it runs in the background.
+		changeBtn.Disable()
+		ss.statusBar.SetText("Changing passphrase…")
+		background(ss.run,
+			func(ctx context.Context) (none, error) {
+				return none{}, ss.store.ChangePassphrase(ctx, current, newPass)
+			},
+			func(_ none, err error) {
+				changeBtn.Enable()
+				currentEntry.SetText("")
+				newEntry.SetText("")
+				confirmEntry.SetText("")
+				if err != nil {
+					ss.statusBar.SetText("")
+					if errors.Is(err, store.ErrWrongPassphrase) {
+						errorLabel.SetText("Current passphrase is incorrect")
+					} else {
+						errorLabel.SetText("Passphrase change failed: " + err.Error())
+					}
+					errorLabel.Show()
+					return
+				}
 
-		// Clear fields
-		currentEntry.SetText("")
-		newEntry.SetText("")
-		confirmEntry.SetText("")
-
-		ss.statusBar.SetText("Passphrase changed")
-
-		// Lock and force re-auth with the new passphrase
-		dialog.ShowInformation("Passphrase Changed",
-			"Your vault key is now protected by the new passphrase.\nThe vault will lock; unlock it with the new passphrase.",
-			ss.window,
-		)
-		ss.onRelock()
+				ss.statusBar.SetText("Passphrase changed")
+				dialog.ShowInformation("Passphrase Changed",
+					"Your vault key is now protected by the new passphrase.\nThe vault will lock; unlock it with the new passphrase.",
+					ss.window,
+				)
+				ss.onRelock()
+			})
 	})
 	changeBtn.Importance = widget.HighImportance
 
@@ -253,14 +265,24 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 }
 
 func (ss *SettingsScreen) moveVault(newDir string, errorLabel *widget.Label, currentLabel *widget.Label) {
-	if err := ss.store.CopyTo(newDir); err != nil {
-		errorLabel.SetText("Move failed: " + err.Error())
-		errorLabel.Show()
-		return
-	}
+	ss.statusBar.SetText("Copying vault…")
+	background(ss.run,
+		func(ctx context.Context) (none, error) { return none{}, ss.store.CopyTo(ctx, newDir) },
+		func(_ none, err error) {
+			if err != nil {
+				ss.statusBar.SetText("")
+				errorLabel.SetText("Move failed: " + err.Error())
+				errorLabel.Show()
+				return
+			}
+			ss.vaultMoved(newDir, currentLabel)
+		})
+}
 
+// vaultMoved switches the config to newDir after a successful copy and
+// relocks so the user unlocks the vault at its new location.
+func (ss *SettingsScreen) vaultMoved(newDir string, currentLabel *widget.Label) {
 	ss.config.VaultDir = newDir
-	ss.store.SetDir(newDir)
 	currentLabel.SetText("Current: " + newDir)
 	ss.log.Info("vault moved", "to", newDir)
 	ss.statusBar.SetText("Vault moved to " + newDir)

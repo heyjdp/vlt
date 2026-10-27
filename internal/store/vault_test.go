@@ -227,7 +227,7 @@ func TestStore_Create_RefusesDirectoryWithOnlySecretFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dest, "work", "orphan.age"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := src.CopyTo(dest); !errors.Is(err, store.ErrVaultExists) {
+	if err := src.CopyTo(context.Background(), dest); !errors.Is(err, store.ErrVaultExists) {
 		t.Fatalf("CopyTo onto loose secret files: expected ErrVaultExists, got %v", err)
 	}
 }
@@ -247,7 +247,7 @@ func TestStore_ChangePassphrase_RewritesOnlyKeyFile(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 
-	if err := s.ChangePassphrase(testPass, "new-passphrase"); err != nil {
+	if err := s.ChangePassphrase(context.Background(), testPass, "new-passphrase"); err != nil {
 		t.Fatalf("ChangePassphrase: %v", err)
 	}
 
@@ -280,7 +280,7 @@ func TestStore_ChangePassphrase_RejectsWrongCurrent(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 
-	err = s.ChangePassphrase("not-the-passphrase", "new-passphrase")
+	err = s.ChangePassphrase(context.Background(), "not-the-passphrase", "new-passphrase")
 	if !errors.Is(err, store.ErrWrongPassphrase) {
 		t.Fatalf("expected ErrWrongPassphrase, got %v", err)
 	}
@@ -306,7 +306,7 @@ func TestStore_ChangePassphrase_FailedWriteKeepsOldPassphrase(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	if err := s.ChangePassphrase(testPass, "new-passphrase"); err == nil {
+	if err := s.ChangePassphrase(context.Background(), testPass, "new-passphrase"); err == nil {
 		t.Fatal("expected ChangePassphrase to fail in a read-only vault")
 	}
 	openVault(t, dir, testPass)
@@ -325,7 +325,7 @@ func TestStore_CopyTo_CopiesAllSecrets(t *testing.T) {
 	}
 
 	destDir := filepath.Join(t.TempDir(), "moved")
-	if err := s.CopyTo(destDir); err != nil {
+	if err := s.CopyTo(context.Background(), destDir); err != nil {
 		t.Fatalf("CopyTo: %v", err)
 	}
 
@@ -446,7 +446,7 @@ func TestStore_ChangePassphrase_RejectsForeignKeyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = a.ChangePassphrase(testPass, "new-passphrase")
+	err = a.ChangePassphrase(context.Background(), testPass, "new-passphrase")
 	if err == nil {
 		t.Fatal("expected ChangePassphrase to refuse a vlt.age holding another vault's key")
 	}
@@ -470,7 +470,7 @@ func TestStore_CopyTo_RefusesExistingVault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := src.CopyTo(destDir); !errors.Is(err, store.ErrVaultExists) {
+	if err := src.CopyTo(context.Background(), destDir); !errors.Is(err, store.ErrVaultExists) {
 		t.Fatalf("expected ErrVaultExists, got %v", err)
 	}
 	after, err := os.ReadFile(filepath.Join(destDir, "vlt.age"))
