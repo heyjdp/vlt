@@ -3,7 +3,10 @@
 BINARY   := vlt
 CMD      := ./cmd/vlt
 GOFLAGS  := -trimpath
-LDFLAGS  := -s -w
+# The version shown in the window title and logs: the nearest tag, or the
+# commit hash, with -dirty for uncommitted changes.
+VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS  := -s -w -X main.version=$(VERSION)
 
 build:
 	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD)

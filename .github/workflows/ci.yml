@@ -103,6 +103,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history and tags, so git describe can name the release.
+          fetch-depth: 0
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -117,6 +119,7 @@ jobs:
           sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev
 
       - name: Build
+        shell: bash
         env:
           CGO_ENABLED: "1"
-        run: go build -trimpath -ldflags="-s -w" ./cmd/vlt
+        run: go build -trimpath -ldflags="-s -w -X main.version=$(git describe --tags --always --dirty)" ./cmd/vlt

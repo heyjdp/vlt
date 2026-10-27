@@ -16,7 +16,9 @@ import (
 	"github.com/yourorg/vlt/internal/ui"
 )
 
-var version = "dev" // overridden by ldflags
+// version is set at build time with -ldflags "-X main.version=..." (see the
+// Makefile); plain go build/run leaves it as "dev".
+var version = "dev"
 
 func main() {
 	if err := run(); err != nil {

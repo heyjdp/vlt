@@ -97,6 +97,8 @@ Three secret types share this structure:
 
 ## Clone and Build
 
+> The module path `github.com/yourorg/vlt` and the app ID `io.yourorg.vlt` are placeholders. Renaming the app ID moves Fyne's saved settings to a new location, so a rename should migrate them from the old ID.
+
 ```bash
 git clone https://github.com/yourorg/vlt.git
 cd vlt
@@ -104,7 +106,10 @@ cd vlt
 # Install dependencies
 go mod download
 
-# Build
+# Build (embeds the version from `git describe`, shown in the window title)
+make build
+
+# Or with go directly (the version shows as "dev")
 go build -trimpath -ldflags="-s -w" -o vlt ./cmd/vlt
 
 # Run
@@ -115,12 +120,6 @@ Or run directly without building a binary:
 
 ```bash
 go run ./cmd/vlt
-```
-
-### Build with Version Tag
-
-```bash
-go build -trimpath -ldflags="-s -w -X main.version=$(git describe --tags --always --dirty)" -o vlt ./cmd/vlt
 ```
 
 ### Building for Other Platforms
@@ -312,6 +311,10 @@ This is best-effort, and the limits are worth stating plainly. Go strings cannot
 
 It does not, and in Go cannot, guarantee that secret text is erased from memory.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
-See [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE).
