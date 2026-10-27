@@ -7,7 +7,7 @@ vlt replaces ad-hoc PGP-encrypted text file workflows with a structured, portabl
 ## Features
 
 - **Passphrase-only unlock** — no external key files, no OS keychain dependency
-- **Safe vault creation** — when no vault exists at the configured location (first run, or after switching to an empty or missing folder), a dedicated screen shows where the vault will be created and asks for the passphrase twice (at least 12 characters not counting leading or trailing spaces; five or more random words recommended), so a typo can never become the passphrase. If the vault directory cannot be read (for example, permission denied), vlt shows the error and a Retry button rather than offering to create a vault over it
+- **Safe vault creation** — when no vault exists at the configured location (first run, or after switching to an empty or missing folder), a dedicated screen shows where the vault will be created and asks for the passphrase twice (at least 12 characters not counting leading or trailing spaces; five or more random words recommended), so a typo can never become the passphrase. The same screen offers *Open Existing Vault…* (unless `VLT_VAULT_DIR` sets the location) to pick a folder that already holds a vault, for example after the saved location was lost. A folder without a vault is refused, with a pointer to the subfolder if you picked the folder above a vault, and the new location is saved once the vault unlocks. If the vault directory cannot be read (for example, permission denied), vlt shows the error and a Retry button rather than offering to create a vault over it
 - **age encryption** — each secret is an individual `.age` file encrypted to a random X25519 vault key; the vault key is encrypted to your passphrase with scrypt, so unlocking costs one scrypt derivation however many secrets you have
 - **Secure memory (best-effort)** — the vault key's encoded form is held in mlock'd memory via memguard and destroyed on lock; passphrase fields are cleared as soon as they are read, and on lock loaded secrets are emptied and vlt's references to them dropped. Go cannot wipe strings, so the parsed key and secret text live on the heap until garbage-collected
 - **Secret types** — passwords, structured login records (URL/username/password/TOTP; the password and TOTP secret are masked), and encrypted files
@@ -54,7 +54,7 @@ vault/
 | Windows | `%APPDATA%\vlt\vault\`                     |
 | OpenBSD | `~/.local/share/vlt/vault/`                |
 
-Override with the `VLT_VAULT_DIR` environment variable, or move or switch the vault in Settings; the choice is saved (see [Configuration](#configuration)).
+Override with the `VLT_VAULT_DIR` environment variable, or move or switch the vault in Settings. If no vault is found at the location, the create screen can open one from another folder. The choice is saved (see [Configuration](#configuration)).
 
 ## Secret Envelope Format
 
@@ -169,9 +169,9 @@ go tool cover -html=coverage.out
 The test suite covers:
 
 - **crypto** — vault-key generation, wrap/unwrap with a passphrase, wrong-passphrase rejection, zeroing, encrypt/decrypt round-trips, X25519-only secret encryption, legacy passphrase decryption
-- **store** — secret types and JSON marshalling, slugification, name validation, group directories and labels (kept as typed), CRUD operations (create/update/get/delete/list), refusal to overwrite on create and on slug collision, vault create/open/exists, one-scrypt-per-unlock check, passphrase change (only `vlt.age` rewritten, failures keep the old passphrase), format-1 migration (including resume after a crash), atomic writes, vault copy, `List` stopping when its context is cancelled
+- **store** — secret types and JSON marshalling, slugification, name validation, group directories and labels (kept as typed), CRUD operations (create/update/get/delete/list), refusal to overwrite on create and on slug collision, vault create/open/exists (a vault in a subfolder is never mistaken for a group), one-scrypt-per-unlock check, passphrase change (only `vlt.age` rewritten, failures keep the old passphrase), format-1 migration (including resume after a crash), atomic writes, vault copy, `List` stopping when its context is cancelled
 - **ui** — headless [`fyne/test`](https://pkg.go.dev/fyne.io/fyne/v2/test), with inline or queued runners for background work, hand-fired fake timers, and real vaults created with a cheap scrypt work factor:
-  - *Screens*: create (passphrase confirmation and validation), unlock (wrong passphrase), and the error screen for an unreadable vault directory
+  - *Screens*: create (passphrase confirmation and validation; opening an existing vault in another folder, refusing a folder without one or pointing to the vault below it, ignoring a stale result, and hiding the option under `VLT_VAULT_DIR`), unlock (wrong passphrase), and the error screen for an unreadable vault directory
   - *Background work*: unlock and create run off the UI thread with progress; stale results after a vault switch or lock are dropped; lock cancels the initial list load
   - *List and detail*: saves, deletes and imports update rows in place (also under a search filter and during the first load); forms save every field, mask secrets, and copy the right value; group suggestions show one spelling per group, a new or imported secret typed into a differently spelled group uses the existing one, and search matches a group by either spelling
   - *Auto-lock*: activity resets the countdown, idleness locks, the warning and its buttons work, timeout changes apply, zero disables it
@@ -224,7 +224,7 @@ Every action is pinned to a commit SHA, checkout does not persist credentials, a
 | `VLT_LOCK_TIMEOUT_MS`   | `300000`  | 30000–1800000, or 0 (off) | Auto-lock after N ms of inactivity   |
 | `VLT_CLIPBOARD_TTL_S`   | `30`      | 5–120                     | Clear clipboard after N seconds      |
 
-All settings can also be changed from the Settings screen, including turning auto-lock off. Changes take effect immediately and are saved in Fyne's per-app preferences, so the auto-lock timeout and clipboard TTL survive a restart. A new vault location (Move or Switch) is saved once a vault has been opened or created there, so a mistyped path never sticks.
+All settings can also be changed from the Settings screen, including turning auto-lock off. Changes take effect immediately and are saved in Fyne's per-app preferences, so the auto-lock timeout and clipboard TTL survive a restart. A new vault location (Move or Switch in Settings, or *Open Existing Vault…* on the create screen) is saved once a vault has been opened or created there, so a mistyped path never sticks.
 
 Each setting is resolved in this order: environment variable, then the saved value, then the default. A setting provided by an environment variable is shown as such and cannot be changed in Settings, and it is never written to the saved preferences. Out-of-range values are clamped and unparsable ones ignored, with a warning in the log.
 
@@ -245,7 +245,7 @@ internal/
 ├── ui/
 │   ├── app.go               Lock/unlock state machine, toolbar, layout
 │   ├── unlock.go            Passphrase entry screen (existing vault)
-│   ├── create.go            Create-vault screen (passphrase + confirmation)
+│   ├── create.go            Create-vault screen (passphrase + confirmation, open existing)
 │   ├── runner.go            Runs vault I/O off the UI thread, results via fyne.Do
 │   ├── activity.go          Tracks user input for the auto-lock countdown
 │   ├── clipboard.go         Copies secrets and clears them after the TTL or on lock

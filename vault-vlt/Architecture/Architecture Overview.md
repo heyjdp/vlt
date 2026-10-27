@@ -15,7 +15,7 @@ vlt follows the layered layout from the project's `CLAUDE.md`: a thin Fyne inter
 graph TD
     subgraph Interface["Interface layer"]
         main["cmd/vlt/main.go<br/>config, logging, Fyne bootstrap"]
-        ui["internal/ui<br/>App, UnlockScreen, SecretList,<br/>DetailView, FileOps, Settings, Theme"]
+        ui["internal/ui<br/>App, UnlockScreen, CreateScreen,<br/>SecretList, DetailView, FileOps, Settings, Theme"]
     end
     subgraph Domain["Domain + storage"]
         store["internal/store<br/>Create/Open/ChangePassphrase,<br/>migration, CRUD, copy"]
@@ -55,6 +55,8 @@ stateDiagram-v2
     [*] --> Locked
     Locked --> Creating: no vault at path (create screen)
     Creating --> Creating: mismatch / too short
+    Creating --> Creating: Open Existing Vault… on a folder without a vault
+    Creating --> Locked: Open Existing Vault… on a folder with a vault
     Creating --> Unlocked: confirmed, vault created
     Locked --> Unlocking: passphrase submitted
     Unlocking --> Locked: wrong passphrase / I/O error

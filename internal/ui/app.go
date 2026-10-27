@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"image/color"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -44,8 +46,9 @@ type App struct {
 	// screenGen identifies the latest showUnlockScreen call; older vault
 	// checks that complete late are ignored.
 	screenGen int
-	// vaultDirPending is set when Settings changes the vault location; the
-	// new location is saved after the next successful unlock or create.
+	// vaultDirPending is set when Settings or the create screen's Open
+	// Existing Vault changes the vault location; the new location is saved
+	// after the next successful unlock or create.
 	vaultDirPending bool
 
 	// UI components
@@ -120,7 +123,11 @@ func (a *App) showUnlockScreen() {
 				a.unlockScreen = NewUnlockScreen(a.window, a.onUnlock)
 				a.setScreen(a.unlockScreen.Content())
 			default:
-				a.createScreen = NewCreateScreen(dir, a.onCreate)
+				var onOpen func()
+				if !a.config.FromEnv.VaultDir { // VLT_VAULT_DIR fixes the location
+					onOpen = a.chooseExistingVault
+				}
+				a.createScreen = NewCreateScreen(dir, a.onCreate, onOpen)
 				a.setScreen(a.createScreen.Content())
 			}
 		})
@@ -183,12 +190,95 @@ func (a *App) onUnlock(passphrase string) {
 			case errors.Is(err, store.ErrVaultNotFound):
 				// The vault disappeared since the screen was chosen; offer to create one.
 				a.showUnlockScreen()
+			case errors.Is(err, store.ErrKeyMissing):
+				screen.ShowError("This vault's key file (vlt.age) is missing, so its secrets cannot be decrypted. Restore vlt.age from a backup.")
 			case err != nil:
 				screen.ShowError("Failed to open vault: " + err.Error())
 			default:
 				a.unlocked(r.store)
 			}
 		})
+}
+
+// chooseExistingVault asks for a folder that already holds a vault.
+func (a *App) chooseExistingVault() {
+	fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
+		if err != nil {
+			dialog.ShowError(err, a.window)
+			return
+		}
+		if uri != nil {
+			a.openExistingVault(uri.Path())
+		}
+	}, a.window)
+	fd.Show()
+}
+
+// openExistingVault switches to the vault in dir and shows its unlock
+// screen. A folder without a vault is refused on the create screen, with a
+// hint if one of its subfolders holds a vault, so "Open" never creates
+// anything. Like a switch in Settings, the location is saved only once the
+// vault is unlocked.
+func (a *App) openExistingVault(dir string) {
+	screen := a.createScreen
+	if screen == nil {
+		return
+	}
+	screen.SetBusy(true)
+	background(a.run,
+		func(context.Context) (folderCheck, error) { return checkFolder(dir) },
+		func(found folderCheck, err error) {
+			if a.createScreen != screen {
+				return // the screen changed while the folder was checked
+			}
+			screen.SetBusy(false)
+			switch {
+			case err != nil:
+				screen.ShowError(fmt.Sprintf("Cannot read %s: %v", dir, err))
+			case found.vault:
+				a.log.Info("opening existing vault", "dir", dir)
+				a.config.VaultDir = dir
+				a.vaultDirPending = true
+				a.showUnlockScreen()
+			case found.inner != "":
+				screen.ShowError(fmt.Sprintf("No vault was found in %s, but %s contains one. Open that folder instead.", dir, found.inner))
+			default:
+				screen.ShowError(fmt.Sprintf("No vault was found in %s. Choose the folder that holds the vault's vlt.age and group folders.", dir))
+			}
+		})
+}
+
+// folderCheck is what checkFolder found in a folder chosen to open.
+type folderCheck struct {
+	vault bool   // the folder holds a vault
+	inner string // otherwise, a direct subfolder that holds one, if any
+}
+
+// checkFolder reports whether dir holds a vault and, if not, whether one of
+// its direct subfolders does: picking the folder above a vault is an easy
+// slip. Unreadable subfolders are skipped in that search.
+func checkFolder(dir string) (folderCheck, error) {
+	exists, err := store.Exists(dir)
+	if err != nil || exists {
+		return folderCheck{vault: exists}, err
+	}
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return folderCheck{}, nil
+	}
+	if err != nil {
+		return folderCheck{}, err
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		inner := filepath.Join(dir, e.Name())
+		if ok, err := store.Exists(inner); err == nil && ok {
+			return folderCheck{inner: inner}, nil
+		}
+	}
+	return folderCheck{}, nil
 }
 
 // onCreate creates a new vault with a confirmed passphrase in the background.
@@ -230,7 +320,7 @@ func (a *App) unlocked(s *store.Store) {
 	a.unlockScreen, a.createScreen = nil, nil
 	a.log.Info("vault unlocked", "dir", a.config.VaultDir)
 	if a.vaultDirPending {
-		// A location chosen in Settings is remembered only once a vault has
+		// A location chosen in Settings or on the create screen is remembered only once a vault has
 		// been opened or created there, so a mistyped path never sticks.
 		SaveVaultDir(a.fyneApp.Preferences(), a.config.VaultDir)
 		a.vaultDirPending = false

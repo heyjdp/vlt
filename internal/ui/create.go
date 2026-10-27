@@ -47,6 +47,7 @@ type CreateScreen struct {
 	entry      *widget.Entry
 	confirm    *widget.Entry
 	createBtn  *widget.Button
+	openBtn    *widget.Button // nil when opening another folder isn't offered
 	progress   *widget.ProgressBarInfinite
 	errorLabel *widget.Label
 	content    *fyne.Container
@@ -54,7 +55,10 @@ type CreateScreen struct {
 
 // NewCreateScreen builds the create-vault screen for vaultDir. onCreate is
 // called with the passphrase once both entries match and pass validation.
-func NewCreateScreen(vaultDir string, onCreate func(passphrase string)) *CreateScreen {
+// If onOpen is not nil, an "Open Existing Vault…" button calls it, so a vault
+// kept in another folder can be found again (for example after the saved
+// location was lost).
+func NewCreateScreen(vaultDir string, onCreate func(passphrase string), onOpen func()) *CreateScreen {
 	s := &CreateScreen{onCreate: onCreate}
 
 	s.entry = widget.NewPasswordEntry()
@@ -97,6 +101,11 @@ func NewCreateScreen(vaultDir string, onCreate func(passphrase string)) *CreateS
 		s.progress,
 		s.createBtn,
 	)
+	if onOpen != nil {
+		s.openBtn = widget.NewButton("Open Existing Vault…", onOpen)
+		form.Add(widget.NewLabel("Already have a vault in another folder?"))
+		form.Add(s.openBtn)
+	}
 	width := canvas.NewRectangle(color.Transparent)
 	width.SetMinSize(fyne.NewSize(createFormWidth, 0))
 	s.content = container.NewCenter(container.NewStack(width, form))
@@ -135,6 +144,9 @@ func (s *CreateScreen) SetBusy(busy bool) {
 		s.entry.Disable()
 		s.confirm.Disable()
 		s.createBtn.Disable()
+		if s.openBtn != nil {
+			s.openBtn.Disable()
+		}
 		s.progress.Show()
 		s.progress.Start()
 		return
@@ -144,4 +156,7 @@ func (s *CreateScreen) SetBusy(busy bool) {
 	s.entry.Enable()
 	s.confirm.Enable()
 	s.createBtn.Enable()
+	if s.openBtn != nil {
+		s.openBtn.Enable()
+	}
 }

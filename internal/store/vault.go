@@ -263,7 +263,11 @@ func openWithoutKeyFile(ctx context.Context, dir, passphrase string, format int,
 		if err != nil {
 			continue
 		}
+		isSecret := isSecretEnvelope(plaintext)
 		crypto.Wipe(plaintext)
+		if !isSecret {
+			continue // another vault's sentinel or key proves nothing about this folder
+		}
 		log.Info("format-1 vault without vlt.age; passphrase verified against a secret", "dir", dir)
 		return beginMigration(ctx, dir, passphrase, log, o)
 	}

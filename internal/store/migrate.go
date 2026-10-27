@@ -1,7 +1,9 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -135,6 +137,12 @@ func (s *Store) migrateFile(passphrase, path string) (bool, error) {
 	}
 
 	plaintext, err := s.opts.decryptWithPassphrase(passphrase, data)
+	if err == nil && !isSecretEnvelope(plaintext) {
+		// Another vault's sentinel or key, e.g. a vault kept in a
+		// subfolder: re-encrypting it would lock that vault out.
+		crypto.Wipe(plaintext)
+		err = errNotASecret
+	}
 	if err != nil {
 		rel, relErr := filepath.Rel(s.dir, path)
 		if relErr != nil {
@@ -156,8 +164,25 @@ func (s *Store) migrateFile(passphrase, path string) (bool, error) {
 	return true, nil
 }
 
+// errNotASecret marks a .age file that decrypts but holds no secret.
+var errNotASecret = errors.New("file decrypts to something other than a secret (another vault's key?)")
+
+// isSecretEnvelope reports whether plaintext is a secret's JSON envelope.
+// A vault's legacy sentinel ("unlocked") and its wrapped key (an age secret
+// key) are not, so neither can pass for a secret when a passphrase is
+// checked or a format-1 vault is migrated.
+func isSecretEnvelope(plaintext []byte) bool {
+	trimmed := bytes.TrimSpace(plaintext)
+	return len(trimmed) > 0 && trimmed[0] == '{' && json.Valid(trimmed)
+}
+
 // secretFiles returns the path of every .age file in a group directory of
-// dir, in directory order.
+// dir, in directory order. A subdirectory holding a format marker or a
+// migration in progress is another vault, not a group, so its files are not
+// counted, probed or migrated. Other nested vaults (format 1, or missing
+// vlt.json) can't be told from a group by layout alone, because a secret
+// named "vlt" is stored in its group as vlt.age; isSecretEnvelope keeps
+// their files from being taken for secrets.
 func secretFiles(dir string) ([]string, error) {
 	groups, err := os.ReadDir(dir)
 	if err != nil {
@@ -173,6 +198,9 @@ func secretFiles(dir string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
+		if hasVaultMarker(entries) {
+			continue
+		}
 		for _, e := range entries {
 			if !e.IsDir() && filepath.Ext(e.Name()) == ".age" {
 				paths = append(paths, filepath.Join(groupDir, e.Name()))
@@ -180,4 +208,16 @@ func secretFiles(dir string) ([]string, error) {
 		}
 	}
 	return paths, nil
+}
+
+// hasVaultMarker reports whether a directory with these entries holds a
+// format marker or a migration in progress. Neither name can be a secret's
+// file, so such a directory is a vault, never a group.
+func hasVaultMarker(entries []os.DirEntry) bool {
+	for _, e := range entries {
+		if e.Name() == formatFile || e.Name() == migratingFile {
+			return true
+		}
+	}
+	return false
 }

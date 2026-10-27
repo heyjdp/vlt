@@ -481,3 +481,73 @@ func TestStore_CopyTo_RefusesExistingVault(t *testing.T) {
 		t.Fatal("destination vault key was overwritten")
 	}
 }
+
+// writeDummy creates a file (and its directories) holding placeholder bytes.
+func writeDummy(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("age"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Opening the folder above a vault (an easy slip in a folder picker) must not
+// treat the vault as a group and migrate it, which would re-encrypt its key.
+func TestStore_FolderAboveAVaultIsNotAVault(t *testing.T) {
+	t.Parallel()
+
+	parent := t.TempDir()
+	inner := filepath.Join(parent, "vault")
+	s := createVault(t, inner)
+	if err := s.Create(context.Background(), testutil.PasswordSecret("gh", "x", "work")); err != nil {
+		t.Fatal(err)
+	}
+
+	if mustExist(t, parent) {
+		t.Fatal("the folder above a vault must not count as a vault")
+	}
+	_, err := store.Open(context.Background(), parent, testPass, quietLog(), store.WithWorkFactor(testWorkFactor))
+	if !errors.Is(err, store.ErrVaultNotFound) {
+		t.Fatalf("Open(parent) = %v, want ErrVaultNotFound", err)
+	}
+
+	got, err := openVault(t, inner, testPass).Get(context.Background(), "gh", "work")
+	if err != nil || got.Value != "x" {
+		t.Fatalf("the inner vault must still open with its passphrase: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(parent, "vlt.age")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("nothing may be written to the parent folder")
+	}
+}
+
+func TestStore_Exists_TellsNestedVaultsFromGroups(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		files []string // relative to the directory checked
+		want  bool
+	}{
+		{"secret in a group", []string{"work/gh.age"}, true},
+		{"secret named vlt in a group", []string{"work/vlt.age"}, true},
+		{"format-2 vault one level down", []string{"vault/vlt.age", "vault/vlt.json", "vault/work/gh.age"}, false},
+		// Not detectable by layout; Open's content check keeps it safe (see
+		// TestOpen_FolderAboveAFormat1VaultIsNotMigrated).
+		{"format-1 vault one level down", []string{"old/vlt.age", "old/work/gh.age"}, true},
+		{"migration in progress one level down", []string{"vault/vlt.migrating.age", "vault/work/gh.age"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for _, f := range tt.files {
+				writeDummy(t, filepath.Join(dir, filepath.FromSlash(f)))
+			}
+			if got := mustExist(t, dir); got != tt.want {
+				t.Fatalf("Exists = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

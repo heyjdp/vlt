@@ -25,6 +25,7 @@ graph TD
 - Permissions: directories `0700`, files `0600`.
 - Path: `vault/<NormalizeGroup(group)>/<Slugify(name)>.age`.
 - The envelope's `group` is the name as typed and trimmed (`GroupLabel`); only the directory is slugified. Labels that differ only in case or punctuation (`Personal Finance`, `personal-finance`) share one directory. The UI lists one label per directory and files new secrets under the existing spelling.
+- A subdirectory holding `vlt.json` or `vlt.migrating.age` is a nested vault, not a group: `Exists`, `Open` and migration ignore its files. Other nested vaults can't be told apart by layout (a secret named "vlt" is stored in its group as `vlt.age`), so `Open` accepts a passphrase only if a probed file decrypts to a secret's JSON envelope, and migration never re-encrypts a file that decrypts to anything else (another vault's sentinel or key).
 - Secrets are encrypted to the vault's X25519 key. `vlt.age` holds that key, encrypted to the passphrase (scrypt). `vlt.json` records the format version. `vlt.migrating.age` exists only while a format-1 vault is being migrated.
 
 ## Slug function

@@ -339,3 +339,94 @@ func TestCreateExclusive_RefusesExistingAndWritesNew(t *testing.T) {
 		t.Fatalf("existing file replaced: %q", got)
 	}
 }
+
+// fileBytes returns a file's contents for before/after comparison.
+func fileBytes(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// The folder above a format-1 vault looks like a format-1 vault without
+// vlt.age whose "secret" is the inner sentinel. Opening it must not take the
+// sentinel as proof and migrate, which would lock the inner vault out.
+func TestOpen_FolderAboveAFormat1VaultIsNotMigrated(t *testing.T) {
+	t.Parallel()
+
+	parent := t.TempDir()
+	inner := filepath.Join(parent, "old")
+	writeLegacy(t, inner) // a format-1 vault with no secrets yet
+	before := fileBytes(t, filepath.Join(inner, keyFile))
+
+	_, err := Open(context.Background(), parent, internalPass, quiet(), WithWorkFactor(10))
+	if !errors.Is(err, ErrWrongPassphrase) {
+		t.Fatalf("Open(parent) = %v, want ErrWrongPassphrase", err)
+	}
+	if !bytes.Equal(before, fileBytes(t, filepath.Join(inner, keyFile))) {
+		t.Fatal("the inner vault's vlt.age was rewritten")
+	}
+	if _, err := os.Stat(filepath.Join(parent, keyFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("nothing may be written to the parent folder")
+	}
+	s, err := Open(context.Background(), inner, internalPass, quiet(), WithWorkFactor(10))
+	if err != nil {
+		t.Fatalf("the inner vault must still open: %v", err)
+	}
+	s.Close()
+}
+
+// Migration must never skip a real group because of its layout: a secret
+// named "vlt" beside a folder some NAS software adds is still migrated.
+func TestMigration_MigratesAGroupHoldingASecretNamedVlt(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeLegacy(t, dir, "vlt", "github")
+	if err := os.Mkdir(filepath.Join(dir, "work", "@eaDir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(context.Background(), dir, internalPass, quiet(), WithWorkFactor(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	secrets, err := s.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secrets) != 2 || len(s.SkippedFiles()) != 0 {
+		t.Fatalf("listed %d secrets, skipped %v; want both migrated", len(secrets), s.SkippedFiles())
+	}
+}
+
+// A vault kept inside a format-1 vault's folder (for example a backup copy)
+// is not one of its groups: migrating the outer vault leaves its key alone.
+func TestMigration_LeavesANestedVaultsKeyAlone(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeLegacy(t, dir, "github")
+	nested := filepath.Join(dir, "backup")
+	writeLegacy(t, nested)
+	nestedKey := filepath.Join(nested, keyFile)
+	before := fileBytes(t, nestedKey)
+	if err := os.Remove(filepath.Join(nested, "work")); err != nil { // so "backup" looks like a group
+		t.Fatal(err)
+	}
+
+	s, err := Open(context.Background(), dir, internalPass, quiet(), WithWorkFactor(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if !bytes.Equal(before, fileBytes(t, nestedKey)) {
+		t.Fatal("migration rewrote the nested vault's vlt.age")
+	}
+	if len(s.SkippedFiles()) != 1 {
+		t.Fatalf("the nested key should be reported as skipped, got %v", s.SkippedFiles())
+	}
+}

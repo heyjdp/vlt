@@ -9,6 +9,7 @@ release; until then, builds are identified by commit hash.
 
 ### Added
 - A create-vault screen, shown when no vault exists at the configured location, which names the target folder and asks for the passphrase twice (at least 12 characters).
+- *Open Existing Vault…* on the create-vault screen, to reopen a vault kept in another folder (for example on a new Mac or after preferences were cleared). The location is saved once the vault unlocks.
 - An auto-lock warning 30 seconds before locking, with *Stay unlocked* and *Lock now*, and an *Auto-lock* on/off setting.
 - Settings (vault location, auto-lock timeout, clipboard TTL) are saved and survive a restart. Settings provided by environment variables are shown as such and never saved.
 - Automatic, crash-safe migration of existing vaults to the new format on first unlock.
@@ -34,6 +35,8 @@ These were part of the internal store, crypto and ui APIs (`internal/` packages)
 - Unused code: `Store.Groups` (group suggestions now come from the loaded list), `store.ValidSecretTypes`, `Identity.IsZeroed`, `App.ShowError` and the test-only `UnlockScreen.PassphraseEntry`, and hand-written string helpers replaced by the standard library.
 
 ### Fixed
+- Opening or switching to the folder above a vault (for example `…/vlt` instead of `…/vlt/vault`) no longer treats the vault as a group of a legacy vault and "migrates" it, which re-encrypted the inner vault's key so its own passphrase stopped working. A subfolder that is itself a vault is now ignored when looking for secrets, and *Open Existing Vault…* points to it instead.
+- A vault whose `vlt.age` is missing says so in plain words and suggests restoring it from a backup.
 - Group names are kept as typed (`Personal Finance`) instead of being replaced by their directory name (`personal-finance`). A new or imported secret whose group differs from an existing group only in case or punctuation uses the existing spelling. Groups saved by earlier versions keep their slugified name, and new secrets in them use that spelling too.
 - Every vault write is atomic (temp file, fsync, rename), so a crash or full disk can no longer truncate a secret.
 - Changing the passphrase can no longer strand secrets under the old passphrase.
