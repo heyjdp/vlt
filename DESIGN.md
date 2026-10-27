@@ -177,6 +177,7 @@ vlt/
 │       ├── unlock.go        # Passphrase entry screen (existing vault)
 │       ├── create.go        # Create-vault screen (passphrase + confirmation)
 │       ├── runner.go        # Background execution of vault I/O
+│       ├── activity.go      # Input tracking for auto-lock
 │       ├── list.go          # Secret browser (left panel)
 │       ├── detail.go        # Secret view/edit (right panel)
 │       └── settings.go      # Vault path, lock timeout, clipboard TTL
@@ -218,7 +219,8 @@ vlt/
 - Auto-lock after N minutes of inactivity (default: **5 minutes**)
 - On lock: the `memguard.LockedBuffer` holding the vault key is zeroed and destroyed (best-effort; see Security Considerations)
 - Passphrase must be re-entered to resume; no in-memory state is preserved across lock cycles
-- The inactivity timer resets on any UI interaction event
+- The inactivity timer resets on user input in the main view and detail/settings panel: typing in an entry, pressing a button, selecting a list row or moving a slider (`activity.go` wraps these widgets' callbacks, because Fyne has no global input hook), plus key presses when no widget has focus. Widgets inside dialogs are not instrumented; instead the dialogs' callbacks (file pickers, import form, confirmations) report activity when the user answers them. Pointer movement, scrolling and split dragging do not count
+- With a timeout of at least 60 seconds, a dialog warns 30 seconds before locking: *Stay unlocked* (or any other input) restarts the countdown, *Lock now* locks immediately. The lock itself always happens if the user is away. Timer callbacks carry a generation number, so a timer replaced by fresh activity never warns or locks
 
 ### Search
 - Instant filter across all decrypted secret names and tags within the current unlocked session

@@ -23,6 +23,9 @@ type SettingsScreen struct {
 	statusBar *widget.Label
 	run       runner
 	onRelock  func()
+	// activity reports user input in the folder picker and confirmation
+	// dialogs, which are outside the instrumented widget tree.
+	activity func()
 
 	content *fyne.Container
 }
@@ -45,6 +48,7 @@ func NewSettingsScreen(
 		statusBar: statusBar,
 		run:       run,
 		onRelock:  onRelock,
+		activity:  noActivity,
 	}
 
 	ss.content = ss.build()
@@ -186,6 +190,7 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 
 	browseBtn := widget.NewButton("Browse...", func() {
 		fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
+			ss.activity()
 			if err != nil {
 				dialog.ShowError(err, ss.window)
 				return
@@ -217,6 +222,7 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 			fmt.Sprintf("Copy all secrets from:\n  %s\nto:\n  %s\n\nThe original vault will not be deleted.",
 				ss.config.VaultDir, newDir),
 			func(confirmed bool) {
+				ss.activity()
 				if !confirmed {
 					return
 				}
@@ -245,6 +251,7 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 		dialog.ShowConfirm("Switch Vault",
 			fmt.Sprintf("Switch to vault at:\n  %s\n\nThe app will lock. If a vault exists there you will unlock it with its passphrase; otherwise you will be asked to create one.", newDir),
 			func(confirmed bool) {
+				ss.activity()
 				if !confirmed {
 					return
 				}

@@ -45,7 +45,7 @@ graph TD
 | `cmd/vlt` | Read env config, set up `slog`, create the Fyne app and window | `main.go` |
 | `internal/crypto` | Generate the X25519 vault key and hold it in memguard; wrap/unwrap it with the passphrase (scrypt); encrypt and decrypt secrets to it | `identity.go`, `vault.go` |
 | `internal/store` | `Secret` JSON envelope, slugs and groups, directory CRUD, vault create/open/change-passphrase, format-1 migration, atomic writes, copy | `secret.go`, `store.go`, `vault.go`, `migrate.go`, `atomic.go` |
-| `internal/ui` | Lock state machine, screens, background runner, clipboard TTL, file import/export, settings | `app.go`, `runner.go`, `create.go`, `unlock.go`, `detail.go`, `list.go`, `fileops.go`, `settings.go` |
+| `internal/ui` | Lock state machine, screens, background runner, clipboard TTL, file import/export, settings | `app.go`, `runner.go`, `activity.go`, `create.go`, `unlock.go`, `detail.go`, `list.go`, `fileops.go`, `settings.go` |
 | `internal/testutil` | Test identities and secret builders | `fixtures.go` |
 
 ## Lock state machine
@@ -62,10 +62,10 @@ stateDiagram-v2
     Unlocked --> Locked: Lock button
     Unlocked --> Locked: auto-lock timer fires
     Unlocked --> Locked: passphrase changed / vault moved / switched
-    Unlocked --> Unlocked: toolbar click resets timer
+    Unlocked --> Unlocked: user input resets timer
 ```
 
-The auto-lock timer only resets on toolbar clicks. See [[F07 Inactivity-based auto-lock]].
+Widget input (entries, buttons, list selection, sliders), unfocused key presses and dialog answers reset the timer. A warning shows 30 s before locking when the timeout is 60 s or more. See [[F07 Inactivity-based auto-lock]].
 
 ## Dependencies
 

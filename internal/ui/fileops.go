@@ -29,6 +29,9 @@ type FileOps struct {
 	run        runner
 	groups     func() []string
 	onSaved    func(*store.Secret)
+	// activity reports user input in the file and form dialogs, which are
+	// outside the instrumented widget tree.
+	activity func()
 }
 
 // NewFileOps creates a file operations handler. groups supplies group
@@ -41,12 +44,14 @@ func NewFileOps(window fyne.Window, s *store.Store, log *slog.Logger, run runner
 		run:        run,
 		groups:     groups,
 		onSaved:    onSaved,
+		activity:   noActivity,
 	}
 }
 
 // ImportFile opens a file picker and imports the selected file as a file secret.
 func (fo *FileOps) ImportFile() {
 	fd := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+		fo.activity()
 		if err != nil {
 			dialog.ShowError(err, fo.window)
 			return
@@ -94,6 +99,7 @@ func (fo *FileOps) processImport(reader fyne.URIReadCloser) {
 
 	// Ask for group before saving
 	groupEntry := widget.NewSelectEntry(fo.groups())
+	groupEntry.OnChanged = func(string) { fo.activity() }
 	groupEntry.SetPlaceHolder("Group (e.g. work, personal)")
 
 	dialog.ShowForm("Import File — Select Group",
@@ -102,6 +108,7 @@ func (fo *FileOps) processImport(reader fyne.URIReadCloser) {
 			widget.NewFormItem("Group", groupEntry),
 		},
 		func(confirmed bool) {
+			fo.activity()
 			if !confirmed {
 				return
 			}
@@ -172,6 +179,7 @@ func (fo *FileOps) askReplace(secret, existing *store.Secret, size int) {
 	dialog.ShowConfirm("Secret already exists",
 		fmt.Sprintf("A %s secret named %q already exists in group %q.\nReplace it with the imported file?", existing.Type, secret.Name, secret.Group),
 		func(replace bool) {
+			fo.activity()
 			if !replace {
 				return
 			}
@@ -216,6 +224,7 @@ func (fo *FileOps) ExportFile(secret *store.Secret) {
 	}
 
 	fd := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
+		fo.activity()
 		if err != nil {
 			dialog.ShowError(err, fo.window)
 			return

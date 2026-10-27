@@ -17,7 +17,7 @@ created: 2026-10-27
 | Passphrase in RAM | Same | Used only to unwrap `vlt.age`, then dropped | Lives in Fyne entry text and Go strings ([[F11 Memory hygiene and honest docs]]) |
 | Decrypted secrets in RAM | Same | none | Held as Go `string`s, kept after lock |
 | Clipboard | Other apps, clipboard history | TTL clear | Clears unconditionally; overlapping copies break the TTL ([[F08 Correct clipboard clearing]]) |
-| Unattended session | Shoulder surfing | Auto-lock | Timer ignores most activity ([[F07 Inactivity-based auto-lock]]) |
+| Unattended session | Shoulder surfing | Auto-lock on real inactivity, with a 30 s warning ([[F07 Inactivity-based auto-lock]]) | Scrolling and pointer movement don't count as activity |
 | Vault integrity | Crash mid-write, partial re-encrypt | Per-file atomic writes ([[F02 Atomic file writes]]); passphrase change rewrites one file and migration is resumable ([[F01 Scrypt-wrapped identity]]) | Concurrent writers other than migration are not coordinated |
 
 ## Where key material lives (after F01)

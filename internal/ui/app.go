@@ -35,7 +35,14 @@ type App struct {
 	config    Config
 	log       *slog.Logger
 	store     *store.Store
-	lockTimer *time.Timer
+	lockTimer stoppableTimer
+	// warnTimer fires lockWarningLead before lockTimer.
+	warnTimer stoppableTimer
+	// timerGen identifies the current pair of auto-lock timers; callbacks
+	// from stopped timers that already started running check it and do
+	// nothing.
+	timerGen  int
+	newTimer  timerFactory
 	cancelCtx context.CancelFunc
 	run       runner
 	// screenGen identifies the latest showUnlockScreen call; older vault
@@ -43,6 +50,8 @@ type App struct {
 	screenGen int
 
 	// UI components
+	lockWarning  *dialog.ConfirmDialog
+	tracker      *activityTracker
 	unlockScreen *UnlockScreen
 	createScreen *CreateScreen
 	mainContent  *fyne.Container
@@ -53,18 +62,19 @@ type App struct {
 
 // NewApp creates the main application controller.
 func NewApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logger) *App {
-	return newApp(fyneApp, window, config, log, goroutineRunner())
+	return newApp(fyneApp, window, config, log, goroutineRunner(), realTimers)
 }
 
-// newApp creates the controller with an explicit runner (tests run work
-// inline).
-func newApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logger, run runner) *App {
+// newApp creates the controller with an explicit runner and timer factory
+// (tests run work inline and fire timers by hand).
+func newApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logger, run runner, timers timerFactory) *App {
 	app := &App{
-		fyneApp: fyneApp,
-		window:  window,
-		config:  config,
-		log:     log,
-		run:     run,
+		fyneApp:  fyneApp,
+		window:   window,
+		config:   config,
+		log:      log,
+		run:      run,
+		newTimer: timers,
 	}
 
 	app.statusBar = widget.NewLabel("Locked")
@@ -238,22 +248,19 @@ func (a *App) showMainView(s *store.Store, session runner) {
 	// Toolbar with actions
 	toolbar := container.NewHBox(
 		widget.NewButton("Add Password", func() {
-			a.resetLockTimer()
 			a.detailView.ShowNewPassword()
 		}),
 		widget.NewButton("Add Record", func() {
-			a.resetLockTimer()
 			a.detailView.ShowNewRecord()
 		}),
 		widget.NewButton("Import File", func() {
-			a.resetLockTimer()
 			fileOps.ImportFile()
 		}),
 		widget.NewButton("Settings", func() {
-			a.resetLockTimer()
 			settings := NewSettingsScreen(a.window, &a.config, s, a.statusBar, a.log, session, func() {
 				a.Lock()
 			})
+			settings.activity = a.resetLockTimer
 			a.detailView.ShowContent(settings.Content())
 		}),
 		widget.NewButton("Lock", func() {
@@ -279,11 +286,29 @@ func (a *App) showMainView(s *store.Store, session runner) {
 	a.window.SetContent(a.mainContent)
 	a.statusBar.SetText("Unlocked")
 
+	// Any input in the main view resets the auto-lock countdown. The detail
+	// panel re-instruments its widgets each time it renders a new form.
+	a.tracker = newActivityTracker(a.resetLockTimer)
+	a.tracker.instrument(a.mainContent)
+	a.detailView.onRender = func(panel fyne.CanvasObject) {
+		if a.tracker != nil {
+			a.tracker.forget()
+			a.tracker.instrument(panel)
+		}
+	}
+	// Dialog buttons and file pickers are not part of the instrumented
+	// tree; components report activity from their callbacks instead.
+	a.detailView.activity = a.resetLockTimer
+	fileOps.activity = a.resetLockTimer
+	a.window.Canvas().SetOnTypedKey(func(*fyne.KeyEvent) { a.resetLockTimer() })
+	a.window.Canvas().SetOnTypedRune(func(rune) { a.resetLockTimer() })
+
 	// Load secrets in the background; Lock cancels the session context.
 	a.secretList.Refresh()
 }
 
-// Lock zeros the identity and returns to the unlock screen.
+// Lock zeros the vault key, cancels the session, and returns to the unlock
+// screen. It may be called from any goroutine (the auto-lock timer calls it).
 func (a *App) Lock() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -295,41 +320,130 @@ func (a *App) Lock() {
 		a.cancelCtx()
 		a.cancelCtx = nil
 	}
-	if a.lockTimer != nil {
-		a.lockTimer.Stop()
-		a.lockTimer = nil
-	}
+	a.stopLockTimers()
 
 	a.store = nil
+	a.tracker = nil
 	a.log.Info("vault locked")
 
 	fyne.Do(func() {
+		a.hideLockWarning()
 		a.statusBar.SetText("Locked")
 		a.showUnlockScreen()
 	})
 }
 
-// startLockTimer starts the auto-lock inactivity timer. The caller holds a.mu.
-func (a *App) startLockTimer() {
+// lockTimeout returns the configured auto-lock timeout; 0 disables it.
+func (a *App) lockTimeout() time.Duration {
 	if a.config.LockTimeoutMs <= 0 {
-		return
+		return 0
 	}
-
-	d := time.Duration(a.config.LockTimeoutMs) * time.Millisecond
-	a.lockTimer = time.AfterFunc(d, func() {
-		a.log.Info("auto-lock triggered")
-		a.Lock()
-	})
+	return time.Duration(a.config.LockTimeoutMs) * time.Millisecond
 }
 
-// resetLockTimer resets the inactivity timer.
+// warnDelay returns when to warn before locking, or 0 for no warning (the
+// timeout is too short to leave room for one).
+func warnDelay(timeout time.Duration) time.Duration {
+	if timeout < 2*lockWarningLead {
+		return 0
+	}
+	return timeout - lockWarningLead
+}
+
+// startLockTimer starts the auto-lock inactivity timer, and the warning
+// timer that fires lockWarningLead earlier. The caller holds a.mu.
+func (a *App) startLockTimer() {
+	d := a.lockTimeout()
+	if d == 0 {
+		return
+	}
+	a.timerGen++
+	gen := a.timerGen
+	a.lockTimer = a.newTimer(d, func() { a.lockIfCurrent(gen) })
+	if w := warnDelay(d); w > 0 {
+		a.warnTimer = a.newTimer(w, func() {
+			fyne.Do(func() { a.showLockWarning(gen) })
+		})
+	}
+}
+
+// lockIfCurrent locks for inactivity unless the timer that fired has since
+// been replaced (activity arrived just as it fired).
+func (a *App) lockIfCurrent(gen int) {
+	a.mu.Lock()
+	current := gen == a.timerGen && a.lockTimer != nil
+	a.mu.Unlock()
+	if current {
+		a.log.Info("auto-lock triggered")
+		a.Lock()
+	}
+}
+
+// stopLockTimers stops both auto-lock timers. The caller holds a.mu.
+func (a *App) stopLockTimers() {
+	a.timerGen++
+	if a.lockTimer != nil {
+		a.lockTimer.Stop()
+		a.lockTimer = nil
+	}
+	if a.warnTimer != nil {
+		a.warnTimer.Stop()
+		a.warnTimer = nil
+	}
+}
+
+// resetLockTimer restarts the inactivity countdown. It is called on every
+// user input (see activityTracker) on the main goroutine, and re-reads the
+// timeout, so a change in Settings applies immediately.
 func (a *App) resetLockTimer() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	if a.lockTimer != nil {
+		a.stopLockTimers()
+		a.startLockTimer()
+	}
+	a.mu.Unlock()
+	a.hideLockWarning()
+}
 
-	if a.lockTimer != nil && a.config.LockTimeoutMs > 0 {
-		d := time.Duration(a.config.LockTimeoutMs) * time.Millisecond
-		a.lockTimer.Reset(d)
+// showLockWarning tells the user the vault is about to lock for inactivity,
+// unless the warning timer that fired (generation gen) has since been
+// replaced by fresh activity. "Stay unlocked" (or any other input) restarts
+// the countdown; "Lock now" locks immediately.
+func (a *App) showLockWarning(gen int) {
+	a.mu.Lock()
+	current := gen == a.timerGen && a.store != nil
+	a.mu.Unlock()
+	if !current || a.lockWarning != nil {
+		return
+	}
+	var d *dialog.ConfirmDialog
+	d = dialog.NewConfirm("Locking soon",
+		fmt.Sprintf("The vault will lock in %d seconds because of inactivity. Unsaved changes will be lost.",
+			int(lockWarningLead.Seconds())),
+		func(stay bool) {
+			if a.lockWarning != d {
+				return // hidden by hideLockWarning (activity or lock), not by the user
+			}
+			a.lockWarning = nil
+			if stay {
+				a.resetLockTimer()
+			} else {
+				a.Lock()
+			}
+		}, a.window)
+	d.SetConfirmText("Stay unlocked")
+	d.SetDismissText("Lock now")
+	a.lockWarning = d
+	d.Show()
+}
+
+// hideLockWarning dismisses the lock warning, if shown. It clears
+// a.lockWarning first so the dialog's callback (which Fyne runs on Hide)
+// knows the dismissal was not the user's choice.
+func (a *App) hideLockWarning() {
+	if d := a.lockWarning; d != nil {
+		a.lockWarning = nil
+		d.Hide()
 	}
 }
 

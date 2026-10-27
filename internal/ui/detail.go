@@ -34,8 +34,14 @@ type DetailView struct {
 	current *store.Secret
 	// busy is true while a save or delete is in flight; a second one is
 	// refused so they cannot interleave.
-	busy    bool
-	fileOps *FileOps
+	busy bool
+	// onRender, if set, is called with the panel after each render (the app
+	// uses it to track user activity in newly built forms).
+	onRender func(fyne.CanvasObject)
+	// activity reports user input made in dialogs, which are outside the
+	// instrumented widget tree.
+	activity func()
+	fileOps  *FileOps
 }
 
 // NewDetailView creates a new detail panel.
@@ -48,6 +54,7 @@ func NewDetailView(window fyne.Window, s *store.Store, clipboardTTL int, statusB
 		log:          log,
 		run:          run,
 		groups:       func() []string { return nil },
+		activity:     noActivity,
 	}
 
 	dv.content = container.NewVBox(
@@ -73,8 +80,16 @@ func (dv *DetailView) SetCallbacks(onSaved, onDeleted func(*store.Secret), group
 // ShowContent replaces the panel with obj (for example the settings screen).
 func (dv *DetailView) ShowContent(obj fyne.CanvasObject) {
 	dv.current = nil
-	dv.content.Objects = []fyne.CanvasObject{obj}
+	dv.setObjects(obj)
+}
+
+// setObjects replaces the panel's contents and reports the render.
+func (dv *DetailView) setObjects(objs ...fyne.CanvasObject) {
+	dv.content.Objects = objs
 	dv.content.Refresh()
+	if dv.onRender != nil {
+		dv.onRender(dv.content)
+	}
 }
 
 // RefreshIfShowing re-renders the panel when it shows the secret stored at
@@ -103,10 +118,7 @@ func (dv *DetailView) ShowSecret(secret *store.Secret) {
 	case store.TypeFile:
 		dv.showFileDetail(secret)
 	default:
-		dv.content.Objects = []fyne.CanvasObject{
-			widget.NewLabel("Unknown secret type: " + string(secret.Type)),
-		}
-		dv.content.Refresh()
+		dv.setObjects(widget.NewLabel("Unknown secret type: " + string(secret.Type)))
 	}
 }
 
@@ -226,8 +238,7 @@ func (dv *DetailView) showPasswordDetail(secret *store.Secret, isNew bool) {
 		)
 	}
 
-	dv.content.Objects = objects
-	dv.content.Refresh()
+	dv.setObjects(objects...)
 }
 
 // showRecordDetail renders a record secret form.
@@ -332,8 +343,7 @@ func (dv *DetailView) showRecordDetail(secret *store.Secret, isNew bool) {
 		)
 	}
 
-	dv.content.Objects = objects
-	dv.content.Refresh()
+	dv.setObjects(objects...)
 }
 
 // showFileDetail renders a file secret detail view.
@@ -347,18 +357,17 @@ func (dv *DetailView) showFileDetail(secret *store.Secret) {
 	})
 	deleteBtn.Importance = widget.DangerImportance
 
-	dv.content.Objects = []fyne.CanvasObject{
+	dv.setObjects(
 		widget.NewLabel("File Secret"),
 		widget.NewSeparator(),
-		widget.NewLabel("Name: " + secret.Name),
-		widget.NewLabel("Group: " + secret.Group),
-		widget.NewLabel("Original Filename: " + secret.OriginalFilename),
-		widget.NewLabel("MIME Type: " + secret.MIMEType),
+		widget.NewLabel("Name: "+secret.Name),
+		widget.NewLabel("Group: "+secret.Group),
+		widget.NewLabel("Original Filename: "+secret.OriginalFilename),
+		widget.NewLabel("MIME Type: "+secret.MIMEType),
 		widget.NewLabel(fmt.Sprintf("Created: %s", secret.CreatedAt.Format(time.RFC3339))),
 		widget.NewLabel(fmt.Sprintf("Modified: %s", secret.ModifiedAt.Format(time.RFC3339))),
 		container.NewHBox(exportBtn, deleteBtn),
-	}
-	dv.content.Refresh()
+	)
 }
 
 // saveSecret creates (isNew) or updates a secret in the background. On
@@ -421,6 +430,7 @@ func (dv *DetailView) confirmDelete(secret *store.Secret) {
 		"Delete Secret",
 		fmt.Sprintf("Are you sure you want to delete %q?", secret.Name),
 		func(confirmed bool) {
+			dv.activity()
 			if !confirmed {
 				return
 			}
@@ -457,8 +467,7 @@ func (dv *DetailView) deleteSecret(secret *store.Secret) {
 			// user may have moved on while the delete ran.
 			if dv.current != nil && sameSecret(dv.current, deleted) {
 				dv.current = nil
-				dv.content.Objects = []fyne.CanvasObject{widget.NewLabel("Secret deleted")}
-				dv.content.Refresh()
+				dv.setObjects(widget.NewLabel("Secret deleted"))
 			}
 			if dv.onDeleted != nil {
 				dv.onDeleted(deleted)
