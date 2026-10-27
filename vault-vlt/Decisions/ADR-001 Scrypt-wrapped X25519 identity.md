@@ -3,7 +3,7 @@ title: "ADR-001: Scrypt-wrapped X25519 identity"
 tags:
   - decision
   - crypto
-status: proposed
+status: accepted
 date: 2026-10-27
 supersedes: 
 aliases:
@@ -13,7 +13,13 @@ aliases:
 # ADR-001: Scrypt-wrapped X25519 identity
 
 ## Status
-**Proposed**, raised by the [[2026-10-27 Code Review]] and implemented by [[F01 Scrypt-wrapped identity]].
+**Accepted** and implemented by [[F01 Scrypt-wrapped identity]]. It was raised by the [[2026-10-27 Code Review]].
+
+Implementation notes:
+- The format is recorded in `vlt.json`, not a header line.
+- Migration stages the new key in `vlt.migrating.age` and resumes forward after interruption.
+- The work factor is configurable for tests.
+- The backup recommendation is in the README.
 
 ## Context
 

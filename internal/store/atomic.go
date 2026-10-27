@@ -57,6 +57,40 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 	return nil
 }
 
+// writeFileExclusive writes data to path atomically, failing with an error
+// wrapping os.ErrExist if path already exists. It writes and fsyncs a uniquely
+// named temp file, then hard-links it into place; link(2) fails if the target
+// exists, so exactly one concurrent caller wins.
+func writeFileExclusive(path string, data []byte, perm os.FileMode) (err error) {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, tmpPrefix+"*")
+	if err != nil {
+		return fmt.Errorf("writeFileExclusive: create temp: %w", err)
+	}
+	tmp := f.Name()
+	defer func() { _ = os.Remove(tmp) }()
+
+	if _, err = f.Write(data); err == nil {
+		if err = f.Chmod(perm); err == nil {
+			err = f.Sync()
+		}
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return fmt.Errorf("writeFileExclusive: %w", err)
+	}
+
+	if err := os.Link(tmp, path); err != nil {
+		return fmt.Errorf("writeFileExclusive: %w", err)
+	}
+	if err := syncDir(dir); err != nil {
+		return fmt.Errorf("writeFileExclusive: %w", err)
+	}
+	return nil
+}
+
 // syncDir fsyncs a directory so a preceding rename or mkdir is durable.
 // Windows does not support fsync on directory handles, and NTFS journals
 // renames, so it is a no-op there. Filesystems that reject directory fsync

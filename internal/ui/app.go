@@ -4,7 +4,9 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,7 +15,6 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/yourorg/vlt/internal/crypto"
 	"github.com/yourorg/vlt/internal/store"
 )
 
@@ -31,7 +32,6 @@ type App struct {
 	window      fyne.Window
 	config      Config
 	log         *slog.Logger
-	identity    *crypto.Identity
 	store       *store.Store
 	lockTimer   *time.Timer
 	cancelCtx   context.CancelFunc
@@ -76,46 +76,36 @@ func (a *App) onUnlock(passphrase string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	id, err := crypto.NewIdentity(passphrase)
-	if err != nil {
-		a.unlockScreen.ShowError("Failed to create identity: " + err.Error())
-		return
-	}
-
-	s := store.New(id, a.config.VaultDir, a.log)
-	if err := s.Init(); err != nil {
-		id.Zero()
-		a.unlockScreen.ShowError("Failed to initialize vault: " + err.Error())
-		return
-	}
-
-	if s.IsNew() {
-		// First run — create the sentinel file with this passphrase
-		if err := s.CreateSentinel(); err != nil {
-			id.Zero()
-			a.unlockScreen.ShowError("Failed to initialize vault: " + err.Error())
-			return
-		}
-		a.log.Info("new vault created", "dir", a.config.VaultDir)
+	var (
+		s   *store.Store
+		err error
+	)
+	if store.Exists(a.config.VaultDir) {
+		s, err = store.Open(context.Background(), a.config.VaultDir, passphrase, a.log)
 	} else {
-		// Existing vault — verify the passphrase
-		if err := s.Verify(); err != nil {
-			id.Zero()
-			if errors.Is(err, store.ErrWrongPassphrase) {
-				a.unlockScreen.ShowError("Incorrect passphrase")
-				return
-			}
-			a.unlockScreen.ShowError("Verification failed: " + err.Error())
+		s, err = store.Create(a.config.VaultDir, passphrase, a.log)
+	}
+	if err != nil {
+		if errors.Is(err, store.ErrWrongPassphrase) {
+			a.unlockScreen.ShowError("Incorrect passphrase")
 			return
 		}
+		a.unlockScreen.ShowError("Failed to open vault: " + err.Error())
+		return
 	}
 
-	a.identity = id
 	a.store = s
 	a.log.Info("vault unlocked", "dir", a.config.VaultDir)
 
 	a.showMainView()
 	a.startLockTimer()
+
+	if skipped := s.SkippedFiles(); len(skipped) > 0 {
+		dialog.ShowInformation("Some secrets were not migrated",
+			fmt.Sprintf("%d file(s) could not be decrypted with this passphrase and were left untouched:\n%s",
+				len(skipped), strings.Join(skipped, "\n")),
+			a.window)
+	}
 }
 
 // showMainView displays the main secret browser.
@@ -155,7 +145,7 @@ func (a *App) showMainView() {
 		}),
 		widget.NewButton("Settings", func() {
 			a.resetLockTimer()
-			settings := NewSettingsScreen(a.window, &a.config, a.identity, a.store, a.statusBar, a.log, func() {
+			settings := NewSettingsScreen(a.window, &a.config, a.store, a.statusBar, a.log, func() {
 				a.Lock()
 			})
 			a.detailView.Content().Objects = []fyne.CanvasObject{settings.Content()}
@@ -197,9 +187,8 @@ func (a *App) Lock() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.identity != nil {
-		a.identity.Zero()
-		a.identity = nil
+	if a.store != nil {
+		a.store.Close()
 	}
 	if a.cancelCtx != nil {
 		a.cancelCtx()

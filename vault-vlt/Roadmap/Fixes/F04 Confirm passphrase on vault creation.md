@@ -27,8 +27,8 @@ created: 2026-10-27
 ## Problem
 - `App.onUnlock` (`internal/ui/app.go:92`) creates a new vault with **whatever was typed** when there's no sentinel. A typo becomes the permanent passphrase.
 - "Switch Vault" to an empty or wrong directory does the same.
-- `Store.Verify` returns `nil` when the sentinel is missing, even if the directory already holds `.age` files. Any passphrase then "unlocks" it, and the existing files are silently skipped.
-- `Store.CopyTo` overwrites `vlt.age` in a destination that already holds a different vault.
+- ~~A directory with `.age` files but no `vlt.age` is adopted by any passphrase~~ (fixed in [[F01 Scrypt-wrapped identity]]: `Exists` counts secret files, and `Open` migrates only if the passphrase decrypts one)
+- ~~`Store.CopyTo` overwrites `vlt.age` in a destination that already holds a different vault~~ (fixed in F01: `CopyTo` returns `ErrVaultExists`)
 
 ## Fix
 - Decide the screen before showing it: if `vlt.age` is missing, show a **Create vault** screen with *passphrase* + *confirm* fields and strength guidance ([[Passphrase Strength]]: recommend 5+ Diceware words).

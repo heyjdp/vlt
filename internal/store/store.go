@@ -17,30 +17,33 @@ import (
 // ErrSecretNotFound is returned when a secret does not exist in the vault.
 var ErrSecretNotFound = errors.New("secret not found")
 
-// ErrVaultLocked is returned when the vault identity is not available.
-var ErrVaultLocked = errors.New("vault is locked")
-
-// ErrWrongPassphrase is returned when the passphrase cannot decrypt the sentinel file.
-var ErrWrongPassphrase = errors.New("wrong passphrase")
-
-const sentinelFile = "vlt.age"
-const sentinelPlaintext = "unlocked"
-
 // Store manages secrets in an age-encrypted vault directory.
-// Secrets are stored at vault/<group>/<slug>.age.
+// Secrets are stored at vault/<group>/<slug>.age, encrypted to the vault key.
+// Use Create or Open to obtain one; New is for callers that already hold the
+// vault key.
 type Store struct {
 	dir string
 	id  *crypto.Identity
 	log *slog.Logger
+
+	opts options
+
+	// skipped lists legacy files that could not be migrated (see migrate.go).
+	skipped []string
 }
 
-// New creates a new Store operating on the given vault directory
-// with the given identity for encryption/decryption.
+// New creates a Store over dir that encrypts and decrypts with the given
+// vault key. It does not read or write vlt.age.
 func New(id *crypto.Identity, dir string, log *slog.Logger) *Store {
+	return newStore(id, dir, log, options{})
+}
+
+func newStore(id *crypto.Identity, dir string, log *slog.Logger, o options) *Store {
 	return &Store{
-		dir: dir,
-		id:  id,
-		log: log,
+		dir:  dir,
+		id:   id,
+		log:  log,
+		opts: o,
 	}
 }
 
@@ -55,63 +58,6 @@ func (s *Store) Init() error {
 		return fmt.Errorf("store.Init: %w", err)
 	}
 	return nil
-}
-
-// IsNew reports whether this is a fresh vault with no sentinel file.
-func (s *Store) IsNew() bool {
-	_, err := os.Stat(filepath.Join(s.dir, sentinelFile))
-	return os.IsNotExist(err)
-}
-
-// CreateSentinel writes the sentinel file (vlt.age) containing the word
-// "unlocked", encrypted with the current identity. This is called once
-// when the vault is first created.
-func (s *Store) CreateSentinel() error {
-	ciphertext, err := crypto.Encrypt(s.id, []byte(sentinelPlaintext))
-	if err != nil {
-		return fmt.Errorf("store.CreateSentinel: %w", err)
-	}
-
-	path := filepath.Join(s.dir, sentinelFile)
-	if err := writeFileAtomic(path, ciphertext, 0o600); err != nil {
-		return fmt.Errorf("store.CreateSentinel: %w", err)
-	}
-
-	s.log.Info("sentinel file created", "path", path)
-	return nil
-}
-
-// Verify attempts to decrypt the sentinel file. Returns nil if the
-// passphrase is correct, ErrWrongPassphrase if it cannot decrypt, or
-// another error for I/O failures.
-func (s *Store) Verify() error {
-	path := filepath.Join(s.dir, sentinelFile)
-
-	ciphertext, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// No sentinel — treat as new vault (caller should create one)
-			return nil
-		}
-		return fmt.Errorf("store.Verify: %w", err)
-	}
-
-	plaintext, err := crypto.Decrypt(s.id, ciphertext)
-	if err != nil {
-		return ErrWrongPassphrase
-	}
-
-	if string(plaintext) != sentinelPlaintext {
-		return ErrWrongPassphrase
-	}
-
-	return nil
-}
-
-// RecreateSentinel re-encrypts the sentinel file with the current identity.
-// Called after a passphrase change.
-func (s *Store) RecreateSentinel() error {
-	return s.CreateSentinel()
 }
 
 // Save encrypts and writes a secret to the vault directory.
@@ -279,49 +225,31 @@ func (s *Store) Groups() []string {
 	return groups
 }
 
-// ReEncryptAll decrypts every secret with the current identity and
-// re-encrypts with newID. On success the store's identity is swapped
-// to newID and the old identity is zeroed.
-func (s *Store) ReEncryptAll(ctx context.Context, newID *crypto.Identity) error {
-	secrets, err := s.List(ctx)
-	if err != nil {
-		return fmt.Errorf("store.ReEncryptAll: list: %w", err)
-	}
-
-	for _, sec := range secrets {
-		data, err := json.MarshalIndent(sec, "", "  ")
-		if err != nil {
-			return fmt.Errorf("store.ReEncryptAll: marshal %q: %w", sec.Name, err)
-		}
-
-		ciphertext, err := crypto.Encrypt(newID, data)
-		if err != nil {
-			return fmt.Errorf("store.ReEncryptAll: encrypt %q: %w", sec.Name, err)
-		}
-
-		path := s.secretPath(sec)
-		if err := writeFileAtomic(path, ciphertext, 0o600); err != nil {
-			return fmt.Errorf("store.ReEncryptAll: write %q: %w", sec.Name, err)
-		}
-	}
-
-	s.log.Info("vault re-encrypted", "secrets", len(secrets))
-	s.id = newID
-	return nil
-}
-
-// CopyTo copies the sentinel file and every .age file from this store's
-// directory into destDir, preserving the group subdirectory structure.
+// CopyTo copies the wrapped vault key, the format marker, and every .age
+// file from this store's directory into destDir, preserving the group
+// subdirectory structure. It refuses (ErrVaultExists) to copy into a
+// directory that already holds a vault or secret files, since overwriting
+// another vault's vlt.age would make its secrets unrecoverable. An open
+// Store never has a migration in progress, so vlt.migrating.age is not copied.
 func (s *Store) CopyTo(destDir string) error {
+	if Exists(destDir) {
+		return fmt.Errorf("store.CopyTo %q: %w", destDir, ErrVaultExists)
+	}
 	if err := mkdirAllSynced(destDir, 0o700); err != nil {
 		return fmt.Errorf("store.CopyTo: mkdir %q: %w", destDir, err)
 	}
 
-	// Copy the sentinel file if it exists
-	sentinelSrc := filepath.Join(s.dir, sentinelFile)
-	if data, err := os.ReadFile(sentinelSrc); err == nil {
-		if err := writeFileAtomic(filepath.Join(destDir, sentinelFile), data, 0o600); err != nil {
-			return fmt.Errorf("store.CopyTo: write sentinel: %w", err)
+	// Copy the vault-level files that exist
+	for _, name := range []string{keyFile, formatFile} {
+		data, err := os.ReadFile(filepath.Join(s.dir, name))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("store.CopyTo: read %s: %w", name, err)
+		}
+		if err := writeFileAtomic(filepath.Join(destDir, name), data, 0o600); err != nil {
+			return fmt.Errorf("store.CopyTo: write %s: %w", name, err)
 		}
 	}
 

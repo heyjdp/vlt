@@ -13,10 +13,12 @@ Target platforms: **Linux, macOS, Windows, OpenBSD**
 
 ## Identity & Unlock
 
-- **Mechanism:** Passphrase-only, using age's scrypt recipient (`age.NewScryptRecipient`)
-- The passphrase is used to derive an age identity on-the-fly at unlock
-- **No key file is ever written to disk**
-- The derived identity lives only in process memory and is zeroed on lock or session timeout
+- **Mechanism:** a random age X25519 identity (the *vault key*) encrypts every secret; the vault key is stored in `vlt.age`, encrypted to the passphrase with age's scrypt recipient (`age.NewScryptRecipient`). See ADR-001 in the project vault (`vault-vlt/Decisions/`).
+- Unlock runs exactly one scrypt derivation (decrypting `vlt.age`); secret decryption is X25519 and costs microseconds
+- No key material leaves the vault directory, and the only key on disk is passphrase-encrypted
+- The vault key lives in process memory (memguard) and is zeroed on lock or session timeout
+- Changing the passphrase atomically rewrites only `vlt.age`
+- `vlt.json` records the format version (2); format-1 vaults (secrets encrypted directly to the passphrase) are migrated on first unlock, crash-safely
 - The vault directory is fully portable — copy it anywhere and unlock with the same passphrase
 
 ---
@@ -162,10 +164,13 @@ vlt/
 │   └── main.go              # Entry point, Fyne app bootstrap
 ├── internal/
 │   ├── crypto/
-│   │   ├── identity.go      # Passphrase → age identity, memguard zeroing
-│   │   └── vault.go         # Encrypt/decrypt envelope helpers
+│   │   ├── identity.go      # X25519 vault key (memguard); wrap/unwrap with passphrase
+│   │   └── vault.go         # Encrypt/decrypt to the vault key
 │   ├── store/
-│   │   ├── store.go         # Directory walker, secret CRUD
+│   │   ├── store.go         # Directory walker, secret CRUD, copy
+│   │   ├── vault.go         # Create/Open/ChangePassphrase, format marker
+│   │   ├── migrate.go       # Crash-safe format-1 → format-2 migration
+│   │   ├── atomic.go        # Atomic file writes
 │   │   └── secret.go        # Secret types and JSON envelope schema
 │   └── ui/
 │       ├── app.go           # Fyne app and window bootstrap
@@ -179,15 +184,18 @@ vlt/
 ### Package Responsibilities
 
 **`internal/crypto`**
-- `identity.go` — derives an `age.ScryptIdentity` from a passphrase; stores it using `memguard.LockedBuffer`; exposes a `Zero()` method to wipe on lock
-- `vault.go` — `Encrypt(identity, envelope) ([]byte, error)` and `Decrypt(identity, ciphertext) ([]byte, error)` wrappers around `filippo.io/age`
+- `identity.go` — generates the X25519 vault key and holds it in a `memguard.LockedBuffer`; `WrapIdentity`/`UnwrapIdentity` encrypt it to and from the passphrase (scrypt); `DecryptWithPassphrase` reads legacy files; `Zero()` wipes on lock
+- `vault.go` — `Encrypt(identity, envelope) ([]byte, error)` and `Decrypt(identity, ciphertext) ([]byte, error)` to the vault key
 
 **`internal/store`**
 - `secret.go` — defines `Secret`, `PasswordSecret`, `RecordSecret`, `FileSecret` structs; JSON marshalling/unmarshalling; filename slugification
-- `store.go` — `List()`, `Get(name)`, `Save(secret)`, `Delete(name)`, `Move(secret, category)` operating on the vault directory; decrypts on `Get`, encrypts on `Save`
+- `store.go` — `List()`, `Get(name, group)`, `Save(secret)`, `Delete(name, group)`, `Groups()`, `CopyTo(dir)` operating on the vault directory; decrypts on `Get`, encrypts on `Save`
+- `vault.go` — `Create`, `Open`, `Exists`, `ChangePassphrase`, `Close`; reads and writes `vlt.age` (wrapped vault key) and `vlt.json` (format marker)
+- `migrate.go` — in-place, resumable migration of format-1 vaults on first unlock
+- `atomic.go` — temp-file + fsync + rename writes used for every vault file
 
 **`internal/ui`**
-- `unlock.go` — passphrase entry dialog; calls `crypto.identity` on confirm; transitions to main view
+- `unlock.go` — passphrase entry dialog; passes the passphrase to `App`, which calls `store.Open` or `store.Create`; transitions to main view
 - `list.go` — category tree + secret list; filters by search query; fires selection events
 - `detail.go` — renders the correct form for the secret type; handles clipboard copy with TTL countdown
 - `settings.go` — vault path picker, auto-lock timeout slider, clipboard TTL slider
@@ -204,7 +212,7 @@ vlt/
 
 ### Session Lock
 - Auto-lock after N minutes of inactivity (default: **5 minutes**)
-- On lock: the `memguard.LockedBuffer` holding the derived identity is zeroed and destroyed
+- On lock: the `memguard.LockedBuffer` holding the vault key is zeroed and destroyed (best-effort; see Security Considerations)
 - Passphrase must be re-entered to resume; no in-memory state is preserved across lock cycles
 - The inactivity timer resets on any UI interaction event
 
@@ -290,10 +298,10 @@ For macOS, wrap with `fyne package` to produce a proper `.app` bundle. For Windo
 
 ## Security Considerations
 
-- The passphrase is never stored anywhere — not in memory beyond the scrypt derivation call, not on disk
-- The derived age identity is held in a `memguard.LockedBuffer` (mlock'd, guard pages) and explicitly zeroed on lock
+- The passphrase is never stored on disk; on disk, only the passphrase-encrypted vault key (`vlt.age`) and secrets encrypted to it exist
+- The vault key's encoded form is held in a `memguard.LockedBuffer` (mlock'd, guard pages) and explicitly zeroed on lock; age's parsed key and transient string copies live on the Go heap until garbage-collected, so this is best-effort
 - Secret plaintext exists in memory only during the active session and is not cached between operations
 - The vault directory should be on a local filesystem — storing it on a network share or cloud-synced folder is the user's responsibility
-- All vault writes go through a temp-file + fsync + rename + directory-fsync helper, so a crash or full disk never leaves a truncated `.age` file (directory fsync is skipped on Windows). Atomicity is per file: an operation that rewrites many files, such as a passphrase change, must still be ordered so any interrupted prefix leaves the vault readable
+- All vault writes go through a temp-file + fsync + rename + directory-fsync helper, so a crash or full disk never leaves a truncated `.age` file (directory fsync is skipped on Windows). Atomicity is per file, so multi-file operations are ordered so any interrupted prefix leaves the vault readable: passphrase change rewrites only `vlt.age`, and format-1 migration writes the new key to a staging file before touching secrets and swaps `vlt.age` only after every secret is re-encrypted
 - File permissions on the vault directory should be set to `0700` on creation (Unix); `vlt` enforces this on startup and warns if they have been widened
 

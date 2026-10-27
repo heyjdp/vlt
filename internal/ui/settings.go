@@ -1,7 +1,7 @@
 package ui
 
 import (
-	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -10,7 +10,6 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/yourorg/vlt/internal/crypto"
 	"github.com/yourorg/vlt/internal/store"
 )
 
@@ -18,7 +17,6 @@ import (
 type SettingsScreen struct {
 	window    fyne.Window
 	config    *Config
-	identity  *crypto.Identity
 	store     *store.Store
 	log       *slog.Logger
 	statusBar *widget.Label
@@ -31,7 +29,6 @@ type SettingsScreen struct {
 func NewSettingsScreen(
 	window fyne.Window,
 	config *Config,
-	identity *crypto.Identity,
 	s *store.Store,
 	statusBar *widget.Label,
 	log *slog.Logger,
@@ -40,7 +37,6 @@ func NewSettingsScreen(
 	ss := &SettingsScreen{
 		window:    window,
 		config:    config,
-		identity:  identity,
 		store:     s,
 		log:       log,
 		statusBar: statusBar,
@@ -124,40 +120,13 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 			return
 		}
 
-		// Verify the current passphrase via the sentinel file
-		verifyID, err := crypto.NewIdentity(current)
-		if err != nil {
-			errorLabel.SetText("Invalid current passphrase: " + err.Error())
-			errorLabel.Show()
-			return
-		}
-
-		verifyStore := store.New(verifyID, ss.config.VaultDir, ss.log)
-		if err := verifyStore.Verify(); err != nil {
-			verifyID.Zero()
-			errorLabel.SetText("Current passphrase is incorrect")
-			errorLabel.Show()
-			return
-		}
-		verifyID.Zero()
-
-		// Create new identity
-		newID, err := crypto.NewIdentity(newPass)
-		if err != nil {
-			errorLabel.SetText("Failed to create new identity: " + err.Error())
-			errorLabel.Show()
-			return
-		}
-
-		// Re-encrypt all secrets and recreate sentinel
-		if err := ss.store.ReEncryptAll(context.Background(), newID); err != nil {
-			newID.Zero()
-			errorLabel.SetText("Re-encryption failed: " + err.Error())
-			errorLabel.Show()
-			return
-		}
-		if err := ss.store.RecreateSentinel(); err != nil {
-			errorLabel.SetText("Failed to update sentinel: " + err.Error())
+		// Only vlt.age (the wrapped vault key) is rewritten; secrets are untouched.
+		if err := ss.store.ChangePassphrase(current, newPass); err != nil {
+			if errors.Is(err, store.ErrWrongPassphrase) {
+				errorLabel.SetText("Current passphrase is incorrect")
+			} else {
+				errorLabel.SetText("Passphrase change failed: " + err.Error())
+			}
 			errorLabel.Show()
 			return
 		}
@@ -167,12 +136,11 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 		newEntry.SetText("")
 		confirmEntry.SetText("")
 
-		ss.log.Info("passphrase changed, vault re-encrypted")
-		ss.statusBar.SetText("Passphrase changed — vault re-encrypted")
+		ss.statusBar.SetText("Passphrase changed")
 
 		// Lock and force re-auth with the new passphrase
 		dialog.ShowInformation("Passphrase Changed",
-			"Your vault has been re-encrypted with the new passphrase.\nYou will now be locked out and must re-enter the new passphrase.",
+			"Your vault key is now protected by the new passphrase.\nThe vault will lock; unlock it with the new passphrase.",
 			ss.window,
 		)
 		ss.onRelock()

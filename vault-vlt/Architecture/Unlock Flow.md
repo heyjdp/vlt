@@ -8,54 +8,53 @@ created: 2026-10-27
 
 # Unlock Flow
 
-## Current flow
+## Current flow (after F01)
 
-`App.onUnlock` (`internal/ui/app.go:75`) runs on the Fyne main goroutine while holding `App.mu`.
+`App.onUnlock` (`internal/ui/app.go`) runs on the Fyne main goroutine while holding `App.mu`.
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor User
     participant A as App (UI thread)
-    participant S as Store
+    participant S as store
     User->>A: passphrase
-    A->>A: NewIdentity
-    A->>S: IsNew?
-    alt no vlt.age
-        S->>S: write sentinel
+    A->>S: Exists(dir)?
+    alt no vault
+        S->>S: Create: new X25519 key, wrap (scrypt)
         Note right of S: no confirm ⚠ F04
-    else vlt.age exists
-        S->>S: decrypt sentinel (scrypt)
+    else vault exists
+        S->>S: Open: unwrap vlt.age (1× scrypt)
+        opt format-1 vault
+            S->>S: migrate (1× scrypt per secret, once)
+        end
     end
     A-)S: List(ctx), goroutine
     loop each of n files
-        S->>S: decrypt (scrypt)
+        S->>S: X25519 decrypt (µs)
     end
     S--)A: fyne.Do(update list)
 ```
 
-> [!danger] The loop is the problem
-> Every decrypt in the loop runs a full scrypt derivation (about 256 MiB of memory, order of a second). Opening the vault costs $n$ scrypts, and so does every list refresh after a save, which runs on the **UI goroutine**. See [[Scrypt Cost Model]].
+Since [[F01 Scrypt-wrapped identity]], unlock costs exactly one scrypt (measured by `TestOpen_RunsExactlyOneScrypt`), and listing is fast. See [[Scrypt Cost Model]].
 
-## Proposed flow (after [[F01 Scrypt-wrapped identity]])
+> [!warning] Still on the UI thread
+> `Open` (one scrypt, or a whole migration on first unlock of a format-1 vault) still runs on the main goroutine, so the window freezes for about a second, or longer during migration. Moving it to the background is [[F10 Keep vault IO off the UI goroutine]].
+
+## Target flow (after F10)
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor User
     participant A as App
-    participant V as Vault service
+    participant V as store
     User->>A: passphrase
-    A-)V: Unlock(ctx) in background
+    A-)V: Open(ctx) in background
     V->>V: read vlt.age, 1× scrypt
     Note right of V: yields X25519 identity
-    loop each of n files
-        V->>V: X25519 + ChaCha20 (µs)
-    end
     V--)A: fyne.Do(show main view)
 ```
-
-There's exactly one scrypt per unlock. The sentinel is replaced by the wrapped key file, so a wrong passphrase still fails fast on that one file.
 
 ## Related
 - [[ADR-001 Scrypt-wrapped X25519 identity]]

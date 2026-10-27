@@ -18,10 +18,10 @@ graph TD
         ui["internal/ui<br/>App, UnlockScreen, SecretList,<br/>DetailView, FileOps, Settings, Theme"]
     end
     subgraph Domain["Domain + storage"]
-        store["internal/store<br/>Secret envelope, Store CRUD,<br/>sentinel, re-encrypt, copy"]
+        store["internal/store<br/>Create/Open/ChangePassphrase,<br/>migration, CRUD, copy"]
     end
     subgraph Infra["Infrastructure"]
-        crypto["internal/crypto<br/>Identity (memguard), Encrypt/Decrypt"]
+        crypto["internal/crypto<br/>vault key (memguard), wrap/unwrap,<br/>Encrypt/Decrypt"]
         age[(filippo.io/age)]
         mg[(awnumar/memguard)]
         fs[(filesystem)]
@@ -29,23 +29,22 @@ graph TD
 
     main --> ui
     ui --> store
-    ui --> crypto
     store --> crypto
     store --> fs
     crypto --> age
     crypto --> mg
 ```
 
-> [!warning] Layering leak
-> `internal/ui` imports `internal/crypto` directly: `App.onUnlock` and the change-passphrase flow in `SettingsScreen` build identities themselves. Ideally the UI talks only to an application-level vault service that owns identity lifecycle. That becomes natural once [[F01 Scrypt-wrapped identity]] lands.
+> [!success] Layering leak resolved
+> `internal/ui` no longer imports `internal/crypto`. Since [[F01 Scrypt-wrapped identity]], the UI calls `store.Exists`/`Create`/`Open`/`ChangePassphrase`, and the store owns the vault key's lifecycle.
 
 ## Packages
 
 | Package | Responsibility | Key files |
 |---|---|---|
 | `cmd/vlt` | Read env config, set up `slog`, create the Fyne app and window | `main.go` |
-| `internal/crypto` | Derive an age scrypt identity from the passphrase; encrypt and decrypt byte slices | `identity.go`, `vault.go` |
-| `internal/store` | `Secret` JSON envelope, slugs and groups, directory CRUD, sentinel verification, re-encrypt, copy | `secret.go`, `store.go` |
+| `internal/crypto` | Generate the X25519 vault key and hold it in memguard; wrap/unwrap it with the passphrase (scrypt); encrypt and decrypt secrets to it | `identity.go`, `vault.go` |
+| `internal/store` | `Secret` JSON envelope, slugs and groups, directory CRUD, vault create/open/change-passphrase, format-1 migration, atomic writes, copy | `secret.go`, `store.go`, `vault.go`, `migrate.go`, `atomic.go` |
 | `internal/ui` | Lock state machine, screens, clipboard TTL, file import/export, settings | `app.go`, `detail.go`, `list.go`, `fileops.go`, `settings.go` |
 | `internal/testutil` | Test identities and secret builders | `fixtures.go` |
 
@@ -56,7 +55,7 @@ stateDiagram-v2
     [*] --> Locked
     Locked --> Unlocking: passphrase submitted
     Unlocking --> Locked: wrong passphrase / I/O error
-    Unlocking --> Unlocked: sentinel verified (or created)
+    Unlocking --> Unlocked: vault key unwrapped (or created / migrated)
     Unlocked --> Locked: Lock button
     Unlocked --> Locked: auto-lock timer fires
     Unlocked --> Locked: passphrase changed / vault moved / switched

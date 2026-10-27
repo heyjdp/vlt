@@ -8,35 +8,23 @@ import (
 	"filippo.io/age"
 )
 
-// Encrypt encrypts plaintext using the identity's scrypt recipient.
-// Returns the age-encrypted ciphertext.
+// Encrypt encrypts plaintext to the vault key's X25519 recipient.
+// It runs no key derivation, so it is cheap enough to call per secret.
 func Encrypt(id *Identity, plaintext []byte) ([]byte, error) {
 	recipient, err := id.Recipient()
 	if err != nil {
 		return nil, fmt.Errorf("crypto.Encrypt: %w", err)
 	}
-
-	var buf bytes.Buffer
-	w, err := age.Encrypt(&buf, recipient)
+	out, err := encryptTo(recipient, plaintext)
 	if err != nil {
 		return nil, fmt.Errorf("crypto.Encrypt: %w", err)
 	}
-
-	if _, err := w.Write(plaintext); err != nil {
-		return nil, fmt.Errorf("crypto.Encrypt: write: %w", err)
-	}
-
-	if err := w.Close(); err != nil {
-		return nil, fmt.Errorf("crypto.Encrypt: close: %w", err)
-	}
-
-	return buf.Bytes(), nil
+	return out, nil
 }
 
-// Decrypt decrypts age-encrypted ciphertext using the identity.
-// Returns the original plaintext.
+// Decrypt decrypts ciphertext that was encrypted to the vault key.
 func Decrypt(id *Identity, ciphertext []byte) ([]byte, error) {
-	identity, err := id.ScryptIdentity()
+	identity, err := id.x25519()
 	if err != nil {
 		return nil, fmt.Errorf("crypto.Decrypt: %w", err)
 	}
@@ -52,4 +40,20 @@ func Decrypt(id *Identity, ciphertext []byte) ([]byte, error) {
 	}
 
 	return plaintext, nil
+}
+
+// encryptTo encrypts plaintext to a single age recipient.
+func encryptTo(r age.Recipient, plaintext []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	w, err := age.Encrypt(&buf, r)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := w.Write(plaintext); err != nil {
+		return nil, fmt.Errorf("write: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return nil, fmt.Errorf("close: %w", err)
+	}
+	return buf.Bytes(), nil
 }

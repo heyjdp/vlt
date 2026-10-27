@@ -34,10 +34,10 @@ created: 2026-10-27
 | `splitAndTrim` | loop over `strings.Split` + `strings.TrimSpace` |
 
 ## Dead or misleading code
-- `SettingsScreen.identity` is stored but never used
+- ~~`SettingsScreen.identity` is stored but never used~~ (removed in F01)
 - `App.fyneApp` and `App.ShowError` are unused
 - `_ = ctx` in `App.showMainView` and `Store.List`
-- `Store.RecreateSentinel` is just an alias of `CreateSentinel` (both go away with [[F01 Scrypt-wrapped identity]])
+- ~~`Store.RecreateSentinel` is just an alias of `CreateSentinel`~~ (removed in [[F01 Scrypt-wrapped identity]])
 - `store.ValidSecretTypes`, `crypto.Identity.IsZeroed`: keep only if used outside tests
 - `Store.Groups()` swallows errors; return `([]string, error)`
 

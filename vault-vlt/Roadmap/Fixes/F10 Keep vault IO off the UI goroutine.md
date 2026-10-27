@@ -27,7 +27,7 @@ created: 2026-10-27
 
 ## Problem
 These all run synchronously on the Fyne main goroutine:
-- `onUnlock`: identity creation plus sentinel scrypt
+- `onUnlock`: `store.Open` (one scrypt, or one per secret during the one-time migration of a format-1 vault) or `store.Create`
 - `saveSecret` and import: encrypt
 - the `onSave` → `SecretList.Refresh` → `Store.List` chain
 

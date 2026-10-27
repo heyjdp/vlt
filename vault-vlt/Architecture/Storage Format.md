@@ -12,7 +12,8 @@ created: 2026-10-27
 
 ```mermaid
 graph TD
-    root["vault/"] --> sentinel["vlt.age<br/><i>Enc(&quot;unlocked&quot;)</i>"]
+    root["vault/"] --> key["vlt.age<br/><i>Enc_scrypt(AGE-SECRET-KEY-1…)</i>"]
+    root --> fmt["vlt.json<br/><i>{&quot;format&quot;:2}</i>"]
     root --> g1["default/"]
     root --> g2["work/"]
     g1 --> f1["github-key.age"]
@@ -23,6 +24,7 @@ graph TD
 - Default location: `~/Library/Application Support/vlt/vault` (macOS), `%APPDATA%\vlt\vault` (Windows), `~/.local/share/vlt/vault` (others). You can override it with `VLT_VAULT_DIR`.
 - Permissions: directories `0700`, files `0600`.
 - Path: `vault/<NormalizeGroup(group)>/<Slugify(name)>.age`.
+- Secrets are encrypted to the vault's X25519 key. `vlt.age` holds that key, encrypted to the passphrase (scrypt). `vlt.json` records the format version. `vlt.migrating.age` exists only while a format-1 vault is being migrated.
 
 ## Slug function
 
@@ -78,7 +80,7 @@ flowchart LR
 - A crash leaves either the old file or the new one, never a truncated file.
 - New group directories are fsynced into their parent (`mkdirAllSynced`).
 - Leftover `.tmp-*` files never end in `.age`, so `List` and `CopyTo` skip them.
-- Atomicity is **per file**. Multi-file operations such as passphrase change rely on [[F01 Scrypt-wrapped identity]] to need only one file rewrite.
+- Atomicity is **per file**. Since [[F01 Scrypt-wrapped identity]], passphrase change rewrites only `vlt.age`. Format-1 migration stages the new key in `vlt.migrating.age` (created exclusively), re-encrypts secrets one atomic write at a time, swaps `vlt.age` only after every secret is done, then writes `vlt.json`.
 
 ## Related
 - [[Architecture Overview]]

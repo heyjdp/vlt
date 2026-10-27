@@ -7,7 +7,7 @@ tags:
   - fix
   - crypto
 severity: critical
-status: todo
+status: done
 phase: 1
 area: crypto
 review_finding: "#1, #2"
@@ -15,6 +15,11 @@ files:
   - internal/crypto/identity.go
   - internal/crypto/vault.go
   - internal/store/store.go
+  - internal/store/vault.go
+  - internal/store/migrate.go
+  - internal/store/atomic.go
+  - internal/testutil/fixtures.go
+  - internal/ui/app.go
   - internal/ui/settings.go
 depends_on:
   - "[[F02 Atomic file writes]]"
@@ -48,23 +53,37 @@ stateDiagram-v2
 - A 50-secret vault takes about 40 s to unlock, and the window freezes for about as long after each save.
 - Changing the passphrase can permanently strand secrets.
 
-## Fix
-1. `crypto`: add `GenerateVaultKey() (*age.X25519Identity, error)`, plus `WrapKey(pass, key)` and `UnwrapKey(pass, blob)` using a scrypt recipient.
-2. `crypto.Identity` holds the **X25519 identity** (its secret-key string in a `memguard.LockedBuffer`) instead of the passphrase.
-3. `store`:
-   - `Create(pass)` writes the wrapped key to `vlt.age`.
-   - `Open(pass)` unwraps it.
-   - `ChangePassphrase(old, new)` rewraps `vlt.age` atomically ([[F02 Atomic file writes]]).
-   - Delete `ReEncryptAll` and `CreateSentinel`/`RecreateSentinel`.
-4. Write a format marker (`vlt.json` → `{"format": 2}`).
-5. v1 migration: on unlock of a v1 vault, generate a key, re-encrypt each file to it with atomic writes, write `vlt.age` (wrapped key) **last**, then the format marker. If anything fails, abort without touching the sentinel.
+## Fix (as shipped)
+1. `crypto`:
+   - `GenerateIdentity`, `ParseIdentity`, `WrapIdentity(pass, id, workFactor)`, `UnwrapIdentity`, and `DecryptWithPassphrase` (legacy files only).
+   - `Identity` holds the encoded X25519 key in a `memguard.LockedBuffer`, plus the parsed key (best-effort; see [[F11 Memory hygiene and honest docs]]).
+2. `store`:
+   - `Exists`, `Create`, `Open(ctx, …)`, `ChangePassphrase` (rewraps only `vlt.age`, atomically), and `Close`.
+   - `WithWorkFactor` option (tests use 2^10).
+   - `ReEncryptAll`, the sentinel helpers, `Verify` and `IsNew` were deleted.
+3. Format marker `vlt.json` → `{"format":2}`. `Open` rejects newer formats and restores a missing marker.
+4. Format-1 migration (`migrate.go`), in order:
+   - Stage the wrapped key in `vlt.migrating.age`, created exclusively, so a second instance joins the migration instead of replacing the key.
+   - Re-encrypt secrets one atomic write at a time, skipping files already migrated.
+   - Swap `vlt.age`, write the marker, then remove the staging file.
+   - Undecryptable files are left untouched and reported in a dialog.
+5. Safety guards found by verification:
+   - A directory of secrets with no `vlt.age` (moved by pre-b2df715 builds) counts as a vault. It is migrated only if the passphrase decrypts one of its secrets.
+   - `Create` and `CopyTo` refuse directories that already hold a vault or secrets.
+   - A format-2 vault missing `vlt.age` reports `ErrKeyMissing`.
+
+> [!note] Deviation from the original plan
+> The plan said an interrupted migration should leave a vault that "still opens as v1". The shipped design **resumes forward** instead. The new key is staged durably before any secret is touched, so every state is recoverable by this build. An older build would not see secrets already re-encrypted.
 
 ## Acceptance criteria
-- [ ] Unlocking a 100-secret vault runs exactly one scrypt (assert via a counting test hook or benchmark)
-- [ ] `ChangePassphrase` touches only `vlt.age`; a failed write leaves the old passphrase working
-- [ ] A v1 vault migrates to v2; an interrupted migration leaves a vault that still opens as v1
-- [ ] Wrong passphrase still returns `ErrWrongPassphrase`
-- [ ] README and DESIGN updated to describe the vault key
+- [x] Unlocking a 100-secret vault runs exactly one scrypt: `TestOpen_RunsExactlyOneScrypt` (runtime counter) and `TestStore_Unlock_RunsExactlyOneScrypt` (only `vlt.age` carries a scrypt stanza)
+- [x] `ChangePassphrase` touches only `vlt.age`; a failed write leaves the old passphrase working: `TestStore_ChangePassphrase_RewritesOnlyKeyFile`, `_FailedWriteKeepsOldPassphrase`, `_RejectsWrongCurrent`, `_RejectsForeignKeyFile`
+- [x] A v1 vault migrates to v2, and an interrupted migration resumes on next unlock with no secret becoming unreadable: `TestStore_Open_MigratesLegacyVault`, `TestMigration_ResumesAfterCrashMidway`, `_ResumesAfterKeySwapBeforeMarker`, `TestStore_Open_CancelledMigrationCanResume`, `TestBeginMigration_JoinsMigrationStartedElsewhere`
+- [x] Wrong passphrase still returns `ErrWrongPassphrase` (format 1 and 2), and a corrupt `vlt.age` does not
+- [x] README and DESIGN describe the vault key, migration, and the limits of memguard
+
+## Outcome
+Shipped on `fix/review-roadmap` after independent code, docs, and tooling verification. Test suite (race) went from about 24 s to about 4 s once tests use a low scrypt work factor. Peak test memory dropped from 16.6 GB to a few hundred MB.
 
 ## Related
 - [[Unlock Flow]] · [[Storage Format]] · [[F10 Keep vault IO off the UI goroutine]] · [[F11 Memory hygiene and honest docs]]

@@ -2,29 +2,31 @@
 
 A cross-platform GUI secret manager using [age](https://age-encryption.org/) encryption.
 
-vlt replaces ad-hoc PGP-encrypted text file workflows with a structured, portable vault. Secrets are stored as individual `.age` files in a directory, organised by group, unlocked by a single passphrase. No key files are written to disk. The vault directory is fully portable — copy it anywhere and unlock with the same passphrase.
+vlt replaces ad-hoc PGP-encrypted text file workflows with a structured, portable vault. Secrets are stored as individual `.age` files in a directory, organised by group, unlocked by a single passphrase. The only key material on disk is the vault key, stored encrypted to your passphrase inside the vault itself. The vault directory is fully portable — copy it anywhere and unlock with the same passphrase.
 
 ## Features
 
-- **Passphrase-only unlock** — no key files, no OS keychain dependency
-- **age encryption** — each secret is an individual `.age` file encrypted with scrypt
-- **Secure memory** — derived identity held in mlock'd memory via memguard, zeroed on lock
+- **Passphrase-only unlock** — no external key files, no OS keychain dependency
+- **age encryption** — each secret is an individual `.age` file encrypted to a random X25519 vault key; the vault key is encrypted to your passphrase with scrypt, so unlocking costs one scrypt derivation however many secrets you have
+- **Secure memory (best-effort)** — the vault key's encoded form is held in mlock'd memory via memguard and destroyed on lock; the parsed key and transient copies live on the Go heap until garbage-collected
 - **Secret types** — passwords, structured login records (URL/username/password/TOTP), and encrypted files
 - **Groups** — organise secrets into groups (work, personal, etc.) with a dropdown that shows existing groups and accepts new ones
 - **Search** — instant filter across secret names, groups, and tags
 - **Clipboard safety** — copied values are cleared after a configurable TTL (default 30s) with a countdown in the status bar
 - **Auto-lock** — vault locks after configurable inactivity timeout (default 5 minutes), zeroing the identity from memory
 - **File import/export** — import files via picker (base64-encoded, MIME detected, 10 MB limit), export to disk via save dialog
-- **Passphrase verification** — a sentinel file (`vlt.age`) verifies the passphrase on unlock, giving an immediate error for wrong passphrases instead of failing on individual secret decryption
-- **Change passphrase** — re-encrypts every secret and the sentinel file with the new passphrase
-- **Move/switch vault** — copy secrets (including sentinel) to a new location, or point to a different vault directory
+- **Passphrase verification** — a wrong passphrase fails immediately when `vlt.age` (the wrapped vault key) cannot be decrypted
+- **Change passphrase** — atomically rewrites only `vlt.age`; secrets are never re-encrypted, so an interrupted change leaves the old passphrase working
+- **Automatic migration** — vaults from earlier versions (every secret encrypted directly to the passphrase) are upgraded on first unlock; the upgrade is crash-safe and resumes if interrupted
+- **Move/switch vault** — copy secrets (including the wrapped key) to a new location, or point to a different vault directory
 - **Cross-platform** — Linux, macOS, Windows, OpenBSD
 
 ## Vault Structure
 
 ```
 vault/
-├── vlt.age                  # Sentinel file (passphrase verification)
+├── vlt.age                  # Vault key, encrypted to the passphrase (scrypt)
+├── vlt.json                 # Format marker: {"format":2}
 ├── work/
 │   ├── github-api-key.age
 │   └── jira-login.age
@@ -169,10 +171,10 @@ go test -race -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 ```
 
-The test suite has 43 tests covering:
+The test suite covers:
 
-- **crypto** — identity creation, zeroing, encrypt/decrypt round-trips, wrong-passphrase rejection, zeroed-identity errors, invalid ciphertext
-- **store** — secret types and JSON marshalling, slugification, name validation, group normalisation, CRUD operations (save/get/delete/list), group listing, re-encryption, vault copy, sentinel create/verify/wrong-passphrase/recreate, vault structure verification
+- **crypto** — vault-key generation, wrap/unwrap with a passphrase, wrong-passphrase rejection, zeroing, encrypt/decrypt round-trips, X25519-only secret encryption, legacy passphrase decryption
+- **store** — secret types and JSON marshalling, slugification, name validation, group normalisation, CRUD operations (save/get/delete/list), group listing, vault create/open/exists, one-scrypt-per-unlock check, passphrase change (only `vlt.age` rewritten, failures keep the old passphrase), format-1 migration (including resume after a crash), atomic writes, vault copy
 
 All tests use `t.Parallel()`, the race detector, and `t.TempDir()` for filesystem isolation.
 
@@ -211,11 +213,14 @@ All settings can also be changed at runtime from the Settings screen.
 cmd/vlt/main.go              Entry point, config, Fyne bootstrap
 internal/
 ├── crypto/
-│   ├── identity.go          Passphrase → age ScryptIdentity, memguard secure storage
-│   └── vault.go             Encrypt/decrypt wrappers around filippo.io/age
+│   ├── identity.go          Vault key (X25519) in memguard; wrap/unwrap with passphrase (scrypt)
+│   └── vault.go             Encrypt/decrypt secrets to the vault key
 ├── store/
 │   ├── secret.go            Secret types, JSON envelope, slugification, group normalisation
-│   └── store.go             Vault directory CRUD, sentinel file, re-encryption, copy
+│   ├── store.go             Secret CRUD, list, groups, copy
+│   ├── vault.go             Create/Open/ChangePassphrase, format marker
+│   ├── migrate.go           Crash-safe format-1 → format-2 migration
+│   └── atomic.go            Atomic file writes
 ├── ui/
 │   ├── app.go               Lock/unlock state machine, toolbar, layout
 │   ├── unlock.go            Passphrase entry screen
@@ -248,15 +253,24 @@ internal/
 
 ## Design Decisions
 
-### Passphrase-only, no key files
+### One scrypt-wrapped vault key
 
-The vault uses age's scrypt recipient exclusively. No key file is ever written to disk. The derived identity exists only in process memory (in a memguard LockedBuffer with mlock and guard pages) and is zeroed on lock or exit. This makes the vault fully portable — copy the directory anywhere and unlock with the same passphrase. It also avoids OS-specific keychain dependencies, which is important for OpenBSD support.
+Each vault has a random age X25519 identity, the **vault key**. Every secret is encrypted to it, which costs microseconds. The vault key itself is stored in `vlt.age`, encrypted to the passphrase with age's scrypt recipient (work factor N=2^18, random salt). Unlocking therefore runs exactly one scrypt derivation regardless of how many secrets the vault holds, and a wrong passphrase fails immediately on that one file.
 
-age's scrypt implementation generates a random salt per file and uses a work factor of N=2^18, making brute-force expensive. Security depends on passphrase strength.
+An offline attacker with the vault directory still pays one scrypt per passphrase guess, as before, so security depends on passphrase strength. Changing the passphrase rewraps only `vlt.age`, atomically.
 
-### Sentinel file for passphrase verification
+The vault stays fully portable: copy the directory anywhere and unlock with the same passphrase. There is no OS keychain dependency, which matters for OpenBSD support. Because `vlt.age` holds the only copy of the vault key, back it up with the rest of the vault.
 
-On first run, `vlt.age` is created in the vault root containing the word "unlocked" encrypted with the chosen passphrase. On subsequent unlocks, this file is decrypted to verify the passphrase immediately, rather than discovering a wrong passphrase only when trying to decrypt individual secrets. The sentinel is re-encrypted when the passphrase is changed and copied when the vault is moved.
+### Format versions and migration
+
+`vlt.json` records the on-disk format. Format 1 (earlier versions) encrypted every secret directly to the passphrase and used `vlt.age` as a sentinel containing the word "unlocked". On first unlock of a format-1 vault, vlt migrates it in place:
+
+1. Generate a vault key and write it, wrapped, to `vlt.migrating.age`.
+2. Re-encrypt each secret to the vault key (one atomic write per file; files already migrated are skipped).
+3. Atomically replace `vlt.age` with the wrapped key.
+4. Write `vlt.json` and delete `vlt.migrating.age`.
+
+A crash at any step leaves a vault that the next unlock finishes migrating. Secrets that do not decrypt with the passphrase are left untouched and reported in a dialog.
 
 ### Group-based directory structure
 
@@ -272,7 +286,7 @@ Fyne produces a single static binary with no runtime dependencies beyond OpenGL.
 
 ### memguard for secure memory
 
-The derived age identity is stored in a memguard LockedBuffer, which provides mlock (prevents swapping to disk), guard pages (detect buffer overflows), and explicit zeroing. The buffer is destroyed on lock, on exit, and on passphrase change.
+The vault key's encoded form is stored in a memguard LockedBuffer, which provides mlock (prevents swapping to disk), guard pages (detect buffer overflows), and explicit zeroing. The buffer is destroyed on lock and on exit. This is best-effort: age's parsed `X25519Identity` and transient string copies of the key live on the ordinary Go heap until garbage-collected, and Go offers no way to wipe them.
 
 ## License
 

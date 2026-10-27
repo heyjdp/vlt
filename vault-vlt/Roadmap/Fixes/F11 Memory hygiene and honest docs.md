@@ -27,8 +27,9 @@ created: 2026-10-27
 # F11: Memory hygiene and honest docs
 
 ## Problem
-See [[Security Model#Where the passphrase actually lives]]. In short:
-- The passphrase enters as a `string`, gets copied into a `[]byte`, and is copied again by `string(buf.Bytes())` on every `Recipient()` call. age's `ScryptIdentity` also keeps its own copy, which `Zero()` never wipes.
+See [[Security Model#Where key material lives (after F01)]]. In short:
+- Since [[F01 Scrypt-wrapped identity]], the passphrase is used once to unwrap `vlt.age` and is not held for the session. The long-lived secret is the X25519 vault key.
+- The vault key's encoded form is in a `LockedBuffer`, but age's parsed `X25519Identity` lives on the Go heap for the session, along with one string copy made while parsing (and `x.String()` in `GenerateIdentity`). `Zero()` cannot wipe these.
 - `UnlockScreen.entry.Text` still holds the passphrase for the whole session.
 - `Lock()` keeps `a.secretList` and `a.detailView`, which hold every decrypted secret.
 - The change-passphrase entries are only cleared on success.
@@ -37,7 +38,7 @@ See [[Security Model#Where the passphrase actually lives]]. In short:
 ## Fix
 - Clear the unlock and change-passphrase entries right after reading them, on **every** path.
 - In `Lock()`, nil out `secretList`, `detailView` and `unlockScreen`, and clear the clipboard ([[F08 Correct clipboard clearing]]).
-- After [[F01 Scrypt-wrapped identity]], discard the passphrase right after unwrapping. Only the X25519 key stays in a `LockedBuffer`, and it's parsed into an `age.X25519Identity` only when needed.
+- ✅ The passphrase is discarded after unwrapping (F01). Remaining: decide whether to parse the key per operation (more transient copies) or keep one parsed copy (current), and document the trade-off.
 - Rewrite the README and DESIGN security sections to describe **best-effort** protection and its limits (Go strings, GC, Fyne widgets).
 
 ## Acceptance criteria

@@ -15,7 +15,7 @@ import (
 func newTestStore(t *testing.T) *store.Store {
 	t.Helper()
 	dir := t.TempDir()
-	id := testutil.NewTestIdentity(t, "test-store-passphrase")
+	id := testutil.NewTestIdentity(t)
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	s := store.New(id, dir, log)
 	if err := s.Init(); err != nil {
@@ -29,7 +29,7 @@ func TestStore_Init_CreatesVaultDir(t *testing.T) {
 
 	dir := t.TempDir()
 	vaultDir := filepath.Join(dir, "myvault")
-	id := testutil.NewTestIdentity(t, "test-init-passphrase")
+	id := testutil.NewTestIdentity(t)
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	s := store.New(id, vaultDir, log)
 
@@ -314,102 +314,6 @@ func TestStore_Groups_ReturnsAllGroups(t *testing.T) {
 	}
 }
 
-func TestStore_ReEncryptAll_ChangesPassphrase(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	oldID := testutil.NewTestIdentity(t, "old-passphrase")
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	s := store.New(oldID, dir, log)
-	if err := s.Init(); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-
-	ctx := context.Background()
-
-	if err := s.Save(ctx, testutil.PasswordSecret("key-1", "val1", "work")); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	if err := s.Save(ctx, testutil.RecordSecret("rec-1", "user", "pass", "https://example.com", "personal")); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	newID := testutil.NewTestIdentity(t, "new-passphrase")
-	if err := s.ReEncryptAll(ctx, newID); err != nil {
-		t.Fatalf("ReEncryptAll: %v", err)
-	}
-
-	got, err := s.Get(ctx, "key-1", "work")
-	if err != nil {
-		t.Fatalf("Get after re-encrypt: %v", err)
-	}
-	if got.Value != "val1" {
-		t.Fatalf("value mismatch after re-encrypt: got %q", got.Value)
-	}
-
-	oldID2 := testutil.NewTestIdentity(t, "old-passphrase")
-	oldStore := store.New(oldID2, dir, log)
-	_, err = oldStore.Get(ctx, "key-1", "work")
-	if err == nil {
-		t.Fatal("expected error decrypting with old passphrase after re-encrypt")
-	}
-}
-
-func TestStore_CopyTo_CopiesAllSecrets(t *testing.T) {
-	t.Parallel()
-
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	if err := s.CreateSentinel(); err != nil {
-		t.Fatalf("CreateSentinel: %v", err)
-	}
-
-	if err := s.Save(ctx, testutil.PasswordSecret("copy-1", "v1", "work")); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	if err := s.Save(ctx, testutil.RecordSecret("copy-2", "u", "p", "https://example.com", "personal")); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	destDir := t.TempDir()
-	if err := s.CopyTo(destDir); err != nil {
-		t.Fatalf("CopyTo: %v", err)
-	}
-
-	// Verify group directories exist in destination
-	for _, group := range []string{"work", "personal"} {
-		entries, err := os.ReadDir(filepath.Join(destDir, group))
-		if err != nil {
-			t.Fatalf("ReadDir %q: %v", group, err)
-		}
-		if len(entries) == 0 {
-			t.Fatalf("expected files in %q", group)
-		}
-	}
-
-	// Verify we can read from the new location with same identity
-	id := testutil.NewTestIdentity(t, "test-store-passphrase")
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	destStore := store.New(id, destDir, log)
-
-	got, err := destStore.Get(ctx, "copy-1", "work")
-	if err != nil {
-		t.Fatalf("Get from dest: %v", err)
-	}
-	if got.Value != "v1" {
-		t.Fatalf("value mismatch: got %q", got.Value)
-	}
-
-	// Verify sentinel was copied
-	if destStore.IsNew() {
-		t.Fatal("expected sentinel to be copied to destination (IsNew should be false)")
-	}
-	if err := destStore.Verify(); err != nil {
-		t.Fatalf("Verify on dest should succeed: %v", err)
-	}
-}
-
 func TestStore_CopyTo_IgnoresLeftoverTempFiles(t *testing.T) {
 	t.Parallel()
 
@@ -442,161 +346,11 @@ func TestStore_CopyTo_IgnoresLeftoverTempFiles(t *testing.T) {
 	}
 }
 
-func TestStore_SwitchToNewDir_IsNew(t *testing.T) {
-	t.Parallel()
-
-	// Simulates switching vault to a new empty directory
-	newDir := t.TempDir()
-	id := testutil.NewTestIdentity(t, "test-switch")
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	s := store.New(id, newDir, log)
-	if err := s.Init(); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-
-	// New dir has no sentinel
-	if !s.IsNew() {
-		t.Fatal("expected IsNew() == true for new vault dir")
-	}
-
-	// Creating sentinel makes it no longer new
-	if err := s.CreateSentinel(); err != nil {
-		t.Fatalf("CreateSentinel: %v", err)
-	}
-	if s.IsNew() {
-		t.Fatal("expected IsNew() == false after CreateSentinel")
-	}
-	if err := s.Verify(); err != nil {
-		t.Fatalf("Verify: %v", err)
-	}
-}
-
-func TestStore_IsNew_TrueForFreshVault(t *testing.T) {
-	t.Parallel()
-
-	s := newTestStore(t)
-	if !s.IsNew() {
-		t.Fatal("expected IsNew() == true for fresh vault")
-	}
-}
-
-func TestStore_CreateSentinel_MakesIsNewFalse(t *testing.T) {
-	t.Parallel()
-
-	s := newTestStore(t)
-
-	if err := s.CreateSentinel(); err != nil {
-		t.Fatalf("CreateSentinel: %v", err)
-	}
-
-	if s.IsNew() {
-		t.Fatal("expected IsNew() == false after CreateSentinel")
-	}
-}
-
-func TestStore_Verify_SucceedsWithCorrectPassphrase(t *testing.T) {
-	t.Parallel()
-
-	s := newTestStore(t)
-
-	if err := s.CreateSentinel(); err != nil {
-		t.Fatalf("CreateSentinel: %v", err)
-	}
-
-	if err := s.Verify(); err != nil {
-		t.Fatalf("Verify should succeed with correct passphrase: %v", err)
-	}
-}
-
-func TestStore_Verify_FailsWithWrongPassphrase(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-
-	// Create sentinel with one passphrase
-	id1 := testutil.NewTestIdentity(t, "correct-passphrase")
-	s1 := store.New(id1, dir, log)
-	if err := s1.Init(); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	if err := s1.CreateSentinel(); err != nil {
-		t.Fatalf("CreateSentinel: %v", err)
-	}
-
-	// Try to verify with a different passphrase
-	id2 := testutil.NewTestIdentity(t, "wrong-passphrase")
-	s2 := store.New(id2, dir, log)
-
-	err := s2.Verify()
-	if err == nil {
-		t.Fatal("expected error verifying with wrong passphrase")
-	}
-	if !errors.Is(err, store.ErrWrongPassphrase) {
-		t.Fatalf("expected ErrWrongPassphrase, got: %v", err)
-	}
-}
-
-func TestStore_Verify_SucceedsWithNoSentinel(t *testing.T) {
-	t.Parallel()
-
-	s := newTestStore(t)
-
-	// No sentinel created — Verify should return nil (new vault)
-	if err := s.Verify(); err != nil {
-		t.Fatalf("Verify should succeed when no sentinel exists: %v", err)
-	}
-}
-
-func TestStore_RecreateSentinel_AfterReEncrypt(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-
-	// Create vault with old passphrase
-	oldID := testutil.NewTestIdentity(t, "old-pass")
-	s := store.New(oldID, dir, log)
-	if err := s.Init(); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	if err := s.CreateSentinel(); err != nil {
-		t.Fatalf("CreateSentinel: %v", err)
-	}
-
-	ctx := context.Background()
-	if err := s.Save(ctx, testutil.PasswordSecret("k1", "v1", "work")); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	// Re-encrypt with new passphrase
-	newID := testutil.NewTestIdentity(t, "new-pass")
-	if err := s.ReEncryptAll(ctx, newID); err != nil {
-		t.Fatalf("ReEncryptAll: %v", err)
-	}
-	if err := s.RecreateSentinel(); err != nil {
-		t.Fatalf("RecreateSentinel: %v", err)
-	}
-
-	// New passphrase should verify
-	if err := s.Verify(); err != nil {
-		t.Fatalf("Verify with new passphrase failed: %v", err)
-	}
-
-	// Old passphrase should not verify
-	oldID2 := testutil.NewTestIdentity(t, "old-pass")
-	oldStore := store.New(oldID2, dir, log)
-	err := oldStore.Verify()
-	if !errors.Is(err, store.ErrWrongPassphrase) {
-		t.Fatalf("expected ErrWrongPassphrase for old passphrase, got: %v", err)
-	}
-}
-
 func TestStore_VaultStructure_GroupBasedPaths(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	id := testutil.NewTestIdentity(t, "test-structure")
+	id := testutil.NewTestIdentity(t)
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	s := store.New(id, dir, log)
 	if err := s.Init(); err != nil {
