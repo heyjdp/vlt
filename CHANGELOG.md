@@ -16,6 +16,7 @@ release; until then, builds are identified by commit hash.
 - The import completion message shows the file's SHA-256.
 - The build version (`git describe`) in the window title and logs, embedded by `make build` and CI.
 - An MIT `LICENSE` and this changelog.
+- Installable packages: a macOS app (`vlt.app`, Apple silicon, ad-hoc signed) and a Linux AppImage (x86-64), built by CI after the checks pass and published as a GitHub release for `v*` tags. An app icon, and `make package-mac` and `make package-linux` to build them locally.
 - A *Your Data* section in the README: where the vault and settings live, what survives uninstalling and reinstalling, how to back up, restore or move a vault, and what happens if you forget or change the passphrase.
 
 ### Changed

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=vlt
+GenericName=Secret Manager
+Comment=Encrypted vault for passwords, logins and files
+Exec=vlt
+Icon=vlt
+Terminal=false
+Categories=Utility;
+Keywords=password;secret;vault;age;

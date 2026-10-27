@@ -12,7 +12,8 @@ area: ci
 review_finding: Release goal
 files:
   - go.mod
-  - FyneApp.toml
+  - Makefile
+  - cmd/vlt/main.go
 depends_on: 
   - "[[F21 Release builds for macOS and Linux]]"
 created: 2026-10-28
@@ -25,7 +26,7 @@ The repository has no remote, so CI and the release workflow have never run, and
 
 ## Fix
 - Create the GitHub repository (private) under the owner's account.
-- Rename the module path to `github.com/<owner>/vlt` and the app ID to `io.github.<owner>.vlt`.
+- Rename the module path to `github.com/<owner>/vlt` and the app ID to `io.github.<owner>.vlt` (Makefile and `cmd/vlt/main.go`; README paths).
 - Push `main`, watch CI and the release workflow to green, and download the macOS app and AppImage.
 
 ## Acceptance criteria

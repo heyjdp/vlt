@@ -152,19 +152,29 @@ Fyne's desktop driver uses cgo (OpenGL and GLFW), so a plain `GOOS=… go build`
 go build -trimpath -ldflags="-s -w" -o vlt ./cmd/vlt
 ```
 
-For release builds of several platforms from one machine, use [fyne-cross](https://github.com/fyne-io/fyne-cross), which runs the build in Docker containers with the right toolchains. OpenBSD builds must be done on OpenBSD.
+CI builds the release packages natively on macOS and Ubuntu runners (see [Packages](#packages)). [fyne-cross](https://github.com/fyne-io/fyne-cross) can build several platforms from one machine with Docker, but vlt doesn't use it. OpenBSD builds must be done on OpenBSD.
 
-### Fyne Native Packages
+### Packages
 
-Produces `.app` (macOS), `.exe` with icon (Windows), `.tar.gz` (Linux). `fyne package` packages for the OS it runs on; packaging for another OS needs `fyne-cross`:
+CI builds both packages on every push to `main` and attaches them to the workflow run. Pushing a `v*` tag (for example `v0.1.0`) also publishes them as a GitHub release, with SHA-256 checksums. File names carry `git describe`'s version: the tag on a release (`v0.1.0`), or the tag, commit count and hash in between (`v0.1.0-5-gabc1234`).
+
+| Package | Built on | Runs on |
+|---------|----------|---------|
+| `vlt-<version>-macos-arm64.zip` (`vlt.app`) | macOS 15 | Apple silicon Macs with macOS 13 or later |
+| `vlt-<version>-x86_64.AppImage` | Ubuntu 22.04 | x86-64 Linux with glibc 2.35 or later, OpenGL and an X11 or XWayland session |
+
+**macOS.** The app is ad-hoc signed but not notarised, so macOS blocks its first launch. Move `vlt.app` to Applications and open it. On macOS 15 or later, when it's blocked, go to System Settings → Privacy & Security and click *Open Anyway*. On macOS 13 or 14, Control-click the app and choose *Open*. Or clear the download quarantine: `xattr -dr com.apple.quarantine /Applications/vlt.app`.
+
+**Linux.** `chmod +x` the AppImage and run it; no installation is needed. It needs FUSE (`fusermount` from the `fuse3` or `fuse` package, which desktop distributions include) but not `libfuse2`; without FUSE, for example in a container, run it with `--appimage-extract-and-run`. It uses the system's OpenGL and X11 libraries (`libGL`, `libX11`, `libXrandr`, `libXi`, `libXcursor`, `libXinerama`, `libXxf86vm`), which desktop installations have.
+
+Windows packages are not built yet. To build a package locally, on the OS it targets:
 
 ```bash
-go install fyne.io/fyne/v2/cmd/fyne@latest
-
-fyne package -os darwin -icon Icon.png -name "vlt" -appID io.yourorg.vlt
-fyne package -os windows -icon Icon.png -name "vlt" -appID io.yourorg.vlt
-fyne package -os linux -icon Icon.png -name "vlt" -appID io.yourorg.vlt
+make package-mac    # vlt.app and dist/vlt-<version>-macos-<arch>.zip, on a Mac
+make package-linux  # dist/vlt-<version>-x86_64.AppImage, on Linux (needs curl and sha256sum)
 ```
+
+`packaging/macos/` holds the `Info.plist` template and `build-app.sh`, which uses only tools that ship with macOS. `packaging/linux/` holds the AppImage's desktop entry, icon and build script, which downloads `appimagetool` and the AppImage runtime at pinned versions and checks their SHA-256. The app ID (`io.yourorg.vlt`) is set in the Makefile and in `cmd/vlt/main.go`; the macOS bundle version is the latest `vX.Y.Z` tag (`0.0.0` before the first release).
 
 ## Testing
 
@@ -235,8 +245,10 @@ The linter set (`.golangci.yml`) is golangci-lint's `standard` set plus `bodyclo
 - **test** — `go vet` and `go test -race` on Linux (the UI tests are headless)
 - **vuln** — `govulncheck` (pinned)
 - **build** — native builds on Linux, macOS and Windows with cgo enabled, since Fyne cannot be cross-compiled with `CGO_ENABLED=0`
+- **package-macos**, **package-linux** — on pushes to `main` and tags, once lint, test and vuln pass: `vlt.app` (zipped) and the AppImage, uploaded as workflow artifacts. These jobs don't use the Go cache, so a shipped package is always built from scratch
+- **release** — on `v*` tags: a GitHub release with both packages and their checksums
 
-Every action is pinned to a commit SHA, checkout does not persist credentials, and the workflow only has read access to the repository.
+Every action is pinned to a commit SHA, checkout does not persist credentials, and the workflow only has read access to the repository, except the release job, which can write releases. `actionlint` and `zizmor` report no findings.
 
 ## Configuration
 
@@ -279,6 +291,10 @@ internal/
 │   └── theme.go             Custom Fyne theme (reduced font sizes)
 └── testutil/
     └── fixtures.go          Shared test helpers and secret builders
+packaging/
+├── macos/                   vlt.app bundler (Info.plist template, build-app.sh)
+└── linux/                   AppImage: build-appimage.sh, desktop entry, 256px icon
+Icon.png                     App icon (1024×1024)
 ```
 
 ### Layered Design

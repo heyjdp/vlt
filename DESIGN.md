@@ -147,7 +147,7 @@ SSH keys and TLS certificates use the same `file` type. No tar-in-age complexity
 | Age library           | Native (`filippo.io/age`)        | `pyrage` wrapper                  |
 | OpenBSD support       | ✅ Go + Fyne available via ports | ⚠️ Qt6 ports incomplete           |
 | Distribution          | Single binary (links system OpenGL) | PyInstaller or bundled runtime |
-| Cross-compilation     | Native build per OS (cgo); `fyne-cross` for releases | Complex             |
+| Cross-compilation     | Native build per OS (cgo); release packages built natively in CI | Complex             |
 | Secure memory         | `memguard` or manual zeroing     | Harder to guarantee               |
 
 ### Key Dependencies
@@ -187,6 +187,10 @@ vlt/
 │       ├── list.go          # Secret browser (left panel)
 │       ├── detail.go        # Secret view/edit (right panel)
 │       └── settings.go      # Vault path, lock timeout, clipboard TTL
+├── packaging/
+│   ├── macos/               # vlt.app bundler: Info.plist template, build-app.sh
+│   └── linux/               # AppImage build script, desktop entry, 256px icon
+├── Icon.png                 # App icon (1024×1024)
 └── go.mod
 ```
 
@@ -262,13 +266,13 @@ vlt/
 
 ## Build & Distribution
 
-Fyne needs cgo, so vlt is built natively on each target OS (CI uses Linux, macOS and Windows runners); `fyne-cross` builds several platforms from one machine using Docker.
+Fyne needs cgo, so vlt is built natively on each target OS (CI uses Linux, macOS and Windows runners). CI also packages a macOS app on a macOS runner and a Linux AppImage on Ubuntu 22.04, and publishes both as a GitHub release for `v*` tags.
 
 ```bash
 go build -trimpath -ldflags="-s -w" -o vlt ./cmd/vlt
 ```
 
-For macOS, wrap with `fyne package` to produce a proper `.app` bundle. For Windows, `fyne package` produces an `.exe` with embedded icon.
+`make package-mac` builds an ad-hoc signed `vlt.app` for macOS 13 or later with `packaging/macos/build-app.sh`, using only tools that ship with macOS. `make package-linux` builds an AppImage with `packaging/linux/build-appimage.sh`. Windows packages are not built yet.
 
 ---
 
