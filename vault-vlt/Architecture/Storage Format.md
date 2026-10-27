@@ -21,7 +21,7 @@ graph TD
     g2 --> f3["id-rsa.age"]
 ```
 
-- Default location: `~/Library/Application Support/vlt/vault` (macOS), `%APPDATA%\vlt\vault` (Windows), `~/.local/share/vlt/vault` (others). You can override it with `VLT_VAULT_DIR`.
+- Default location: `~/Library/Application Support/vlt/vault` (macOS), `%APPDATA%\vlt\vault` (Windows), and `$XDG_DATA_HOME/vlt/vault` on other systems, or `~/.local/share/vlt/vault` when `XDG_DATA_HOME` is unset or relative. A vault already in `~/.local/share/vlt/vault` is kept when the XDG location holds none. You can override it with `VLT_VAULT_DIR`.
 - Permissions: directories `0700`, files `0600`.
 - Path: `vault/<NormalizeGroup(group)>/<Slugify(name)>.age`.
 - The envelope's `group` is the name as typed and trimmed (`GroupLabel`); only the directory is slugified. Labels that differ only in case or punctuation (`Personal Finance`, `personal-finance`) share one directory. The UI lists one label per directory and files new secrets under the existing spelling.

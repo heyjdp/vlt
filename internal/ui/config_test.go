@@ -255,3 +255,38 @@ func TestSettings_EnvironmentControlledSettingsAreDisabled(t *testing.T) {
 		t.Fatal("the label should say which variable controls the setting")
 	}
 }
+
+// The default location depends on the environment (XDG_DATA_HOME), which can
+// differ between launches, so it is remembered once a vault opens there.
+func TestApp_DefaultLocationIsSavedAfterUnlock(t *testing.T) {
+	a := test.NewTempApp(t)
+	dir := t.TempDir()
+	newVaultWith(t, dir)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	prefs := a.Preferences()
+	if prefs.String(prefVaultDir) != "" {
+		t.Fatal("nothing should be saved before the vault is unlocked")
+	}
+
+	unlock(app)
+
+	if got := prefs.String(prefVaultDir); got != dir {
+		t.Fatalf("saved location = %q, want %q", got, dir)
+	}
+	app.Lock()
+}
+
+func TestApp_LocationFromEnvironmentIsNeverSaved(t *testing.T) {
+	a := test.NewTempApp(t)
+	dir := t.TempDir()
+	newVaultWith(t, dir)
+	cfg := Config{VaultDir: dir, FromEnv: EnvSettings{VaultDir: true}}
+	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), noTimers, testKDF)
+
+	unlock(app)
+
+	if got := a.Preferences().String(prefVaultDir); got != "" {
+		t.Fatalf("a location set by %s must not be saved, got %q", envVaultDir, got)
+	}
+	app.Lock()
+}

@@ -27,11 +27,9 @@ type SettingsScreen struct {
 	// dialogs, which are outside the instrumented widget tree.
 	activity func()
 	// save persists one setting (prefLockTimeout or prefClipboardTTL) after
-	// the user changes it; vaultDirChanged records a new vault location,
-	// which the app saves once a vault is opened or created there. Both are
-	// set by the app.
-	save            func(setting string)
-	vaultDirChanged func()
+	// the user changes it; it is set by the app. A new vault location is
+	// saved by the app once a vault is opened or created there.
+	save func(setting string)
 
 	content *fyne.Container
 }
@@ -47,16 +45,15 @@ func NewSettingsScreen(
 	onRelock func(),
 ) *SettingsScreen {
 	ss := &SettingsScreen{
-		window:          window,
-		config:          config,
-		store:           s,
-		log:             log,
-		statusBar:       statusBar,
-		run:             run,
-		onRelock:        onRelock,
-		activity:        noActivity,
-		save:            func(string) {},
-		vaultDirChanged: func() {},
+		window:    window,
+		config:    config,
+		store:     s,
+		log:       log,
+		statusBar: statusBar,
+		run:       run,
+		onRelock:  onRelock,
+		activity:  noActivity,
+		save:      func(string) {},
 	}
 
 	ss.content = ss.build()
@@ -305,7 +302,6 @@ func (ss *SettingsScreen) moveVault(newDir string, errorLabel, currentLabel *wid
 // relocks so the user unlocks the vault at its new location.
 func (ss *SettingsScreen) vaultMoved(newDir string, currentLabel *widget.Label) {
 	ss.config.VaultDir = newDir
-	ss.vaultDirChanged()
 	currentLabel.SetText("Current: " + newDir)
 	ss.log.Info("vault moved", "to", newDir)
 	ss.statusBar.SetText("Vault moved to " + newDir)
@@ -325,7 +321,6 @@ func (ss *SettingsScreen) relockThenInform(title, message string) {
 
 func (ss *SettingsScreen) switchVault(newDir string, currentLabel *widget.Label) {
 	ss.config.VaultDir = newDir
-	ss.vaultDirChanged()
 	currentLabel.SetText("Current: " + newDir)
 	ss.log.Info("vault switched", "to", newDir)
 	ss.statusBar.SetText("Switched to vault at " + newDir)

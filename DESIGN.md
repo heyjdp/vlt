@@ -29,10 +29,12 @@ The vault is a directory of `.age` files organised by group. The default vault l
 
 | OS      | Default Path                              |
 |---------|-------------------------------------------|
-| Linux   | `~/.local/share/vlt/vault/`               |
+| Linux   | `$XDG_DATA_HOME/vlt/vault/` (default `~/.local/share/vlt/vault/`) |
 | macOS   | `~/Library/Application Support/vlt/vault/`|
 | Windows | `%APPDATA%\vlt\vault\`                    |
-| OpenBSD | `~/.local/share/vlt/vault/`               |
+| OpenBSD | `$XDG_DATA_HOME/vlt/vault/` (default `~/.local/share/vlt/vault/`) |
+
+On Linux and OpenBSD a relative `XDG_DATA_HOME` is ignored, and a vault already in `~/.local/share/vlt/vault/` is kept when the XDG location holds none.
 
 ### Vault Structure
 
@@ -208,7 +210,7 @@ vlt/
 - `list.go` — secret list; filters by search query; fires selection events. `Upsert`/`Remove` update rows in place, keep the current filter, and keep the highlight on the selected secret (moving it if its row moves, clearing it if the secret is deleted or filtered out)
 - `detail.go` — renders the correct form for the secret type; its copy buttons call the app's `clipboardClearer`
 - `clipboard.go` — one `clipboardClearer` per app: per-copy countdown, clears only vlt's own value (SHA-256 check), cleared on lock
-- `settings.go` — vault path picker, auto-lock on/off and timeout slider, clipboard TTL slider. Slider changes are saved when a drag ends; a new vault location (from Settings or the create screen's *Open Existing Vault…*) is saved by `App` after the next successful unlock or create there. Settings provided by environment variables are disabled and labelled
+- `settings.go` — vault path picker, auto-lock on/off and timeout slider, clipboard TTL slider. Slider changes are saved when a drag ends; `App` saves the vault location after every successful unlock or create (unless `VLT_VAULT_DIR` sets it), so a new location from Settings or the create screen's *Open Existing Vault…* sticks only once a vault opens there, and the default location, which on Linux depends on `XDG_DATA_HOME`, stays the same across launches. Settings provided by environment variables are disabled and labelled
 - `config.go` — `LoadConfig` resolves each setting from env var → saved preference → default and clamps it (auto-lock 30 s–30 min or off; clipboard TTL 5–120 s); `SaveVaultDir`/`SaveLockTimeout`/`SaveClipboardTTL` save one setting each, only when the user changes it, so environment values are never persisted
 - `app.go` — wires everything together; manages lock/unlock state; runs the inactivity timer
 

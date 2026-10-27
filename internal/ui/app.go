@@ -46,10 +46,6 @@ type App struct {
 	// screenGen identifies the latest showUnlockScreen call; older vault
 	// checks that complete late are ignored.
 	screenGen int
-	// vaultDirPending is set when Settings or the create screen's Open
-	// Existing Vault changes the vault location; the new location is saved
-	// after the next successful unlock or create.
-	vaultDirPending bool
 
 	// UI components
 	lockWarning  *dialog.ConfirmDialog
@@ -238,7 +234,6 @@ func (a *App) openExistingVault(dir string) {
 			case found.vault:
 				a.log.Info("opening existing vault", "dir", dir)
 				a.config.VaultDir = dir
-				a.vaultDirPending = true
 				a.showUnlockScreen()
 			case found.inner != "":
 				screen.ShowError(fmt.Sprintf("No vault was found in %s, but %s contains one. Open that folder instead.", dir, found.inner))
@@ -319,11 +314,12 @@ func (a *App) unlocked(s *store.Store) {
 	a.mu.Unlock()
 	a.unlockScreen, a.createScreen = nil, nil
 	a.log.Info("vault unlocked", "dir", a.config.VaultDir)
-	if a.vaultDirPending {
-		// A location chosen in Settings or on the create screen is remembered only once a vault has
-		// been opened or created there, so a mistyped path never sticks.
+	if !a.config.FromEnv.VaultDir {
+		// The location is remembered once a vault has been opened or created
+		// there, so a mistyped path never sticks. The default location is
+		// saved too: it depends on the environment (XDG_DATA_HOME), which
+		// can differ between a terminal and the desktop's app menu.
 		SaveVaultDir(a.fyneApp.Preferences(), a.config.VaultDir)
-		a.vaultDirPending = false
 	}
 
 	a.showMainView(s, a.run.withContext(ctx))
@@ -448,7 +444,6 @@ func (a *App) openSettings(s *store.Store, session runner) *SettingsScreen {
 	settings := NewSettingsScreen(a.window, &a.config, s, a.statusBar, a.log, session, a.Lock)
 	settings.activity = a.resetLockTimer
 	settings.save = a.saveSetting
-	settings.vaultDirChanged = func() { a.vaultDirPending = true }
 	a.detailView.ShowContent(settings.Content())
 	return settings
 }

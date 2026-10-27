@@ -11,7 +11,7 @@ release; until then, builds are identified by commit hash.
 - A create-vault screen, shown when no vault exists at the configured location, which names the target folder and asks for the passphrase twice (at least 12 characters).
 - *Open Existing Vault…* on the create-vault screen, to reopen a vault kept in another folder (for example on a new Mac or after preferences were cleared). The location is saved once the vault unlocks.
 - An auto-lock warning 30 seconds before locking, with *Stay unlocked* and *Lock now*, and an *Auto-lock* on/off setting.
-- Settings (vault location, auto-lock timeout, clipboard TTL) are saved and survive a restart. Settings provided by environment variables are shown as such and never saved.
+- Settings (vault location, auto-lock timeout, clipboard TTL) are saved and survive a restart. Settings provided by environment variables are shown as such and never saved. The vault location is saved whenever a vault is unlocked or created.
 - Automatic, crash-safe migration of existing vaults to the new format on first unlock.
 - The import completion message shows the file's SHA-256.
 - The build version (`git describe`) in the window title and logs, embedded by `make build` and CI.
@@ -24,6 +24,7 @@ release; until then, builds are identified by commit hash.
 - Locking dismisses open dialogs, empties loaded secrets and blanks forms, and clears the clipboard if it still holds vlt's copy.
 - The README and design documents describe memory protection as best-effort and name its limits.
 - The TOTP secret in record forms is masked like a password.
+- On Linux and the BSDs the default vault follows `XDG_DATA_HOME` (`$XDG_DATA_HOME/vlt/vault`, or `~/.local/share/vlt/vault` when it is unset or relative). A vault already in `~/.local/share/vlt/vault` is still used when the XDG location holds none.
 
 ### Removed
 These were part of the internal store, crypto and ui APIs (`internal/` packages), not a public interface:

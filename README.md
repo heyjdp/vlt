@@ -50,9 +50,11 @@ vault/
 | OS      | Path                                       |
 |---------|--------------------------------------------|
 | macOS   | `~/Library/Application Support/vlt/vault/` |
-| Linux   | `~/.local/share/vlt/vault/`                |
+| Linux   | `$XDG_DATA_HOME/vlt/vault/` (default `~/.local/share/vlt/vault/`) |
 | Windows | `%APPDATA%\vlt\vault\`                     |
-| OpenBSD | `~/.local/share/vlt/vault/`                |
+| OpenBSD | `$XDG_DATA_HOME/vlt/vault/` (default `~/.local/share/vlt/vault/`) |
+
+On Linux and OpenBSD, a relative `XDG_DATA_HOME` is ignored. A vault created by an earlier vlt in `~/.local/share/vlt/vault/` is still used when `XDG_DATA_HOME` points elsewhere and holds no vault.
 
 Override with the `VLT_VAULT_DIR` environment variable, or move or switch the vault in Settings. If no vault is found at the location, the create screen can open one from another folder. The choice is saved (see [Configuration](#configuration)).
 
@@ -220,11 +222,11 @@ Every action is pinned to a commit SHA, checkout does not persist credentials, a
 
 | Environment Variable     | Default   | Range                     | Description                          |
 |--------------------------|-----------|---------------------------|--------------------------------------|
-| `VLT_VAULT_DIR`         | (OS path) |                           | Override the vault directory location |
+| `VLT_VAULT_DIR`         | (see [Default Vault Location](#default-vault-location)) |                           | Override the vault directory location |
 | `VLT_LOCK_TIMEOUT_MS`   | `300000`  | 30000–1800000, or 0 (off) | Auto-lock after N ms of inactivity   |
 | `VLT_CLIPBOARD_TTL_S`   | `30`      | 5–120                     | Clear clipboard after N seconds      |
 
-All settings can also be changed from the Settings screen, including turning auto-lock off. Changes take effect immediately and are saved in Fyne's per-app preferences, so the auto-lock timeout and clipboard TTL survive a restart. A new vault location (Move or Switch in Settings, or *Open Existing Vault…* on the create screen) is saved once a vault has been opened or created there, so a mistyped path never sticks.
+All settings can also be changed from the Settings screen, including turning auto-lock off. Changes take effect immediately and are saved in Fyne's per-app preferences, so the auto-lock timeout and clipboard TTL survive a restart. The vault location is saved whenever a vault is unlocked or created there, unless `VLT_VAULT_DIR` sets it. A new location (Move or Switch in Settings, or *Open Existing Vault…* on the create screen) therefore sticks only once a vault opens there, so a mistyped path is never remembered. The default location is remembered too, because on Linux it depends on `XDG_DATA_HOME`, which can differ between a terminal and the desktop's app menu.
 
 Each setting is resolved in this order: environment variable, then the saved value, then the default. A setting provided by an environment variable is shown as such and cannot be changed in Settings, and it is never written to the saved preferences. Out-of-range values are clamped and unparsable ones ignored, with a warning in the log.
 
