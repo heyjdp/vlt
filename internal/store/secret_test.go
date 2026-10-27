@@ -200,3 +200,29 @@ func TestNormalizeGroup(t *testing.T) {
 		})
 	}
 }
+
+func TestGroupLabel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"simple", "work", "work"},
+		{"kept as typed", "Personal Finance", "Personal Finance"},
+		{"trimmed", "  My Group\t", "My Group"},
+		{"empty", "", "default"},
+		{"whitespace only", "   ", "default"},
+		{"no letter or digit", "!!!", "default"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := store.GroupLabel(tt.input); got != tt.want {
+				t.Fatalf("GroupLabel(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}

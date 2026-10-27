@@ -34,6 +34,7 @@ These were part of the internal store, crypto and ui APIs (`internal/` packages)
 - Unused code: `Store.Groups` (group suggestions now come from the loaded list), `store.ValidSecretTypes`, `Identity.IsZeroed`, `App.ShowError` and the test-only `UnlockScreen.PassphraseEntry`, and hand-written string helpers replaced by the standard library.
 
 ### Fixed
+- Group names are kept as typed (`Personal Finance`) instead of being replaced by their directory name (`personal-finance`). A new or imported secret whose group differs from an existing group only in case or punctuation uses the existing spelling. Groups saved by earlier versions keep their slugified name, and new secrets in them use that spelling too.
 - Every vault write is atomic (temp file, fsync, rename), so a crash or full disk can no longer truncate a secret.
 - Changing the passphrase can no longer strand secrets under the old passphrase.
 - Creating a secret never overwrites another, including one whose name differs only in case or punctuation.

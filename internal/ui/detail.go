@@ -237,6 +237,9 @@ func (dv *DetailView) showForm(title string, secret *store.Secret, isNew bool, f
 		edited := *secret
 		edited.Name = nameEntry.Text
 		edited.Group = groupEntry.Text
+		if isNew {
+			edited.Group = matchGroup(edited.Group, dv.groups())
+		}
 		for _, f := range fields {
 			f.store(&edited, f.entry.Text)
 		}
@@ -346,7 +349,7 @@ func (dv *DetailView) saveSecret(secret *store.Secret, isNew bool, btn *widget.B
 			case errors.Is(err, store.ErrSecretExists) && isNew:
 				dv.statusBar.SetText("")
 				dialog.ShowError(fmt.Errorf("a secret named %q (or one whose name differs only in case or punctuation) already exists in group %q; choose a different name",
-					secret.Name, store.NormalizeGroup(secret.Group)), dv.window)
+					secret.Name, secret.Group), dv.window)
 				return
 			case errors.Is(err, store.ErrSecretExists):
 				dv.statusBar.SetText("")

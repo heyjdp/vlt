@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"fyne.io/fyne/v2/test"
@@ -203,4 +204,58 @@ func TestApp_EditThatLeavesSearchClearsHighlight(t *testing.T) {
 		t.Fatal("the highlight should clear when the edited secret leaves the filtered view")
 	}
 	app.Lock()
+}
+
+func TestSecretList_GroupsShowOneLabelPerDirectory(t *testing.T) {
+	test.NewTempApp(t)
+	sl := NewSecretList(test.NewTempWindow(t, nil), nil, &DetailView{}, quietLog(), inlineRunner())
+	sl.secrets = []*store.Secret{
+		{Name: "a", Group: "Work"}, {Name: "b", Group: "personal"}, {Name: "c", Group: "work"},
+	}
+
+	if got := sl.Groups(); !slices.Equal(got, []string{"personal", "Work"}) {
+		t.Fatalf("Groups() = %q, want one label per directory, sorted ignoring case", got)
+	}
+}
+
+func TestMatchGroup(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		typed  string
+		groups []string
+		want   string
+	}{
+		{"different case", "work", []string{"Personal Finance", "Work"}, "Work"},
+		{"slug of an existing label", "personal-finance", []string{"Personal Finance", "Work"}, "Personal Finance"},
+		{"exact", "Work", []string{"Personal Finance", "Work"}, "Work"},
+		{"new group", "Travel", []string{"Personal Finance", "Work"}, "Travel"},
+		{"group saved by an earlier version", "Personal Finance", []string{"personal-finance"}, "personal-finance"},
+		{"empty, no default group", "", []string{"Work"}, ""},
+		{"empty joins an existing default group", "", []string{"Default"}, "Default"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := matchGroup(tt.typed, tt.groups); got != tt.want {
+				t.Fatalf("matchGroup(%q, %q) = %q, want %q", tt.typed, tt.groups, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSecretList_SearchMatchesGroupBySpellingOrDirectory(t *testing.T) {
+	test.NewTempApp(t)
+	sl := NewSecretList(test.NewTempWindow(t, nil), nil, &DetailView{}, quietLog(), inlineRunner())
+	sl.secrets = []*store.Secret{
+		{Name: "bank", Group: "Personal Finance"}, {Name: "old", Group: "personal-finance"}, {Name: "gh", Group: "Work"},
+	}
+
+	for _, query := range []string{"personal-finance", "personal finance", "Finance"} {
+		sl.filter(query)
+		if len(sl.filtered) != 2 {
+			t.Errorf("search %q found %d secrets, want both spellings of the group", query, len(sl.filtered))
+		}
+	}
 }

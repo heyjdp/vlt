@@ -183,3 +183,24 @@ func TestDetailView_CopyButtonsCopyTheRightValue(t *testing.T) {
 	}
 	app.Lock()
 }
+
+func TestDetailView_NewSecretUsesTheExistingGroupSpelling(t *testing.T) {
+	app := openOnly(t, testutil.PasswordSecret("gh", "x", "Personal Finance"))
+
+	app.detailView.ShowNewPassword()
+	form := app.detailView.Content()
+	e := formEntries(app.detailView) // name, value, tags, notes
+	e[0].SetText("bank")
+	e[1].SetText("pw")
+	findType[*widget.SelectEntry](form).SetText("personal finance")
+	test.Tap(findButton(form, "Save"))
+
+	got, err := app.store.Get(t.Context(), "bank", "personal-finance")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Group != "Personal Finance" {
+		t.Fatalf("group = %q, want the existing spelling", got.Group)
+	}
+	app.Lock()
+}

@@ -68,7 +68,7 @@ func (s *Store) Init() error {
 // returns ErrSecretExists if any secret already occupies that path, including
 // a different name with the same slug (e.g. "GitHub Key" and "github-key"),
 // so it never overwrites. The name must pass NewSecretName. The secret's Name
-// and Group are normalised in place.
+// is trimmed in place and its Group set to GroupLabel(Group).
 func (s *Store) Create(ctx context.Context, secret *Secret) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("store.Create: %w", err)
@@ -105,8 +105,8 @@ func (s *Store) Create(ctx context.Context, secret *Secret) error {
 // trimming, so names stored untrimmed by older versions still match);
 // otherwise it returns ErrSecretNotFound or ErrSecretExists (a slug collision
 // with a differently named secret). CreatedAt is preserved from the stored
-// copy. Names that predate NewSecretName's rules are accepted here so legacy
-// secrets stay editable.
+// copy, and Group is set to GroupLabel(Group). Names that predate
+// NewSecretName's rules are accepted here so legacy secrets stay editable.
 func (s *Store) Update(ctx context.Context, secret *Secret) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("store.Update: %w", err)
@@ -137,10 +137,10 @@ func (s *Store) Update(ctx context.Context, secret *Secret) error {
 	return nil
 }
 
-// seal normalises the secret's group, stamps its timestamps, and returns its
-// ciphertext. The caller has already validated and normalised the name.
+// seal sets the secret's group label, stamps its timestamps, and returns its
+// ciphertext. The caller has already validated and trimmed the name.
 func (s *Store) seal(secret *Secret) ([]byte, error) {
-	secret.Group = NormalizeGroup(secret.Group)
+	secret.Group = GroupLabel(secret.Group)
 	secret.ModifiedAt = time.Now().UTC()
 	if secret.CreatedAt.IsZero() {
 		secret.CreatedAt = secret.ModifiedAt

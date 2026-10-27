@@ -25,7 +25,7 @@ Target platforms: **Linux, macOS, Windows, OpenBSD**
 
 ## Directory Layout
 
-The vault is a directory of `.age` files organised by secret type. The default vault location follows OS conventions:
+The vault is a directory of `.age` files organised by group. The default vault location follows OS conventions:
 
 | OS      | Default Path                              |
 |---------|-------------------------------------------|
@@ -38,18 +38,19 @@ The vault is a directory of `.age` files organised by secret type. The default v
 
 ```
 vault/
-├── passwords/
-│   ├── github-api-key.age
-│   └── aws-root-creds.age
-├── records/
-│   ├── personal-email.age
-│   └── work-jira.age
-└── files/
-    ├── server-id_ed25519.age
-    └── wildcard-cert.age
+├── vlt.age
+├── vlt.json
+├── default/
+│   └── wifi.age
+├── personal-finance/
+│   └── bank.age
+└── work/
+    ├── github-api-key.age
+    ├── work-jira.age
+    └── server-id-ed25519.age
 ```
 
-- Categories are plain subdirectories — no database, no index file
+- Groups are plain subdirectories named by the slugified group name; the envelope keeps the name as typed — no database, no index file
 - Filenames are human-readable and correspond to the secret name (slugified)
 - The structure is trivially Git-compatible
 
@@ -66,6 +67,7 @@ Every `.age` file decrypts to a **JSON envelope**. All four secret types share t
   "version": 1,
   "type": "<password|record|file|key>",
   "name": "Human-readable name",
+  "group": "Group name as typed",
   "created_at": "2026-03-14T10:00:00Z",
   "modified_at": "2026-03-14T10:00:00Z",
   "tags": ["tag1", "tag2"],

@@ -166,7 +166,7 @@ func (fo *FileOps) askGroup(f importedFile) {
 				Version:          1,
 				Type:             store.TypeFile,
 				Name:             f.name,
-				Group:            groupEntry.Text,
+				Group:            matchGroup(groupEntry.Text, fo.groups()),
 				CreatedAt:        now,
 				ModifiedAt:       now,
 				OriginalFilename: f.name,

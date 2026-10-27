@@ -14,7 +14,12 @@ import (
 
 func newTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	dir := t.TempDir()
+	return newTestStoreIn(t, t.TempDir())
+}
+
+// newTestStoreIn returns an initialised store over dir.
+func newTestStoreIn(t *testing.T, dir string) *store.Store {
+	t.Helper()
 	id := testutil.NewTestIdentity(t)
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	s := store.New(id, dir, log)
@@ -129,6 +134,29 @@ func TestStore_SaveAndGet_DefaultGroup(t *testing.T) {
 
 	if got.Group != "default" {
 		t.Fatalf("expected group %q, got %q", "default", got.Group)
+	}
+}
+
+func TestStore_GroupIsKeptAsTyped(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	s := newTestStoreIn(t, dir)
+	ctx := context.Background()
+	if err := s.Create(ctx, testutil.PasswordSecret("Bank", "x", "  Personal Finance ")); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Any spelling with the same slug finds it, and the label comes back as typed.
+	got, err := s.Get(ctx, "Bank", "personal-finance")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Group != "Personal Finance" {
+		t.Fatalf("group = %q, want the label as typed (trimmed)", got.Group)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "personal-finance", "bank.age")); err != nil {
+		t.Fatalf("the directory should still be the slug: %v", err)
 	}
 }
 

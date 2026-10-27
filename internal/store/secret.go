@@ -98,9 +98,22 @@ func Slugify(s string) string {
 const DefaultGroup = "default"
 
 // NormalizeGroup returns the slugified group name, falling back to DefaultGroup.
+// It names the group's directory.
 func NormalizeGroup(group string) string {
 	g := Slugify(group)
 	if g == "" {
+		return DefaultGroup
+	}
+	return g
+}
+
+// GroupLabel returns the group name stored in a secret and shown to the user:
+// the trimmed name as typed, or DefaultGroup when it has no ASCII letter or
+// digit. Labels that differ only in case or punctuation, such as
+// "Personal Finance" and "personal-finance", share one directory.
+func GroupLabel(group string) string {
+	g := strings.TrimSpace(group)
+	if Slugify(g) == "" {
 		return DefaultGroup
 	}
 	return g

@@ -3,7 +3,7 @@ package ui
 import (
 	"context"
 	"log/slog"
-	"sort"
+	"slices"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -175,21 +175,40 @@ func (sl *SecretList) remove(secret *store.Secret) {
 	sl.secrets = kept
 }
 
-// Groups returns the sorted, distinct groups of the loaded secrets. It is
-// used for group suggestions so the UI never reads the vault directory on
+// Groups returns the sorted, distinct groups of the loaded secrets, one
+// label per group directory (the first one loaded, if spellings differ;
+// secrets saved before the first load completes can add a second spelling
+// to a directory). It
+// is used for group suggestions so the UI never reads the vault directory on
 // the main goroutine. It is empty until the first load completes and, unlike
 // the directory listing, omits empty group directories.
 func (sl *SecretList) Groups() []string {
 	seen := make(map[string]bool)
 	var groups []string
 	for _, s := range sl.secrets {
-		if !seen[s.Group] {
-			seen[s.Group] = true
+		dir := store.NormalizeGroup(s.Group)
+		if !seen[dir] {
+			seen[dir] = true
 			groups = append(groups, s.Group)
 		}
 	}
-	sort.Strings(groups)
+	slices.SortFunc(groups, func(a, b string) int {
+		return strings.Compare(strings.ToLower(a), strings.ToLower(b))
+	})
 	return groups
+}
+
+// matchGroup returns the existing group that shares typed's directory, so
+// typing "work" in a vault with a "Work" group files the secret under "Work".
+// Otherwise it returns typed unchanged.
+func matchGroup(typed string, groups []string) string {
+	dir := store.NormalizeGroup(typed)
+	for _, g := range groups {
+		if store.NormalizeGroup(g) == dir {
+			return g
+		}
+	}
+	return typed
 }
 
 // sameSecret reports whether a and b are stored at the same path.
@@ -202,6 +221,10 @@ func sameSecret(a, b *store.Secret) bool {
 func (sl *SecretList) filter(query string) {
 	query = strings.ToLower(strings.TrimSpace(query))
 
+	// The group also matches by directory, so "personal-finance" finds
+	// "Personal Finance" and the reverse.
+	slug := store.Slugify(query)
+
 	if query == "" {
 		sl.filtered = sl.secrets
 	} else {
@@ -211,7 +234,8 @@ func (sl *SecretList) filter(query string) {
 				sl.filtered = append(sl.filtered, sec)
 				continue
 			}
-			if strings.Contains(strings.ToLower(sec.Group), query) {
+			if strings.Contains(strings.ToLower(sec.Group), query) ||
+				(slug != "" && strings.Contains(store.NormalizeGroup(sec.Group), slug)) {
 				sl.filtered = append(sl.filtered, sec)
 				continue
 			}

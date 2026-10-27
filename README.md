@@ -39,7 +39,7 @@ vault/
 ```
 
 - Secrets are stored at `vault/<group>/<slug>.age`
-- Groups are plain subdirectories, created on demand
+- Groups are plain subdirectories, created on demand. The directory is the slugified group name; the secret keeps the group name as you typed it (`Personal Finance` is shown as typed and stored in `personal-finance/`). Group names that slugify to the same directory are one group, and a new or imported secret typed into `personal finance` joins an existing `Personal Finance` group. A group name with no ASCII letter or digit becomes `default`.
 - Filenames are slugified from the secret name (lowercase ASCII letters, digits and `-`). Names that slugify to the same filename, such as `GitHub Key` and `github-key`, cannot coexist in a group: creating one when the other exists is refused, and updating through the other name is refused. Names with no ASCII letter or digit, or whose filename would exceed 255 bytes, are rejected.
 - No database, no index file — the directory structure is the index
 - Every write is atomic: vlt writes a `.tmp-*` file beside the target, fsyncs it, renames it into place, and fsyncs the directory (skipped on Windows, where NTFS journals the rename). New group directories are fsynced into their parent too. A crash leaves either the old or the new file, never a partial one. Leftover `.tmp-*` files are ignored and can be deleted.
@@ -169,11 +169,11 @@ go tool cover -html=coverage.out
 The test suite covers:
 
 - **crypto** — vault-key generation, wrap/unwrap with a passphrase, wrong-passphrase rejection, zeroing, encrypt/decrypt round-trips, X25519-only secret encryption, legacy passphrase decryption
-- **store** — secret types and JSON marshalling, slugification, name validation, group normalisation, CRUD operations (create/update/get/delete/list), refusal to overwrite on create and on slug collision, group listing, vault create/open/exists, one-scrypt-per-unlock check, passphrase change (only `vlt.age` rewritten, failures keep the old passphrase), format-1 migration (including resume after a crash), atomic writes, vault copy, `List` stopping when its context is cancelled
+- **store** — secret types and JSON marshalling, slugification, name validation, group directories and labels (kept as typed), CRUD operations (create/update/get/delete/list), refusal to overwrite on create and on slug collision, vault create/open/exists, one-scrypt-per-unlock check, passphrase change (only `vlt.age` rewritten, failures keep the old passphrase), format-1 migration (including resume after a crash), atomic writes, vault copy, `List` stopping when its context is cancelled
 - **ui** — headless [`fyne/test`](https://pkg.go.dev/fyne.io/fyne/v2/test), with inline or queued runners for background work, hand-fired fake timers, and real vaults created with a cheap scrypt work factor:
   - *Screens*: create (passphrase confirmation and validation), unlock (wrong passphrase), and the error screen for an unreadable vault directory
   - *Background work*: unlock and create run off the UI thread with progress; stale results after a vault switch or lock are dropped; lock cancels the initial list load
-  - *List and detail*: saves, deletes and imports update rows in place (also under a search filter and during the first load); forms save every field, mask secrets, and copy the right value
+  - *List and detail*: saves, deletes and imports update rows in place (also under a search filter and during the first load); forms save every field, mask secrets, and copy the right value; group suggestions show one spelling per group, a new or imported secret typed into a differently spelled group uses the existing one, and search matches a group by either spelling
   - *Auto-lock*: activity resets the countdown, idleness locks, the warning and its buttons work, timeout changes apply, zero disables it
   - *Clipboard*: cleared after the TTL, each copy gets its full TTL, unrelated content is left alone, cleared on lock and quit
   - *Import and export*: read errors and oversized files save nothing; the SHA-256 is reported; failed writes and closes are reported
@@ -237,8 +237,8 @@ internal/
 │   ├── identity.go          Vault key (X25519) in memguard; wrap/unwrap with passphrase (scrypt)
 │   └── vault.go             Encrypt/decrypt secrets to the vault key
 ├── store/
-│   ├── secret.go            Secret types, JSON envelope, slugification, group normalisation
-│   ├── store.go             Secret CRUD, list, groups, copy
+│   ├── secret.go            Secret types, JSON envelope, slugification, group directories and labels
+│   ├── store.go             Secret CRUD, list, copy
 │   ├── vault.go             Create/Open/ChangePassphrase, format marker
 │   ├── migrate.go           Crash-safe format-1 → format-2 migration
 │   └── atomic.go            Atomic file writes

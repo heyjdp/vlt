@@ -24,6 +24,7 @@ graph TD
 - Default location: `~/Library/Application Support/vlt/vault` (macOS), `%APPDATA%\vlt\vault` (Windows), `~/.local/share/vlt/vault` (others). You can override it with `VLT_VAULT_DIR`.
 - Permissions: directories `0700`, files `0600`.
 - Path: `vault/<NormalizeGroup(group)>/<Slugify(name)>.age`.
+- The envelope's `group` is the name as typed and trimmed (`GroupLabel`); only the directory is slugified. Labels that differ only in case or punctuation (`Personal Finance`, `personal-finance`) share one directory. The UI lists one label per directory and files new secrets under the existing spelling.
 - Secrets are encrypted to the vault's X25519 key. `vlt.age` holds that key, encrypted to the passphrase (scrypt). `vlt.json` records the format version. `vlt.migrating.age` exists only while a format-1 vault is being migrated.
 
 ## Slug function
@@ -44,7 +45,7 @@ $$
 Because `slug` isn't injective, `Create` writes exclusively (temp file + `link`) and returns `ErrSecretExists` if the file exists. `Update` requires the stored name to match exactly. Slugs longer than 251 bytes are rejected, so `<slug>.age` fits in a 255-byte filename. See [[F03 Prevent silent overwrites]].
 
 > [!tip] Safety property
-> Because both group and name pass through `slug`, which only emits `[a-z0-9-]`, path traversal (`../`) is impossible. Keep that property in whatever replaces it.
+> Because the path uses only the slugs of group and name, which only emits `[a-z0-9-]`, path traversal (`../`) is impossible. Keep that property in whatever replaces it.
 
 ## Secret envelope
 

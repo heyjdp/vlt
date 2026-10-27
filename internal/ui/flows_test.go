@@ -109,6 +109,25 @@ func TestFlow_ImportAsksForGroupThenConfirmsReplace(t *testing.T) {
 	app.Lock()
 }
 
+func TestFlow_ImportUsesTheExistingGroupSpelling(t *testing.T) {
+	app, w := newFlowApp(t, testutil.PasswordSecret("gh", "x", "SSH Keys"))
+	unlock(app)
+
+	app.detailView.fileOps.processImport(&fakeURIReader{Reader: strings.NewReader("k"), uri: storage.NewFileURI("/tmp/id_ed25519")})
+	test.Type(dialogEntry(t, w), "ssh keys")
+	test.Tap(dialogButton(t, w, "Import"))
+	test.Tap(dialogButton(t, w, "OK")) // the completion message
+
+	got, err := app.store.Get(context.Background(), "id_ed25519", "ssh-keys")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Group != "SSH Keys" {
+		t.Fatalf("imported into group %q, want the existing spelling", got.Group)
+	}
+	app.Lock()
+}
+
 func TestFlow_ChangePassphraseThroughSettings(t *testing.T) {
 	app, w := newFlowApp(t, testutil.PasswordSecret("gh", "x", "work"))
 	unlock(app)
