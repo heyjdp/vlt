@@ -20,13 +20,6 @@ import (
 	"github.com/yourorg/vlt/internal/store"
 )
 
-// Config holds UI-related configuration.
-type Config struct {
-	VaultDir      string
-	LockTimeoutMs int
-	ClipboardTTLs int
-}
-
 // App is the main application controller managing lock/unlock state.
 type App struct {
 	mu        sync.Mutex
@@ -48,6 +41,9 @@ type App struct {
 	// screenGen identifies the latest showUnlockScreen call; older vault
 	// checks that complete late are ignored.
 	screenGen int
+	// vaultDirPending is set when Settings changes the vault location; the
+	// new location is saved after the next successful unlock or create.
+	vaultDirPending bool
 
 	// UI components
 	lockWarning  *dialog.ConfirmDialog
@@ -226,6 +222,12 @@ func (a *App) unlocked(s *store.Store) {
 	a.mu.Unlock()
 	a.unlockScreen, a.createScreen = nil, nil
 	a.log.Info("vault unlocked", "dir", a.config.VaultDir)
+	if a.vaultDirPending {
+		// A location chosen in Settings is remembered only once a vault has
+		// been opened or created there, so a mistyped path never sticks.
+		SaveVaultDir(a.fyneApp.Preferences(), a.config.VaultDir)
+		a.vaultDirPending = false
+	}
 
 	a.showMainView(s, a.run.withContext(ctx))
 
@@ -268,13 +270,7 @@ func (a *App) showMainView(s *store.Store, session runner) {
 		widget.NewButton("Import File", func() {
 			fileOps.ImportFile()
 		}),
-		widget.NewButton("Settings", func() {
-			settings := NewSettingsScreen(a.window, &a.config, s, a.statusBar, a.log, session, func() {
-				a.Lock()
-			})
-			settings.activity = a.resetLockTimer
-			a.detailView.ShowContent(settings.Content())
-		}),
+		widget.NewButton("Settings", func() { a.openSettings(s, session) }),
 		widget.NewButton("Lock", func() {
 			a.Lock()
 		}),
@@ -346,6 +342,28 @@ func (a *App) Lock() {
 		a.statusBar.SetText("Locked")
 		a.showUnlockScreen()
 	})
+}
+
+// openSettings shows the Settings screen in the detail panel, wired to save
+// changes and relock when needed.
+func (a *App) openSettings(s *store.Store, session runner) *SettingsScreen {
+	settings := NewSettingsScreen(a.window, &a.config, s, a.statusBar, a.log, session, a.Lock)
+	settings.activity = a.resetLockTimer
+	settings.save = a.saveSetting
+	settings.vaultDirChanged = func() { a.vaultDirPending = true }
+	a.detailView.ShowContent(settings.Content())
+	return settings
+}
+
+// saveSetting persists one setting the user changed in Settings.
+func (a *App) saveSetting(setting string) {
+	prefs := a.fyneApp.Preferences()
+	switch setting {
+	case prefLockTimeout:
+		SaveLockTimeout(prefs, a.config.LockTimeoutMs)
+	case prefClipboardTTL:
+		SaveClipboardTTL(prefs, a.config.ClipboardTTLs)
+	}
 }
 
 // dismissDialogs removes every dialog (Fyne draws dialogs, including file
@@ -431,7 +449,9 @@ func (a *App) stopLockTimers() {
 // timeout, so a change in Settings applies immediately.
 func (a *App) resetLockTimer() {
 	a.mu.Lock()
-	if a.lockTimer != nil {
+	if a.store != nil {
+		// Unlocked: restart, which also arms the timer if auto-lock was just
+		// re-enabled in Settings, or disarms it if it was turned off.
 		a.stopLockTimers()
 		a.startLockTimer()
 	}

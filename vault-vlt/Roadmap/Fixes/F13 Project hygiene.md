@@ -25,7 +25,7 @@ created: 2026-10-27
 ## Checklist
 - [ ] Add `LICENSE`. The README says MIT (uncommitted change), but there's no license file.
 - [ ] Add `CHANGELOG.md` in Keep a Changelog format (required by `CLAUDE.md` §6.2)
-- [ ] Replace the `github.com/yourorg/vlt` module path and the `io.yourorg.vlt` app ID
+- [ ] Replace the `github.com/yourorg/vlt` module path and the `io.yourorg.vlt` app ID (migrate saved preferences from the old app ID; see [[F06 Persist settings]])
 - [ ] Add `claude.resume` to `.gitignore`
 - [ ] Run `gofumpt -w` on `internal/ui/app.go` and `internal/ui/fileops.go`
 - [ ] Embed the version with `-X main.version=$(git describe …)` in the Makefile `LDFLAGS`

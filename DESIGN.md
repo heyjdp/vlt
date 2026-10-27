@@ -179,6 +179,7 @@ vlt/
 │       ├── runner.go        # Background execution of vault I/O
 │       ├── activity.go      # Input tracking for auto-lock
 │       ├── clipboard.go     # Clipboard copy with auto-clear
+│       ├── config.go        # Settings load/clamp/save (Fyne preferences)
 │       ├── list.go          # Secret browser (left panel)
 │       ├── detail.go        # Secret view/edit (right panel)
 │       └── settings.go      # Vault path, lock timeout, clipboard TTL
@@ -205,7 +206,8 @@ vlt/
 - `list.go` — secret list; filters by search query; fires selection events. `Upsert`/`Remove` update rows in place, keep the current filter, and keep the highlight on the selected secret (moving it if its row moves, clearing it if the secret is deleted or filtered out)
 - `detail.go` — renders the correct form for the secret type; its copy buttons call the app's `clipboardClearer`
 - `clipboard.go` — one `clipboardClearer` per app: per-copy countdown, clears only vlt's own value (SHA-256 check), cleared on lock
-- `settings.go` — vault path picker, auto-lock timeout slider, clipboard TTL slider
+- `settings.go` — vault path picker, auto-lock on/off and timeout slider, clipboard TTL slider. Slider changes are saved when a drag ends; a new vault location is saved by `App` after the next successful unlock or create there. Settings provided by environment variables are disabled and labelled
+- `config.go` — `LoadConfig` resolves each setting from env var → saved preference → default and clamps it (auto-lock 30 s–30 min or off; clipboard TTL 5–120 s); `SaveVaultDir`/`SaveLockTimeout`/`SaveClipboardTTL` save one setting each, only when the user changes it, so environment values are never persisted
 - `app.go` — wires everything together; manages lock/unlock state; runs the inactivity timer
 
 ---
@@ -299,9 +301,9 @@ For macOS, wrap with `fyne package` to produce a proper `.app` bundle. For Windo
 
 ### Phase 4 — Polish
 - [x] Clipboard TTL with status bar countdown
-- [ ] Auto-lock with inactivity timer
+- [x] Auto-lock with inactivity timer
 - [ ] Search / filter
-- [ ] Settings screen (vault path, lock timeout, clipboard TTL)
+- [x] Settings screen (vault path, lock timeout, clipboard TTL)
 - [ ] Optional git commit on write
 
 ---

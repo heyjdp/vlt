@@ -54,7 +54,7 @@ vault/
 | Windows | `%APPDATA%\vlt\vault\`                     |
 | OpenBSD | `~/.local/share/vlt/vault/`                |
 
-Override with the `VLT_VAULT_DIR` environment variable.
+Override with the `VLT_VAULT_DIR` environment variable, or move or switch the vault in Settings; the choice is saved (see [Configuration](#configuration)).
 
 ## Secret Envelope Format
 
@@ -176,7 +176,7 @@ The test suite covers:
 
 - **crypto** — vault-key generation, wrap/unwrap with a passphrase, wrong-passphrase rejection, zeroing, encrypt/decrypt round-trips, X25519-only secret encryption, legacy passphrase decryption
 - **store** — secret types and JSON marshalling, slugification, name validation, group normalisation, CRUD operations (create/update/get/delete/list), refusal to overwrite on create and on slug collision, group listing, vault create/open/exists, one-scrypt-per-unlock check, passphrase change (only `vlt.age` rewritten, failures keep the old passphrase), format-1 migration (including resume after a crash), atomic writes, vault copy, `List` stopping when its context is cancelled
-- **ui** — new-vault passphrase validation, create-vault screen (mismatch rejected and confirmation cleared; both entries cleared on success), choosing the create, unlock or error screen; unlock and create running off the UI thread with progress shown; stale unlock results discarded after a vault switch; secrets loaded into the list; saves, deletes and imports updating the list in place, including for secrets selected from a search-filtered list (a delete clears the highlight only if it was on that secret; changes made during the first load are kept; an import that replaces the open secret re-renders its form); work completing after lock being dropped; and lock cancelling the initial list load (headless `fyne/test` with inline and queued runners); auto-lock reset by typing in forms, search and list selection, locking when idle, the pre-lock warning and its dismissal, timeout changes applied on next activity, and no timers when disabled (fake timers fired by hand); clipboard clearing after the TTL, a second copy getting its own full TTL, unrelated clipboard content left alone, lock clearing the clipboard, a TTL change applying to the next copy, and a non-positive TTL falling back to the default; import reads failing part-way or exceeding 10 MiB saving nothing, imports closing the file and reporting its SHA-256, and exports reporting a failed close
+- **ui** — new-vault passphrase validation, create-vault screen (mismatch rejected and confirmation cleared; both entries cleared on success), choosing the create, unlock or error screen; unlock and create running off the UI thread with progress shown; stale unlock results discarded after a vault switch; secrets loaded into the list; saves, deletes and imports updating the list in place, including for secrets selected from a search-filtered list (a delete clears the highlight only if it was on that secret; changes made during the first load are kept; an import that replaces the open secret re-renders its form); work completing after lock being dropped; and lock cancelling the initial list load (headless `fyne/test` with inline and queued runners); auto-lock reset by typing in forms, search and list selection, locking when idle, the pre-lock warning and its dismissal, timeout changes applied on next activity, and no timers when disabled (fake timers fired by hand); clipboard clearing after the TTL, a second copy getting its own full TTL, unrelated clipboard content left alone, lock clearing the clipboard, a TTL change applying to the next copy, and a non-positive TTL falling back to the default; import reads failing part-way or exceeding 10 MiB saving nothing, imports closing the file and reporting its SHA-256, and exports reporting a failed close; settings loaded with env → saved → default precedence, clamped to their ranges, and saved by the Settings screen so a switched vault survives a restart
 
 All tests use `t.Parallel()`, the race detector, and `t.TempDir()` for filesystem isolation.
 
@@ -201,13 +201,15 @@ make check
 
 ## Configuration
 
-| Environment Variable     | Default   | Description                          |
-|--------------------------|-----------|--------------------------------------|
-| `VLT_VAULT_DIR`         | (OS path) | Override the vault directory location |
-| `VLT_LOCK_TIMEOUT_MS`   | `300000`  | Auto-lock after N ms of inactivity   |
-| `VLT_CLIPBOARD_TTL_S`   | `30`      | Clear clipboard after N seconds      |
+| Environment Variable     | Default   | Range                     | Description                          |
+|--------------------------|-----------|---------------------------|--------------------------------------|
+| `VLT_VAULT_DIR`         | (OS path) |                           | Override the vault directory location |
+| `VLT_LOCK_TIMEOUT_MS`   | `300000`  | 30000–1800000, or 0 (off) | Auto-lock after N ms of inactivity   |
+| `VLT_CLIPBOARD_TTL_S`   | `30`      | 5–120                     | Clear clipboard after N seconds      |
 
-All settings can also be changed at runtime from the Settings screen.
+All settings can also be changed from the Settings screen, including turning auto-lock off. Changes take effect immediately and are saved in Fyne's per-app preferences, so the auto-lock timeout and clipboard TTL survive a restart. A new vault location (Move or Switch) is saved once a vault has been opened or created there, so a mistyped path never sticks.
+
+Each setting is resolved in this order: environment variable, then the saved value, then the default. A setting provided by an environment variable is shown as such and cannot be changed in Settings, and it is never written to the saved preferences. Out-of-range values are clamped and unparsable ones ignored, with a warning in the log.
 
 ## Architecture
 
@@ -230,6 +232,7 @@ internal/
 │   ├── runner.go            Runs vault I/O off the UI thread, results via fyne.Do
 │   ├── activity.go          Tracks user input for the auto-lock countdown
 │   ├── clipboard.go         Copies secrets and clears them after the TTL or on lock
+│   ├── config.go            Settings: load (env → saved → default), clamp, save
 │   ├── list.go              Secret browser with search/filter
 │   ├── detail.go            View/edit forms for all secret types, clipboard copy
 │   ├── fileops.go           File import (picker, base64, MIME) and export

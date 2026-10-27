@@ -26,6 +26,12 @@ type SettingsScreen struct {
 	// activity reports user input in the folder picker and confirmation
 	// dialogs, which are outside the instrumented widget tree.
 	activity func()
+	// save persists one setting (prefLockTimeout or prefClipboardTTL) after
+	// the user changes it; vaultDirChanged records a new vault location,
+	// which the app saves once a vault is opened or created there. Both are
+	// set by the app.
+	save            func(setting string)
+	vaultDirChanged func()
 
 	content *fyne.Container
 }
@@ -41,14 +47,16 @@ func NewSettingsScreen(
 	onRelock func(),
 ) *SettingsScreen {
 	ss := &SettingsScreen{
-		window:    window,
-		config:    config,
-		store:     s,
-		log:       log,
-		statusBar: statusBar,
-		run:       run,
-		onRelock:  onRelock,
-		activity:  noActivity,
+		window:          window,
+		config:          config,
+		store:           s,
+		log:             log,
+		statusBar:       statusBar,
+		run:             run,
+		onRelock:        onRelock,
+		activity:        noActivity,
+		save:            func(string) {},
+		vaultDirChanged: func() {},
 	}
 
 	ss.content = ss.build()
@@ -258,6 +266,14 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 		)
 	})
 
+	if ss.config.FromEnv.VaultDir {
+		currentLabel.SetText(currentLabel.Text + " (set by " + envVaultDir + ")")
+		pathEntry.Disable()
+		browseBtn.Disable()
+		moveBtn.Disable()
+		switchBtn.Disable()
+	}
+
 	return container.NewVBox(
 		sectionLabel,
 		currentLabel,
@@ -287,6 +303,7 @@ func (ss *SettingsScreen) moveVault(newDir string, errorLabel *widget.Label, cur
 // relocks so the user unlocks the vault at its new location.
 func (ss *SettingsScreen) vaultMoved(newDir string, currentLabel *widget.Label) {
 	ss.config.VaultDir = newDir
+	ss.vaultDirChanged()
 	currentLabel.SetText("Current: " + newDir)
 	ss.log.Info("vault moved", "to", newDir)
 	ss.statusBar.SetText("Vault moved to " + newDir)
@@ -306,6 +323,7 @@ func (ss *SettingsScreen) relockThenInform(title, message string) {
 
 func (ss *SettingsScreen) switchVault(newDir string, currentLabel *widget.Label) {
 	ss.config.VaultDir = newDir
+	ss.vaultDirChanged()
 	currentLabel.SetText("Current: " + newDir)
 	ss.log.Info("vault switched", "to", newDir)
 	ss.statusBar.SetText("Switched to vault at " + newDir)
@@ -314,31 +332,56 @@ func (ss *SettingsScreen) switchVault(newDir string, currentLabel *widget.Label)
 
 func (ss *SettingsScreen) buildLockTimeout() *fyne.Container {
 	label := widget.NewLabel(formatLockTimeout(ss.config.LockTimeoutMs))
-	slider := widget.NewSlider(30000, 1800000)
-	slider.SetValue(float64(ss.config.LockTimeoutMs))
+	slider := widget.NewSlider(MinLockTimeoutMs, MaxLockTimeoutMs)
 	slider.Step = 30000
-	slider.OnChanged = func(v float64) {
-		ss.config.LockTimeoutMs = int(v)
-		label.SetText(formatLockTimeout(ss.config.LockTimeoutMs))
+	if ss.config.LockTimeoutMs > 0 {
+		slider.SetValue(float64(ss.config.LockTimeoutMs))
+	} else {
+		slider.SetValue(DefaultLockTimeoutMs)
+		slider.Disable()
+	}
+	enabled := widget.NewCheck("Auto-lock", nil)
+	enabled.SetChecked(ss.config.LockTimeoutMs > 0)
+
+	apply := func(ms int) {
+		ss.config.LockTimeoutMs = ms
+		label.SetText(formatLockTimeout(ms))
+	}
+	slider.OnChanged = func(v float64) { apply(int(v)) }
+	slider.OnChangeEnded = func(float64) { ss.save(prefLockTimeout) }
+	enabled.OnChanged = func(on bool) {
+		if on {
+			slider.Enable()
+			apply(int(slider.Value))
+		} else {
+			slider.Disable()
+			apply(0)
+		}
+		ss.save(prefLockTimeout)
 	}
 
-	return container.NewVBox(label, slider)
+	if ss.config.FromEnv.LockTimeout {
+		slider.Disable()
+		enabled.Disable()
+		label.SetText(label.Text + " (set by " + envLockTimeout + ")")
+	}
+	return container.NewVBox(label, enabled, slider)
 }
 
 func (ss *SettingsScreen) buildClipboardTTL() *fyne.Container {
 	label := widget.NewLabel(fmt.Sprintf("Clipboard TTL: %d seconds", ss.config.ClipboardTTLs))
-	slider := widget.NewSlider(5, 120)
+	slider := widget.NewSlider(MinClipboardTTLs, MaxClipboardTTLs)
 	slider.SetValue(float64(ss.config.ClipboardTTLs))
 	slider.Step = 5
 	slider.OnChanged = func(v float64) {
 		ss.config.ClipboardTTLs = int(v)
 		label.SetText(fmt.Sprintf("Clipboard TTL: %d seconds", ss.config.ClipboardTTLs))
 	}
+	slider.OnChangeEnded = func(float64) { ss.save(prefClipboardTTL) }
 
+	if ss.config.FromEnv.ClipboardTTL {
+		slider.Disable()
+		label.SetText(label.Text + " (set by " + envClipboardTTL + ")")
+	}
 	return container.NewVBox(label, slider)
-}
-
-func formatLockTimeout(ms int) string {
-	min := float64(ms) / 60000
-	return fmt.Sprintf("Auto-lock timeout: %.0f min", min)
 }
