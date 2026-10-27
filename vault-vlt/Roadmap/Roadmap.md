@@ -96,3 +96,6 @@ These can run in parallel with phases 1–3.
 ## Progress
 
 Each fix note's `status` property is one of `todo`, `in-progress`, or `done`. The **Progress** view in the tracker counts them by phase.
+
+> [!success] All 15 fixes are done (2026-10-27)
+> Every fix went through independent code, documentation and tooling verification before its commit, on branch `fix/review-roadmap`. Two things wait on the owner: the first CI run, which needs a push, and the `yourorg` module path and app ID rename ([[F13 Project hygiene]]).

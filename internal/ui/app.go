@@ -34,8 +34,11 @@ type App struct {
 	// timerGen identifies the current pair of auto-lock timers; callbacks
 	// from stopped timers that already started running check it and do
 	// nothing.
-	timerGen  int
-	newTimer  timerFactory
+	timerGen int
+	newTimer timerFactory
+	// storeOpts are passed to store.Open and store.Create. Tests use them
+	// to lower the scrypt work factor; production passes none.
+	storeOpts []store.Option
 	cancelCtx context.CancelFunc
 	run       runner
 	// screenGen identifies the latest showUnlockScreen call; older vault
@@ -62,16 +65,18 @@ func NewApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logge
 	return newApp(fyneApp, window, config, log, goroutineRunner(), realTimers)
 }
 
-// newApp creates the controller with an explicit runner and timer factory
-// (tests run work inline and fire timers by hand).
-func newApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logger, run runner, timers timerFactory) *App {
+// newApp creates the controller with an explicit runner, timer factory and
+// store options (tests run work inline, fire timers by hand, and use a cheap
+// scrypt work factor).
+func newApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logger, run runner, timers timerFactory, storeOpts ...store.Option) *App {
 	app := &App{
-		fyneApp:  fyneApp,
-		window:   window,
-		config:   config,
-		log:      log,
-		run:      run,
-		newTimer: timers,
+		fyneApp:   fyneApp,
+		window:    window,
+		config:    config,
+		log:       log,
+		run:       run,
+		newTimer:  timers,
+		storeOpts: storeOpts,
 	}
 
 	// Quitting is a lock-equivalent for the clipboard: the system clipboard
@@ -153,7 +158,7 @@ func (a *App) onUnlock(passphrase string) {
 	dir := a.config.VaultDir
 	background(a.run,
 		func(ctx context.Context) (openResult, error) {
-			s, err := store.Open(ctx, dir, passphrase, a.log)
+			s, err := store.Open(ctx, dir, passphrase, a.log, a.storeOpts...)
 			if errors.Is(err, store.ErrVaultNotFound) {
 				exists, _ := store.Exists(dir)
 				return openResult{stillExists: exists}, err
@@ -192,7 +197,9 @@ func (a *App) onCreate(passphrase string) {
 	screen.SetBusy(true)
 	dir := a.config.VaultDir
 	background(a.run,
-		func(context.Context) (*store.Store, error) { return store.Create(dir, passphrase, a.log) },
+		func(context.Context) (*store.Store, error) {
+			return store.Create(dir, passphrase, a.log, a.storeOpts...)
+		},
 		func(s *store.Store, err error) {
 			if a.createScreen != screen {
 				if s != nil {

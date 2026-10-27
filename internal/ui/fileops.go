@@ -292,7 +292,6 @@ func (fo *FileOps) askExportPath(name, filename string, data []byte) {
 	fo.dropPending()
 	fo.pending = data
 	fd := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
-		fo.pending = nil
 		fo.saveExport(writer, err, name, filename, data)
 	}, fo.window)
 
@@ -308,6 +307,7 @@ func (fo *FileOps) askExportPath(name, filename string, data []byte) {
 // dialog was open, nothing is written. A failed write removes the partial
 // file where possible, because the destination was already truncated.
 func (fo *FileOps) saveExport(writer fyne.URIWriteCloser, err error, name, filename string, data []byte) {
+	fo.pending = nil // the dialog completed; data is handled (or wiped) below
 	fo.activity()
 	if fo.run.context().Err() != nil {
 		crypto.Wipe(data)

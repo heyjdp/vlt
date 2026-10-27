@@ -102,7 +102,7 @@ func TestApp_FailingImportSavesNothing(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	r := &fakeURIReader{Reader: failingReader(4096), uri: storage.NewFileURI("/tmp/id_rsa")}
@@ -145,38 +145,12 @@ func TestWriteExport(t *testing.T) {
 	}
 }
 
-// treeHas reports whether obj's tree contains a widget matching match.
-func treeHas(obj fyne.CanvasObject, match func(fyne.CanvasObject) bool) bool {
-	if obj == nil {
-		return false
-	}
-	if match(obj) {
-		return true
-	}
-	if c, ok := obj.(*fyne.Container); ok {
-		for _, child := range c.Objects {
-			if treeHas(child, match) {
-				return true
-			}
-		}
-	}
-	if w, ok := obj.(fyne.Widget); ok {
-		r := test.WidgetRenderer(w)
-		for _, child := range r.Objects() {
-			if treeHas(child, match) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func TestApp_FailingImportShowsErrorNotGroupForm(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	app.detailView.fileOps.processImport(&fakeURIReader{Reader: failingReader(10), uri: storage.NewFileURI("/tmp/x")})
@@ -185,7 +159,7 @@ func TestApp_FailingImportShowsErrorNotGroupForm(t *testing.T) {
 	if top == nil {
 		t.Fatal("a failed import should show an error dialog")
 	}
-	if treeHas(top, func(o fyne.CanvasObject) bool { _, ok := o.(*widget.SelectEntry); return ok }) {
+	if findType[*widget.SelectEntry](top) != nil {
 		t.Fatal("a failed import must not ask for a group")
 	}
 	app.Lock()
@@ -232,7 +206,7 @@ func TestApp_ExportAfterLockWritesNothing(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	fo := app.detailView.fileOps
 	app.Lock() // the save dialog was still open when the vault locked
@@ -254,7 +228,7 @@ func TestApp_LockDismissesOpenDialogs(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	dialog.ShowInformation("open", "a dialog left open", w)

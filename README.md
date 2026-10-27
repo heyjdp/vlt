@@ -156,6 +156,7 @@ go test -race ./...
 # Run a specific package
 go test -race ./internal/crypto/...
 go test -race ./internal/store/...
+go test -race ./internal/ui/...
 
 # Verbose output
 go test -race -v ./...
@@ -169,9 +170,18 @@ The test suite covers:
 
 - **crypto** — vault-key generation, wrap/unwrap with a passphrase, wrong-passphrase rejection, zeroing, encrypt/decrypt round-trips, X25519-only secret encryption, legacy passphrase decryption
 - **store** — secret types and JSON marshalling, slugification, name validation, group normalisation, CRUD operations (create/update/get/delete/list), refusal to overwrite on create and on slug collision, group listing, vault create/open/exists, one-scrypt-per-unlock check, passphrase change (only `vlt.age` rewritten, failures keep the old passphrase), format-1 migration (including resume after a crash), atomic writes, vault copy, `List` stopping when its context is cancelled
-- **ui** — new-vault passphrase validation, create-vault screen (mismatch rejected and confirmation cleared; both entries cleared on success), choosing the create, unlock or error screen; unlock and create running off the UI thread with progress shown; stale unlock results discarded after a vault switch; secrets loaded into the list; saves, deletes and imports updating the list in place, including for secrets selected from a search-filtered list (a delete clears the highlight only if it was on that secret; changes made during the first load are kept; an import that replaces the open secret re-renders its form); work completing after lock being dropped; and lock cancelling the initial list load (headless `fyne/test` with inline and queued runners); auto-lock reset by typing in forms, search and list selection, locking when idle, the pre-lock warning and its dismissal, timeout changes applied on next activity, and no timers when disabled (fake timers fired by hand); clipboard clearing after the TTL, a second copy getting its own full TTL, unrelated clipboard content left alone, lock clearing the clipboard, a TTL change applying to the next copy, and a non-positive TTL falling back to the default; import reads failing part-way or exceeding 10 MiB saving nothing, imports closing the file and reporting its SHA-256, and exports reporting a failed close; settings loaded with env → saved → default precedence, clamped to their ranges, and saved by the Settings screen so a switched vault survives a restart; passphrase entries cleared as soon as they are read (unlock and change passphrase, including failed attempts), and lock emptying loaded secrets, blanking form fields, wiping a pending export and dropping vlt's references to them
+- **ui** — headless [`fyne/test`](https://pkg.go.dev/fyne.io/fyne/v2/test), with inline or queued runners for background work, hand-fired fake timers, and real vaults created with a cheap scrypt work factor:
+  - *Screens*: create (passphrase confirmation and validation), unlock (wrong passphrase), and the error screen for an unreadable vault directory
+  - *Background work*: unlock and create run off the UI thread with progress; stale results after a vault switch or lock are dropped; lock cancels the initial list load
+  - *List and detail*: saves, deletes and imports update rows in place (also under a search filter and during the first load); forms save every field, mask secrets, and copy the right value
+  - *Auto-lock*: activity resets the countdown, idleness locks, the warning and its buttons work, timeout changes apply, zero disables it
+  - *Clipboard*: cleared after the TTL, each copy gets its full TTL, unrelated content is left alone, cleared on lock and quit
+  - *Import and export*: read errors and oversized files save nothing; the SHA-256 is reported; failed writes and closes are reported
+  - *Settings*: env → saved → default precedence, clamping, per-setting saves, env-controlled settings disabled
+  - *Memory hygiene*: passphrase entries cleared on read; lock empties secrets, blanks forms and wipes a pending export
+  - *End-to-end flows through the real dialogs*: delete confirmation (Yes and No), import with group selection and replace (Yes and No), passphrase change then re-unlock, switch vault, export to a file
 
-All tests use `t.Parallel()`, the race detector, and `t.TempDir()` for filesystem isolation.
+Crypto and store tests run in parallel (`t.Parallel()`). Most ui tests run serially, because `fyne/test` replaces the process-global current app. Every test uses `t.TempDir()` for filesystem isolation, and CI runs the whole suite under the race detector.
 
 ## Linting and Static Analysis
 

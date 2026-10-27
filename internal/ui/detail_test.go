@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"testing"
 
-	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
@@ -58,30 +57,13 @@ func formEntries(dv *DetailView) []*widget.Entry {
 	return entries
 }
 
-// findButton returns the button labelled text in obj's container tree.
-func findButton(obj fyne.CanvasObject, text string) *widget.Button {
-	switch w := obj.(type) {
-	case *widget.Button:
-		if w.Text == text {
-			return w
-		}
-	case *fyne.Container:
-		for _, child := range w.Objects {
-			if b := findButton(child, text); b != nil {
-				return b
-			}
-		}
-	}
-	return nil
-}
-
 // openOnly unlocks a vault holding sec and selects it.
 func openOnly(t *testing.T, sec *store.Secret) *App {
 	t.Helper()
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, sec)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	app.secretList.list.Select(0)
 	return app

@@ -18,7 +18,7 @@ func TestUnlockScreen_EntryIsClearedAfterSubmit(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), q.runner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), q.runner(), noTimers, testKDF)
 	q.flush()
 	screen := app.unlockScreen
 
@@ -46,7 +46,7 @@ func TestApp_LockDropsAllReferencesToSecrets(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	list, detail := app.secretList, app.detailView
 	list.list.Select(0) // render a form holding the secret
@@ -67,10 +67,10 @@ func TestApp_LockDropsAllReferencesToSecrets(t *testing.T) {
 func TestSettings_PassphraseEntriesAreClearedOnEveryPath(t *testing.T) {
 	app, ss := settingsApp(t, Config{VaultDir: t.TempDir()}, noTimers)
 	box := ss.buildChangePassphrase()
-	current := box.Objects[2].(*widget.Entry)
-	newPass := box.Objects[4].(*widget.Entry)
-	confirm := box.Objects[6].(*widget.Entry)
-	change := box.Objects[8].(*widget.Button)
+	current := entryWithPlaceholder(t, box, "Current passphrase")
+	newPass := entryWithPlaceholder(t, box, "New passphrase")
+	confirm := entryWithPlaceholder(t, box, "Confirm new passphrase")
+	change := findButton(box, "Change Passphrase")
 
 	// A validation failure (mismatched confirmation).
 	test.Type(current, "correct horse battery")
@@ -91,7 +91,7 @@ func TestApp_LockEmptiesSecretsAndBlanksFormsStillReachableElsewhere(t *testing.
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	loaded := app.secretList.secrets[0]
@@ -127,7 +127,7 @@ func TestApp_LockWipesPendingExport(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	data := []byte("decoded file content")

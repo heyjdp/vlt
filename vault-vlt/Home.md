@@ -15,7 +15,7 @@ created: 2026-10-27
 This vault is the working notebook for the project: architecture notes, the maths behind the crypto choices, review findings, design decisions, and the fix roadmap.
 
 > [!abstract] Current state (2026-10-27)
-> The code is cleanly layered and the store tests pass, but the [[2026-10-27 Code Review|latest review]] found a scaling flaw in the key design and several data-loss paths. Work is tracked in the [[Roadmap]].
+> Every finding from the [[2026-10-27 Code Review|latest review]] is fixed. The changes include a format-2 vault key with one scrypt per unlock, atomic writes, all vault I/O off the UI thread, real-inactivity auto-lock, correct clipboard clearing, persisted settings, a working CI pipeline and a headless UI test suite. See the [[Roadmap]].
 
 ## Map of content
 

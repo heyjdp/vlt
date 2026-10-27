@@ -128,7 +128,7 @@ func settingsApp(t *testing.T, cfg Config, clock timerFactory) (*App, *SettingsS
 	t.Helper()
 	a := test.NewTempApp(t)
 	newVaultWith(t, cfg.VaultDir, testutil.PasswordSecret("gh", "x", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), clock)
+	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), clock, testKDF)
 	unlock(app)
 	ss := app.openSettings(app.store, inlineRunner())
 	return app, ss
@@ -137,18 +137,18 @@ func settingsApp(t *testing.T, cfg Config, clock timerFactory) (*App, *SettingsS
 // lockControls returns the auto-lock checkbox and slider.
 func lockControls(ss *SettingsScreen) (*widget.Check, *widget.Slider) {
 	box := ss.buildLockTimeout()
-	return box.Objects[1].(*widget.Check), box.Objects[2].(*widget.Slider)
+	return findType[*widget.Check](box), findType[*widget.Slider](box)
 }
 
 func TestSettings_EnvironmentValuesAreNotSavedBySliderChanges(t *testing.T) {
 	a := test.NewTempApp(t)
 	cfg := LoadConfig(a.Preferences(), env(map[string]string{envVaultDir: t.TempDir()}), "/default", quietLog())
 	newVaultWith(t, cfg.VaultDir)
-	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	ss := app.openSettings(app.store, inlineRunner())
 
-	ttl := ss.buildClipboardTTL().Objects[1].(*widget.Slider)
+	ttl := findType[*widget.Slider](ss.buildClipboardTTL())
 	ttl.SetValue(60)
 	ttl.OnChangeEnded(60)
 
@@ -172,6 +172,9 @@ func TestSettings_SwitchedVaultIsSavedOnlyOnceOpened(t *testing.T) {
 		t.Fatal("a switched-to path must not be saved before a vault is opened or created there")
 	}
 
+	if app.createScreen == nil {
+		t.Fatal("switching to an empty folder should show the create screen")
+	}
 	test.Type(app.createScreen.entry, "correct horse battery")
 	test.Type(app.createScreen.confirm, "correct horse battery")
 	test.Tap(app.createScreen.createBtn)
@@ -245,10 +248,10 @@ func TestSettings_EnvironmentControlledSettingsAreDisabled(t *testing.T) {
 
 	check, slider := lockControls(ss)
 	ttl := ss.buildClipboardTTL()
-	if !check.Disabled() || !slider.Disabled() || !ttl.Objects[1].(*widget.Slider).Disabled() {
+	if !check.Disabled() || !slider.Disabled() || !findType[*widget.Slider](ttl).Disabled() {
 		t.Fatal("settings set by environment variables should be disabled in Settings")
 	}
-	if !strings.Contains(ttl.Objects[0].(*widget.Label).Text, envClipboardTTL) {
+	if !strings.Contains(findType[*widget.Label](ttl).Text, envClipboardTTL) {
 		t.Fatal("the label should say which variable controls the setting")
 	}
 }

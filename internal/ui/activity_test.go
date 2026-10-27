@@ -4,44 +4,10 @@ import (
 	"testing"
 	"time"
 
-	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
-	"fyne.io/fyne/v2/widget"
 
 	"github.com/yourorg/vlt/internal/testutil"
 )
-
-// fakeTimer is a stoppableTimer that only fires when a test says so.
-type fakeTimer struct {
-	d       time.Duration
-	f       func()
-	stopped bool
-}
-
-func (t *fakeTimer) Stop() bool                 { t.stopped = true; return true }
-func (t *fakeTimer) Reset(d time.Duration) bool { t.d, t.stopped = d, false; return true }
-
-// fakeClock records the timers an App starts.
-type fakeClock struct{ timers []*fakeTimer }
-
-func (c *fakeClock) factory(d time.Duration, f func()) stoppableTimer {
-	t := &fakeTimer{d: d, f: f}
-	c.timers = append(c.timers, t)
-	return t
-}
-
-// active returns the running timer with duration d, or nil.
-func (c *fakeClock) active(d time.Duration) *fakeTimer {
-	for i := len(c.timers) - 1; i >= 0; i-- {
-		if t := c.timers[i]; !t.stopped && t.d == d {
-			return t
-		}
-	}
-	return nil
-}
-
-// noTimers is a timer factory whose timers never fire.
-func noTimers(d time.Duration, f func()) stoppableTimer { return &fakeTimer{d: d, f: f} }
 
 const testTimeout = 5 * time.Minute
 
@@ -52,26 +18,9 @@ func newLockingApp(t *testing.T) (*App, *fakeClock) {
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "x", "work"))
 	clock := &fakeClock{}
 	cfg := Config{VaultDir: dir, LockTimeoutMs: int(testTimeout / time.Millisecond)}
-	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), clock.factory)
+	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), clock.factory, testKDF)
 	unlock(app)
 	return app, clock
-}
-
-// firstEditableEntry finds the first enabled entry in obj's tree.
-func firstEditableEntry(obj fyne.CanvasObject) *widget.Entry {
-	switch w := obj.(type) {
-	case *widget.Entry:
-		if !w.Disabled() {
-			return w
-		}
-	case *fyne.Container:
-		for _, c := range w.Objects {
-			if e := firstEditableEntry(c); e != nil {
-				return e
-			}
-		}
-	}
-	return nil
 }
 
 func TestAutoLock_TypingInAFormResetsTheCountdown(t *testing.T) {
@@ -181,7 +130,7 @@ func TestAutoLock_DisabledWhenTimeoutIsZero(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	clock := &fakeClock{}
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), clock.factory)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), clock.factory, testKDF)
 	unlock(app)
 
 	if len(clock.timers) != 0 {

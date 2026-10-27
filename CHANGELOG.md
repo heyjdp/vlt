@@ -31,7 +31,7 @@ These were part of the internal store, crypto and ui APIs (`internal/` packages)
 - `Store.SetDir`, which was unsynchronised (moving a vault now relocks instead).
 - `crypto.NewIdentity` and `Identity.ScryptIdentity`, replaced by `GenerateIdentity`, `ParseIdentity`, `WrapIdentity` and `UnwrapIdentity`.
 - `DetailView.SetOnSave` and `FileOps.SetOnSave`, replaced by callbacks wired once when the main view is built.
-- Unused code: `Store.Groups` (group suggestions now come from the loaded list), `store.ValidSecretTypes`, `Identity.IsZeroed` and `App.ShowError`, and hand-written string helpers replaced by the standard library.
+- Unused code: `Store.Groups` (group suggestions now come from the loaded list), `store.ValidSecretTypes`, `Identity.IsZeroed`, `App.ShowError` and the test-only `UnlockScreen.PassphraseEntry`, and hand-written string helpers replaced by the standard library.
 
 ### Fixed
 - Every vault write is atomic (temp file, fsync, rename), so a crash or full disk can no longer truncate a secret.

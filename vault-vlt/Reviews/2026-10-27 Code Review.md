@@ -58,7 +58,7 @@ A full read of the repository at commit `4f3d6de` (about 2,500 lines of Go plus 
 
 ## Outcome
 
-Progress is tracked in the [[Roadmap]]. Completed so far:
+All fixes are complete (see the [[Roadmap]]):
 - [[F02 Atomic file writes]]: every vault write is atomic
 - [[F01 Scrypt-wrapped identity]]: one scrypt per unlock, single-file passphrase change, crash-safe migration
 - [[F03 Prevent silent overwrites]]: `Create`/`Update` split and `ErrSecretExists`
@@ -73,5 +73,6 @@ Progress is tracked in the [[Roadmap]]. Completed so far:
 - [[F12 Fix CI pipeline]]: Go from go.mod, native cgo builds on three OSes, golangci-lint v2 config and lint job, SHA-pinned actions, patched toolchain and dependencies for govulncheck
 - [[F13 Project hygiene]]: MIT LICENSE, CHANGELOG, version embedded by make and CI; the `yourorg` rename is deferred to the owner
 - [[F14 Remove reinvented stdlib and dead code]]: stdlib string helpers, dead code removed, shared form builder, TOTP masked, `dupl`/`unparam` lint
+- [[F15 UI tests with fyne test]]: headless `fyne/test` suite including end-to-end dialog flows; `internal/ui` coverage 86%
 
 These findings became the five-phase [[Roadmap]]. The storage-format change ([[ADR-001 Scrypt-wrapped X25519 identity]]) goes first because it's cheapest before real vaults exist that would need migrating.

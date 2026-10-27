@@ -21,7 +21,7 @@ func TestApp_SelectThenDeleteRemovesRowAndClearsSelection(t *testing.T) {
 		testutil.PasswordSecret("a-gone", "v", "work"),
 		testutil.PasswordSecret("b-kept", "v", "work"),
 	)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	sl, dv := app.secretList, app.detailView
 
@@ -50,7 +50,7 @@ func TestApp_SelectThenEditUpdatesFilteredRow(t *testing.T) {
 		testutil.PasswordSecret("github", "old", "work"),
 		testutil.PasswordSecret("bank", "x", "personal"),
 	)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	sl, dv := app.secretList, app.detailView
 
@@ -75,7 +75,7 @@ func TestApp_NewSecretSavedDuringSearchAppearsIfItMatches(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("github", "x", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	sl := app.secretList
 
@@ -137,7 +137,7 @@ func TestApp_LateDeleteDoesNotClearAnotherSecretsPanel(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("a-gone", "v", "work"), testutil.PasswordSecret("b-shown", "v", "work"))
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), q.runner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), q.runner(), noTimers, testKDF)
 	q.flush()
 	unlockQueued(t, app, q)
 	q.flush()
@@ -162,7 +162,7 @@ func TestApp_ImportReplacingOpenSecretRefreshesItsForm(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("token", "old", "keys"))
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	dv := app.detailView
 
@@ -185,7 +185,7 @@ func TestApp_EditThatLeavesSearchClearsHighlight(t *testing.T) {
 	tagged := testutil.PasswordSecret("github", "x", "work")
 	tagged.Tags = []string{"ci"}
 	newVaultWith(t, dir, tagged)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	sl, dv := app.secretList, app.detailView
 

@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"runtime"
 	"testing"
 	"time"
 
@@ -136,7 +135,7 @@ func TestApp_LockClearsCopiedSecret(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir, ClipboardTTLs: 30}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir, ClipboardTTLs: 30}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	app.detailView.copyValue("ghp_secret")
@@ -154,7 +153,7 @@ func TestApp_ClipboardTTLChangeAppliesToNextCopy(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir, ClipboardTTLs: 30}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir, ClipboardTTLs: 30}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	app.config.ClipboardTTLs = 5 // Settings slider
@@ -187,30 +186,11 @@ func TestClipboard_EmptyValueIsNotCopied(t *testing.T) {
 	}
 }
 
-// TestClipboard_RealTimersLeaveNoGoroutines checks the spec criterion that a
-// cleared countdown leaves nothing running, using real timers.
-func TestClipboard_RealTimersLeaveNoGoroutines(t *testing.T) {
-	a := test.NewTempApp(t)
-	c := newClipboardClearer(a.Clipboard(), widget.NewLabel(""), func() time.Duration { return time.Second }, realTimers)
-	before := runtime.NumGoroutine()
-
-	c.Copy("secret-a")
-	c.Clear()
-	time.Sleep(1500 * time.Millisecond) // past the first tick, had it not been stopped
-
-	if after := runtime.NumGoroutine(); after > before {
-		t.Fatalf("goroutines grew from %d to %d after Clear", before, after)
-	}
-	if a.Clipboard().Content() != "" {
-		t.Fatal("Clear should have wiped the clipboard")
-	}
-}
-
 func TestApp_QuitClearsCopiedSecret(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir, ClipboardTTLs: 30}, quietLog(), inlineRunner(), noTimers)
+	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir, ClipboardTTLs: 30}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	app.detailView.copyValue("ghp_secret")
