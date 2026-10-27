@@ -51,7 +51,7 @@ func (s *Store) Dir() string {
 
 // Init creates the vault directory with secure permissions.
 func (s *Store) Init() error {
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+	if err := mkdirAllSynced(s.dir, 0o700); err != nil {
 		return fmt.Errorf("store.Init: %w", err)
 	}
 	return nil
@@ -73,7 +73,7 @@ func (s *Store) CreateSentinel() error {
 	}
 
 	path := filepath.Join(s.dir, sentinelFile)
-	if err := os.WriteFile(path, ciphertext, 0o600); err != nil {
+	if err := writeFileAtomic(path, ciphertext, 0o600); err != nil {
 		return fmt.Errorf("store.CreateSentinel: %w", err)
 	}
 
@@ -142,11 +142,11 @@ func (s *Store) Save(_ context.Context, secret *Secret) error {
 
 	path := s.secretPath(secret)
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := mkdirAllSynced(dir, 0o700); err != nil {
 		return fmt.Errorf("store.Save: mkdir: %w", err)
 	}
 
-	if err := os.WriteFile(path, ciphertext, 0o600); err != nil {
+	if err := writeFileAtomic(path, ciphertext, 0o600); err != nil {
 		return fmt.Errorf("store.Save: write: %w", err)
 	}
 
@@ -300,7 +300,7 @@ func (s *Store) ReEncryptAll(ctx context.Context, newID *crypto.Identity) error 
 		}
 
 		path := s.secretPath(sec)
-		if err := os.WriteFile(path, ciphertext, 0o600); err != nil {
+		if err := writeFileAtomic(path, ciphertext, 0o600); err != nil {
 			return fmt.Errorf("store.ReEncryptAll: write %q: %w", sec.Name, err)
 		}
 	}
@@ -313,14 +313,14 @@ func (s *Store) ReEncryptAll(ctx context.Context, newID *crypto.Identity) error 
 // CopyTo copies the sentinel file and every .age file from this store's
 // directory into destDir, preserving the group subdirectory structure.
 func (s *Store) CopyTo(destDir string) error {
-	if err := os.MkdirAll(destDir, 0o700); err != nil {
+	if err := mkdirAllSynced(destDir, 0o700); err != nil {
 		return fmt.Errorf("store.CopyTo: mkdir %q: %w", destDir, err)
 	}
 
 	// Copy the sentinel file if it exists
 	sentinelSrc := filepath.Join(s.dir, sentinelFile)
 	if data, err := os.ReadFile(sentinelSrc); err == nil {
-		if err := os.WriteFile(filepath.Join(destDir, sentinelFile), data, 0o600); err != nil {
+		if err := writeFileAtomic(filepath.Join(destDir, sentinelFile), data, 0o600); err != nil {
 			return fmt.Errorf("store.CopyTo: write sentinel: %w", err)
 		}
 	}
@@ -342,7 +342,7 @@ func (s *Store) CopyTo(destDir string) error {
 		srcDir := filepath.Join(s.dir, groupEntry.Name())
 		dstDir := filepath.Join(destDir, groupEntry.Name())
 
-		if err := os.MkdirAll(dstDir, 0o700); err != nil {
+		if err := mkdirAllSynced(dstDir, 0o700); err != nil {
 			return fmt.Errorf("store.CopyTo: mkdir %q: %w", dstDir, err)
 		}
 
@@ -359,7 +359,7 @@ func (s *Store) CopyTo(destDir string) error {
 			if err != nil {
 				return fmt.Errorf("store.CopyTo: read file %q: %w", entry.Name(), err)
 			}
-			if err := os.WriteFile(filepath.Join(dstDir, entry.Name()), data, 0o600); err != nil {
+			if err := writeFileAtomic(filepath.Join(dstDir, entry.Name()), data, 0o600); err != nil {
 				return fmt.Errorf("store.CopyTo: write file %q: %w", entry.Name(), err)
 			}
 		}

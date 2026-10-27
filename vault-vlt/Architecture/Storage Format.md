@@ -68,7 +68,17 @@ File secrets are base64-encoded inside `value`, so a 10 MiB import becomes about
 
 ## Write semantics
 
-All writes use `os.WriteFile`, which truncates the file and then writes. A crash between the two leaves an empty or partial file. See [[F02 Atomic file writes]].
+Every write goes through `writeFileAtomic` (`internal/store/atomic.go`), added by [[F02 Atomic file writes]]:
+
+```mermaid
+flowchart LR
+    T["CreateTemp<br/>.tmp-* in same dir"] --> W[write] --> C["chmod 0600"] --> S[fsync file] --> R["rename over target"] --> D["fsync dir<br/>(not on Windows)"]
+```
+
+- A crash leaves either the old file or the new one, never a truncated file.
+- New group directories are fsynced into their parent (`mkdirAllSynced`).
+- Leftover `.tmp-*` files never end in `.age`, so `List` and `CopyTo` skip them.
+- Atomicity is **per file**. Multi-file operations such as passphrase change rely on [[F01 Scrypt-wrapped identity]] to need only one file rewrite.
 
 ## Related
 - [[Architecture Overview]]

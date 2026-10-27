@@ -294,5 +294,6 @@ For macOS, wrap with `fyne package` to produce a proper `.app` bundle. For Windo
 - The derived age identity is held in a `memguard.LockedBuffer` (mlock'd, guard pages) and explicitly zeroed on lock
 - Secret plaintext exists in memory only during the active session and is not cached between operations
 - The vault directory should be on a local filesystem — storing it on a network share or cloud-synced folder is the user's responsibility
+- All vault writes go through a temp-file + fsync + rename + directory-fsync helper, so a crash or full disk never leaves a truncated `.age` file (directory fsync is skipped on Windows). Atomicity is per file: an operation that rewrites many files, such as a passphrase change, must still be ordered so any interrupted prefix leaves the vault readable
 - File permissions on the vault directory should be set to `0700` on creation (Unix); `vlt` enforces this on startup and warns if they have been widened
 

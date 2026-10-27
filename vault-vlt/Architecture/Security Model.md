@@ -17,7 +17,7 @@ created: 2026-10-27
 | Decrypted secrets in RAM | Same | none | Held as Go `string`s, kept after lock |
 | Clipboard | Other apps, clipboard history | TTL clear | Clears unconditionally; overlapping copies break the TTL ([[F08 Correct clipboard clearing]]) |
 | Unattended session | Shoulder surfing | Auto-lock | Timer ignores most activity ([[F07 Inactivity-based auto-lock]]) |
-| Vault integrity | Crash mid-write, partial re-encrypt | none | [[F02 Atomic file writes]], [[F01 Scrypt-wrapped identity]] |
+| Vault integrity | Crash mid-write, partial re-encrypt | Per-file atomic writes ([[F02 Atomic file writes]]) | Partial re-encrypt across files ([[F01 Scrypt-wrapped identity]]) |
 
 ## Where the passphrase actually lives
 

@@ -208,6 +208,32 @@ func TestStore_List_ReturnsAllSecrets(t *testing.T) {
 	}
 }
 
+// TestStore_List_IgnoresLeftoverTempFiles is a regression guard: List filters
+// on the .age extension, which temp files written by writeFileAtomic never have.
+func TestStore_List_IgnoresLeftoverTempFiles(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.Save(ctx, testutil.PasswordSecret("key-1", "val1", "work")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	// Simulate a crash between temp-file creation and rename.
+	leftover := filepath.Join(s.Dir(), "work", ".tmp-123456")
+	if err := os.WriteFile(leftover, []byte("partial"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	got, err := s.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 secret, got %d", len(got))
+	}
+}
+
 func TestStore_List_ReturnsEmptyForNewVault(t *testing.T) {
 	t.Parallel()
 
@@ -381,6 +407,38 @@ func TestStore_CopyTo_CopiesAllSecrets(t *testing.T) {
 	}
 	if err := destStore.Verify(); err != nil {
 		t.Fatalf("Verify on dest should succeed: %v", err)
+	}
+}
+
+func TestStore_CopyTo_IgnoresLeftoverTempFiles(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.Save(ctx, testutil.PasswordSecret("copy-1", "v1", "work")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	leftover := filepath.Join(s.Dir(), "work", ".tmp-123456")
+	if err := os.WriteFile(leftover, []byte("partial"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	destDir := t.TempDir()
+	if err := s.CopyTo(destDir); err != nil {
+		t.Fatalf("CopyTo: %v", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(destDir, "work"))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "copy-1.age" {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("expected only copy-1.age in destination, got %v", names)
 	}
 }
 

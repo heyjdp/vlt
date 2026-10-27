@@ -39,7 +39,8 @@ vault/
 - Groups are plain subdirectories, created on demand
 - Filenames are slugified from the secret name
 - No database, no index file — the directory structure is the index
-- Trivially Git-compatible
+- Every write is atomic: vlt writes a `.tmp-*` file beside the target, fsyncs it, renames it into place, and fsyncs the directory (skipped on Windows, where NTFS journals the rename). New group directories are fsynced into their parent too. A crash leaves either the old or the new file, never a partial one. Leftover `.tmp-*` files are ignored and can be deleted.
+- Trivially Git-compatible (add `.tmp-*` to the vault's `.gitignore` so an interrupted write never shows up as untracked)
 
 ### Default Vault Location
 
