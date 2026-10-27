@@ -263,7 +263,7 @@ func TestWriteFileExclusive_FailsIfTargetExists(t *testing.T) {
 
 // writeRaw stores a secret JSON document at an explicit path, as versions
 // before F03 could (untrimmed names, or names whose slug is empty).
-func writeRaw(t *testing.T, s *Store, path string, sec Secret) {
+func writeRaw(t *testing.T, s *Store, path string, sec *Secret) {
 	t.Helper()
 	data, err := json.Marshal(sec)
 	if err != nil {
@@ -296,8 +296,8 @@ func TestLegacyNames_StayEditableAndDeletable(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 
-	writeRaw(t, s, filepath.Join(dir, "work", "foo.age"), Secret{Version: 1, Type: TypePassword, Name: "foo ", Group: "work", Value: "old"})
-	writeRaw(t, s, filepath.Join(dir, "work", ".age"), Secret{Version: 1, Type: TypePassword, Name: "!!!", Group: "work", Value: "old"})
+	writeRaw(t, s, filepath.Join(dir, "work", "foo.age"), &Secret{Version: 1, Type: TypePassword, Name: "foo ", Group: "work", Value: "old"})
+	writeRaw(t, s, filepath.Join(dir, "work", ".age"), &Secret{Version: 1, Type: TypePassword, Name: "!!!", Group: "work", Value: "old"})
 
 	listed, err := s.List(ctx)
 	if err != nil || len(listed) != 2 {

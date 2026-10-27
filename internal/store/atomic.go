@@ -91,7 +91,7 @@ func writeFileExclusive(path string, data []byte, perm os.FileMode) (err error) 
 		return fmt.Errorf("writeFileExclusive: %w", linkErr)
 	default:
 		if err := createExclusive(path, data, perm); err != nil {
-			return fmt.Errorf("writeFileExclusive: link unsupported (%v); fallback: %w", linkErr, err)
+			return fmt.Errorf("writeFileExclusive: link unsupported (%w); fallback: %w", linkErr, err)
 		}
 	}
 	if err := syncDir(dir); err != nil {

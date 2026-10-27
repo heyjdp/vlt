@@ -2,6 +2,8 @@ module github.com/yourorg/vlt
 
 go 1.26.1
 
+toolchain go1.27.3
+
 require (
 	filippo.io/age v1.3.1
 	fyne.io/fyne/v2 v2.7.3
@@ -37,11 +39,11 @@ require (
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
-	github.com/yuin/goldmark v1.7.8 // indirect
-	golang.org/x/crypto v0.45.0 // indirect
-	golang.org/x/image v0.24.0 // indirect
-	golang.org/x/net v0.47.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
+	github.com/yuin/goldmark v1.7.17 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/image v0.45.0 // indirect
+	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

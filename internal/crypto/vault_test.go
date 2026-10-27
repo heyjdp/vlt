@@ -37,7 +37,8 @@ func TestEncrypt_UsesX25519NotScrypt(t *testing.T) {
 		t.Fatalf("Encrypt: %v", err)
 	}
 	if !bytes.Contains(ciphertext, []byte("\n-> X25519 ")) || bytes.Contains(ciphertext, []byte("\n-> scrypt ")) {
-		t.Fatalf("secret should be encrypted to an X25519 recipient only:\n%s", ciphertext[:bytes.Index(ciphertext, []byte("---"))])
+		header, _, _ := bytes.Cut(ciphertext, []byte("---"))
+		t.Fatalf("secret should be encrypted to an X25519 recipient only:\n%s", header)
 	}
 }
 

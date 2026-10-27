@@ -19,6 +19,15 @@ import (
 var version = "dev" // overridden by ldflags
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("vlt failed", "err", err)
+		os.Exit(1)
+	}
+}
+
+// run sets up and runs the application. It returns instead of exiting so
+// its deferred cleanup (memguard.Purge) always runs.
+func run() error {
 	// Initialize memguard for secure memory handling
 	memguard.CatchInterrupt()
 	defer memguard.Purge()
@@ -37,18 +46,16 @@ func main() {
 
 	defaultDir, err := defaultVaultDir()
 	if err != nil {
-		slog.Error("failed to determine the default vault directory", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("determine the default vault directory: %w", err)
 	}
 	config := ui.LoadConfig(fyneApp.Preferences(), os.Getenv, defaultDir, logger)
 
 	window := fyneApp.NewWindow(fmt.Sprintf("vlt %s", version))
 	window.Resize(fyne.NewSize(900, 600))
 
-	// Create and run the application
 	_ = ui.NewApp(fyneApp, window, config, logger)
-
 	window.ShowAndRun()
+	return nil
 }
 
 // defaultVaultDir returns the platform-appropriate default vault directory.

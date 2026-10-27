@@ -55,8 +55,10 @@ func TestLoadConfig_EnvironmentOverridesSavedSettings(t *testing.T) {
 		envVaultDir: "/from/env", envLockTimeout: "120000", envClipboardTTL: "60",
 	}), "/default", quietLog())
 
-	want := Config{VaultDir: "/from/env", LockTimeoutMs: 120_000, ClipboardTTLs: 60,
-		FromEnv: EnvSettings{VaultDir: true, LockTimeout: true, ClipboardTTL: true}}
+	want := Config{
+		VaultDir: "/from/env", LockTimeoutMs: 120_000, ClipboardTTLs: 60,
+		FromEnv: EnvSettings{VaultDir: true, LockTimeout: true, ClipboardTTL: true},
+	}
 	if got != want {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
@@ -128,7 +130,8 @@ func settingsApp(t *testing.T, cfg Config, clock timerFactory) (*App, *SettingsS
 	newVaultWith(t, cfg.VaultDir, testutil.PasswordSecret("gh", "x", "work"))
 	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), clock)
 	unlock(app)
-	return app, app.openSettings(app.store, inlineRunner())
+	ss := app.openSettings(app.store, inlineRunner())
+	return app, ss
 }
 
 // lockControls returns the auto-lock checkbox and slider.

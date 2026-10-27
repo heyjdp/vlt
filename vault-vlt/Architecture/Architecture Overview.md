@@ -75,7 +75,7 @@ Widget input (entries, buttons, list selection, sliders), unfocused key presses 
 | `fyne.io/fyne/v2` v2.7.3 | GUI | **yes** (desktop driver uses go-gl/glfw) |
 | `github.com/awnumar/memguard` v0.23.0 | Locked memory buffers | no |
 
-Because Fyne's desktop driver needs CGO, the CI cross-build matrix with `CGO_ENABLED=0` can't work. See [[F12 Fix CI pipeline]].
+Because Fyne's desktop driver needs CGO, CI builds natively on Linux, macOS and Windows runners with cgo enabled ([[F12 Fix CI pipeline]]).
 
 ## Related
 - [[Unlock Flow]]

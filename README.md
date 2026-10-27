@@ -82,17 +82,17 @@ Three secret types share this structure:
 
 ## Requirements
 
-- **Go 1.23+** — [install instructions](https://go.dev/doc/install), or `brew install go` on macOS
-- **OpenGL/Metal** — required by Fyne for rendering (system libraries, no manual install needed on macOS/Windows; on Linux install `libgl1-mesa-dev xorg-dev`)
+- **Go 1.26.1+** — [install instructions](https://go.dev/doc/install), or `brew install go` on macOS. `go.mod` also names a patched toolchain (`toolchain go1.27.3`), which the `go` command downloads automatically if yours is older; it fixes standard-library vulnerabilities that `govulncheck` reports
+- **A C compiler** — Fyne's desktop driver uses cgo (Xcode command-line tools on macOS, gcc on Linux, MinGW-w64 on Windows)
+- **OpenGL/Metal** — required by Fyne for rendering (system libraries, no manual install needed on macOS/Windows; on Linux install `libgl1-mesa-dev xorg-dev libxkbcommon-dev`)
 - **OpenBSD** — install `mesa-dri` via `pkg_add` for OpenGL support
 
 ### Optional Tools
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| gofumpt | Opinionated formatting | `go install mvdan.cc/gofumpt@latest` |
-| golangci-lint | Linting | `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest` |
-| govulncheck | Vulnerability scanning | `go install golang.org/x/vuln/cmd/govulncheck@latest` |
+| golangci-lint | Linting and formatting (gofumpt, goimports) | `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0` |
+| govulncheck | Vulnerability scanning | `go install golang.org/x/vuln/cmd/govulncheck@v1.9.0` |
 | lefthook | Git hooks | `go install github.com/evilmartians/lefthook@latest` |
 
 ## Clone and Build
@@ -123,25 +123,19 @@ go run ./cmd/vlt
 go build -trimpath -ldflags="-s -w -X main.version=$(git describe --tags --always --dirty)" -o vlt ./cmd/vlt
 ```
 
-### Cross-Compilation
+### Building for Other Platforms
+
+Fyne's desktop driver uses cgo (OpenGL and GLFW), so a plain `GOOS=… go build` cannot cross-compile vlt: it needs a C compiler and system headers for the target, and `CGO_ENABLED=0` does not build at all. Build on each target OS instead (this is what CI does on Linux, macOS and Windows runners):
 
 ```bash
-# Linux
-GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o vlt-linux-amd64 ./cmd/vlt
-
-# macOS (Apple Silicon)
-GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o vlt-darwin-arm64 ./cmd/vlt
-
-# Windows
-GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o vlt-windows-amd64.exe ./cmd/vlt
-
-# OpenBSD
-GOOS=openbsd GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o vlt-openbsd-amd64 ./cmd/vlt
+go build -trimpath -ldflags="-s -w" -o vlt ./cmd/vlt
 ```
+
+For release builds of several platforms from one machine, use [fyne-cross](https://github.com/fyne-io/fyne-cross), which runs the build in Docker containers with the right toolchains. OpenBSD builds must be done on OpenBSD.
 
 ### Fyne Native Packages
 
-Produces `.app` (macOS), `.exe` with icon (Windows), `.tar.gz` (Linux):
+Produces `.app` (macOS), `.exe` with icon (Windows), `.tar.gz` (Linux). `fyne package` packages for the OS it runs on; packaging for another OS needs `fyne-cross`:
 
 ```bash
 go install fyne.io/fyne/v2/cmd/fyne@latest
@@ -183,13 +177,13 @@ All tests use `t.Parallel()`, the race detector, and `t.TempDir()` for filesyste
 ## Linting and Static Analysis
 
 ```bash
-# Format check
-gofumpt -l .
+# Format (gofumpt + goimports, as configured in .golangci.yml)
+golangci-lint fmt ./...
 
 # Vet
 go vet ./...
 
-# Lint (requires golangci-lint)
+# Lint, including a formatting check (requires golangci-lint v2)
 golangci-lint run ./...
 
 # Vulnerability scan (requires govulncheck)
@@ -198,6 +192,20 @@ govulncheck ./...
 # Run everything
 make check
 ```
+
+Use golangci-lint v2.14 or later: earlier releases cannot read the export data of the Go 1.27.3 standard library this module's toolchain uses, and fail with "export data version" errors.
+
+The linter set (`.golangci.yml`) is golangci-lint's `standard` set plus `bodyclose`, `errorlint`, `gocritic`, `gosec`, `misspell`, `nilerr`, `revive` and `unconvert`. Two gosec rule groups are excluded for `internal/store`, with the reasons recorded in the config: file paths there are slugified names inside the user's vault directory, and the secret envelope's `password` field exists to be encrypted.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on pushes and pull requests to `main`:
+- **lint** — golangci-lint (pinned), which also checks formatting
+- **test** — `go vet` and `go test -race` on Linux (the UI tests are headless)
+- **vuln** — `govulncheck` (pinned)
+- **build** — native builds on Linux, macOS and Windows with cgo enabled, since Fyne cannot be cross-compiled with `CGO_ENABLED=0`
+
+Every action is pinned to a commit SHA, checkout does not persist credentials, and the workflow only has read access to the repository.
 
 ## Configuration
 
@@ -291,7 +299,7 @@ Each `.age` file decrypts to a JSON document rather than raw secret data. This a
 
 ### Fyne for the GUI
 
-Fyne produces a single static binary with no runtime dependencies beyond OpenGL. It supports Linux, macOS, Windows, and OpenBSD. The alternative (Qt via PySide6) has incomplete OpenBSD support and requires a bundled runtime for distribution.
+Fyne produces a single binary with no runtime dependencies beyond the system's OpenGL libraries (it links them dynamically through cgo). It supports Linux, macOS, Windows, and OpenBSD. The alternative (Qt via PySide6) has incomplete OpenBSD support and requires a bundled runtime for distribution.
 
 ### memguard for secure memory
 

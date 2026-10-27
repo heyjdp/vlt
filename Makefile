@@ -11,9 +11,8 @@ build:
 run:
 	go run $(CMD)
 
-fmt:
-	gofumpt -l -w .
-	goimports -l -w .
+fmt:  ## Format with the formatters configured in .golangci.yml (gofumpt, goimports)
+	golangci-lint fmt ./...
 
 lint:
 	golangci-lint run ./...
@@ -37,9 +36,10 @@ bench:
 vuln:
 	govulncheck ./...
 
-check: fmt lint vet test-race vuln  ## Run all checks (CI equivalent)
+check: fmt lint vet test-race vuln  ## Format, then run the checks CI runs
 
-# Fyne cross-platform packaging (requires fyne CLI: go install fyne.io/fyne/v2/cmd/fyne@latest)
+# Fyne packaging for the host OS (requires the fyne CLI: go install fyne.io/fyne/v2/cmd/fyne@latest);
+# packaging for another OS needs fyne-cross
 package-mac:
 	fyne package -os darwin -icon Icon.png -name "vlt"
 

@@ -1,9 +1,9 @@
 pre-commit:
   parallel: true
   commands:
-    gofumpt:
+    format:
       glob: "*.go"
-      run: gofumpt -l {staged_files}
+      run: golangci-lint fmt --diff ./...
     golangci-lint:
       glob: "*.go"
       run: golangci-lint run --fix

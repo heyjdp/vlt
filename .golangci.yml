@@ -1,32 +1,66 @@
+# golangci-lint v2 configuration.
 version: "2"
 
+run:
+  timeout: 5m
+
 linters:
-  enable-all: true
-  disable:
-    - depguard          # we manage deps manually
-    - exhaustruct       # too noisy for UI code
-    - gochecknoglobals  # Fyne requires some package-level vars
-    - wsl               # formatting — gofumpt handles this
+  # The standard set (errcheck, govet, ineffassign, staticcheck, unused) plus
+  # linters that catch correctness and security bugs. The previous config's
+  # enable-all would turn on 100+ linters, most of them stylistic, and is
+  # not maintainable as a CI gate.
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gocritic
+    - gosec
+    - misspell
+    - nilerr
+    - revive
+    - unconvert
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # struct layout churn for no measurable gain here
+        - shadow # flags idiomatic `if err := ...` re-declarations
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+    gosec:
+      excludes:
+        - G115 # integer overflow conversions: accepted in known-safe contexts
+  exclusions:
+    # No std-error-handling preset: an unchecked Close on a written file is a
+    # data-loss bug in a vault, so errcheck reports it.
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+      # vlt reads and writes files inside a vault directory the user chose;
+      # every name under it is slugified ([a-z0-9-]), so these taint and
+      # file-inclusion findings cannot be traversal.
+      - path: internal/store/
+        linters: [gosec]
+        text: "G304|G703"
+      # The secret envelope holds passwords by design; it is only ever
+      # marshalled to be encrypted.
+      - linters: [gosec]
+        text: "G117"
+        path: internal/(store|testutil)/
 
-linters-settings:
-  govet:
-    enable-all: true
-  gofumpt:
-    module-path: github.com/yourorg/vlt
-    extra-rules: true
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-      - performance
-  gosec:
-    excludes:
-      - G115  # integer overflow — accept in known-safe contexts
-
-issues:
-  exclude-rules:
-    - path: "_test.go"
-      linters:
-        - gosec
-        - errcheck
-        - dupl
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      module-path: github.com/yourorg/vlt
+      extra:
+        group-params: true
+    goimports:
+      local-prefixes:
+        - github.com/yourorg/vlt

@@ -286,7 +286,7 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 	)
 }
 
-func (ss *SettingsScreen) moveVault(newDir string, errorLabel *widget.Label, currentLabel *widget.Label) {
+func (ss *SettingsScreen) moveVault(newDir string, errorLabel, currentLabel *widget.Label) {
 	ss.statusBar.SetText("Copying vault…")
 	background(ss.run,
 		func(ctx context.Context) (none, error) { return none{}, ss.store.CopyTo(ctx, newDir) },

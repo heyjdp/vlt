@@ -183,7 +183,7 @@ func (s *Store) path(name, group string) string {
 }
 
 // Get decrypts and returns a secret by name and group.
-func (s *Store) Get(ctx context.Context, name string, group string) (*Secret, error) {
+func (s *Store) Get(ctx context.Context, name, group string) (*Secret, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("store.Get: %w", err)
 	}
@@ -217,7 +217,7 @@ func (s *Store) Get(ctx context.Context, name string, group string) (*Secret, er
 }
 
 // Delete removes a secret from the vault by name and group.
-func (s *Store) Delete(ctx context.Context, name string, group string) error {
+func (s *Store) Delete(ctx context.Context, name, group string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("store.Delete: %w", err)
 	}

@@ -142,8 +142,8 @@ SSH keys and TLS certificates use the same `file` type. No tar-in-age complexity
 |-----------------------|----------------------------------|-----------------------------------|
 | Age library           | Native (`filippo.io/age`)        | `pyrage` wrapper                  |
 | OpenBSD support       | ✅ Go + Fyne available via ports | ⚠️ Qt6 ports incomplete           |
-| Distribution          | Single static binary             | PyInstaller or bundled runtime    |
-| Cross-compilation     | `GOOS=windows go build`          | Complex                           |
+| Distribution          | Single binary (links system OpenGL) | PyInstaller or bundled runtime |
+| Cross-compilation     | Native build per OS (cgo); `fyne-cross` for releases | Complex             |
 | Secure memory         | `memguard` or manual zeroing     | Harder to guarantee               |
 
 ### Key Dependencies
@@ -250,7 +250,7 @@ vlt/
 ## OpenBSD Notes
 
 - Fyne requires OpenGL — install `mesa-dri` via `pkg_add` before running
-- Build with standard `go build`; no CGO required for core functionality
+- Build on OpenBSD itself with `go build`: Fyne needs cgo, a C compiler and mesa, so it cannot be cross-compiled from another OS
 - `pledge(2)` / `unveil(2)` integration is deferred to a later phase due to Fyne's use of internal threads and OpenGL context
 - No system keychain exists on OpenBSD — the passphrase-only model is the correct choice and requires no OS-specific keychain integration on any platform
 
@@ -258,18 +258,10 @@ vlt/
 
 ## Build & Distribution
 
+Fyne needs cgo, so vlt is built natively on each target OS (CI uses Linux, macOS and Windows runners); `fyne-cross` builds several platforms from one machine using Docker.
+
 ```bash
-# Linux
-GOOS=linux GOARCH=amd64 go build -o vlt ./cmd/vlt
-
-# macOS (arm64)
-GOOS=darwin GOARCH=arm64 go build -o vlt ./cmd/vlt
-
-# Windows
-GOOS=windows GOARCH=amd64 go build -o vlt.exe ./cmd/vlt
-
-# OpenBSD
-GOOS=openbsd GOARCH=amd64 go build -o vlt ./cmd/vlt
+go build -trimpath -ldflags="-s -w" -o vlt ./cmd/vlt
 ```
 
 For macOS, wrap with `fyne package` to produce a proper `.app` bundle. For Windows, `fyne package` produces an `.exe` with embedded icon.
