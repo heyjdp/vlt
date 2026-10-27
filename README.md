@@ -56,7 +56,27 @@ vault/
 
 On Linux and OpenBSD, a relative `XDG_DATA_HOME` is ignored. A vault created by an earlier vlt in `~/.local/share/vlt/vault/` is still used when `XDG_DATA_HOME` points elsewhere and holds no vault.
 
-Override with the `VLT_VAULT_DIR` environment variable, or move or switch the vault in Settings. If no vault is found at the location, the create screen can open one from another folder. The choice is saved (see [Configuration](#configuration)).
+Override with the `VLT_VAULT_DIR` environment variable, or move or switch the vault in Settings. If no vault is found at the location, the create screen can open one from another folder. The choice is saved (see [Configuration](#configuration)). Backups, uninstalling and restoring: see [Your Data](#your-data).
+
+## Your Data
+
+By default vlt keeps its data in your user folder, never inside the app, so removing or replacing the app doesn't touch your secrets.
+
+- **Vault** (secrets and the vault key): see [Default Vault Location](#default-vault-location), or wherever you put it with Settings or `VLT_VAULT_DIR`.
+- **Settings file**: macOS `~/Library/Preferences/fyne/io.yourorg.vlt/preferences.json`; Linux and OpenBSD `$XDG_CONFIG_HOME/fyne/io.yourorg.vlt/preferences.json` (default `~/.config/fyne/io.yourorg.vlt/preferences.json`); Windows `%APPDATA%\fyne\io.yourorg.vlt\preferences.json`. It holds the vault location, the auto-lock timeout, the clipboard TTL and the last folder used in a file dialog. No secret, passphrase or key is ever stored there.
+- **Exported files** are decrypted copies saved wherever you chose. They are not part of the vault; delete them when you no longer need them.
+
+**Uninstalling.** Deleting `vlt.app`, the AppImage or the binary leaves the vault and the settings file in place. Uninstaller tools such as AppCleaner often offer to delete `~/Library/Application Support/vlt` as well: that deletes the vault itself, so untick it unless you mean to. For a complete removal, delete the vault folder and the settings folder (`…/fyne/io.yourorg.vlt/`).
+
+**Reinstalling.** A reinstalled vlt finds the vault at the saved location and unlocks with the same passphrase, with every secret, group, tag and file as before. If the settings file was lost and the vault is not at the default location, vlt shows the create screen: choose *Open Existing Vault…* and pick the vault folder instead of creating a new vault. If an older copy is still at the default location (*Move Vault* keeps the original), vlt opens that copy instead; use *Switch Vault (no copy)* in Settings to go back to the right folder.
+
+**Backing up.** Copy the whole vault folder while vlt is locked or closed. The copy must include `vlt.age`: it holds the vault key, and without it no secret can be decrypted, even with the right passphrase. Secret contents are encrypted, so a backup can live on a USB drive or in cloud storage, and its contents are as strong as your passphrase. File and folder names are not encrypted: they show your group and secret names. Leftover `.tmp-*` files can be skipped.
+
+**Restoring or moving to a new computer.** Copy the vault folder back to where it was, and vlt finds it. Anywhere else: if vlt shows the create screen, choose *Open Existing Vault…* and pick the folder that contains `vlt.age`; if another vault is open, use *Switch Vault (no copy)* in Settings.
+
+**Changing the passphrase** rewrites only `vlt.age`; the vault key stays the same. A backup's `vlt.age` still opens with the old passphrase, and that key decrypts your current secrets too. If you change the passphrase because it may have leaked, destroy backups made before the change.
+
+**Forgetting the passphrase.** There is no recovery: the vault key is encrypted only to your passphrase, and no one can reset it. Keep a copy of it somewhere safe and offline.
 
 ## Secret Envelope Format
 
@@ -226,7 +246,7 @@ Every action is pinned to a commit SHA, checkout does not persist credentials, a
 | `VLT_LOCK_TIMEOUT_MS`   | `300000`  | 30000–1800000, or 0 (off) | Auto-lock after N ms of inactivity   |
 | `VLT_CLIPBOARD_TTL_S`   | `30`      | 5–120                     | Clear clipboard after N seconds      |
 
-All settings can also be changed from the Settings screen, including turning auto-lock off. Changes take effect immediately and are saved in Fyne's per-app preferences, so the auto-lock timeout and clipboard TTL survive a restart. The vault location is saved whenever a vault is unlocked or created there, unless `VLT_VAULT_DIR` sets it. A new location (Move or Switch in Settings, or *Open Existing Vault…* on the create screen) therefore sticks only once a vault opens there, so a mistyped path is never remembered. The default location is remembered too, because on Linux it depends on `XDG_DATA_HOME`, which can differ between a terminal and the desktop's app menu.
+All settings can also be changed from the Settings screen, including turning auto-lock off. Changes take effect immediately and are saved in Fyne's per-app preferences (see [Your Data](#your-data) for the file's location), so the auto-lock timeout and clipboard TTL survive a restart. The vault location is saved whenever a vault is unlocked or created there, unless `VLT_VAULT_DIR` sets it. A new location (Move or Switch in Settings, or *Open Existing Vault…* on the create screen) therefore sticks only once a vault opens there, so a mistyped path is never remembered. The default location is remembered too, because on Linux it depends on `XDG_DATA_HOME`, which can differ between a terminal and the desktop's app menu.
 
 Each setting is resolved in this order: environment variable, then the saved value, then the default. A setting provided by an environment variable is shown as such and cannot be changed in Settings, and it is never written to the saved preferences. Out-of-range values are clamped and unparsable ones ignored, with a warning in the log.
 

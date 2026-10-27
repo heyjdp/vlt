@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -251,6 +252,7 @@ func openWithoutKeyFile(ctx context.Context, dir, passphrase string, format int,
 		return nil, fmt.Errorf("store.Open %q: %w", dir, ErrVaultNotFound)
 	}
 
+	passphraseFiles := 0
 	for i, path := range paths {
 		if i == legacyProbeLimit {
 			break
@@ -259,6 +261,10 @@ func openWithoutKeyFile(ctx context.Context, dir, passphrase string, format int,
 		if err != nil {
 			return nil, fmt.Errorf("store.Open: %w", err)
 		}
+		if !encryptedToPassphrase(data) {
+			continue // a format-2 secret, encrypted to a vault key
+		}
+		passphraseFiles++
 		plaintext, err := o.decryptWithPassphrase(passphrase, data)
 		if err != nil {
 			continue
@@ -271,7 +277,20 @@ func openWithoutKeyFile(ctx context.Context, dir, passphrase string, format int,
 		log.Info("format-1 vault without vlt.age; passphrase verified against a secret", "dir", dir)
 		return beginMigration(ctx, dir, passphrase, log, o)
 	}
+	if passphraseFiles == 0 {
+		// Only vault-key secrets: a format-2 vault that lost both vlt.age
+		// and vlt.json. No passphrase can open it, so don't call it wrong.
+		return nil, fmt.Errorf("store.Open %q: %w", dir, ErrKeyMissing)
+	}
 	return nil, fmt.Errorf("store.Open: %w", ErrWrongPassphrase)
+}
+
+// encryptedToPassphrase reports whether an age file has a scrypt
+// (passphrase) recipient stanza in its header, as format-1 secrets do.
+// Format-2 secrets have only an X25519 stanza.
+func encryptedToPassphrase(data []byte) bool {
+	header, _, _ := bytes.Cut(data, []byte("\n---"))
+	return bytes.Contains(header, []byte("\n-> scrypt "))
 }
 
 // ChangePassphrase re-encrypts the vault key from oldPass to newPass. Only

@@ -16,6 +16,7 @@ release; until then, builds are identified by commit hash.
 - The import completion message shows the file's SHA-256.
 - The build version (`git describe`) in the window title and logs, embedded by `make build` and CI.
 - An MIT `LICENSE` and this changelog.
+- A *Your Data* section in the README: where the vault and settings live, what survives uninstalling and reinstalling, how to back up, restore or move a vault, and what happens if you forget or change the passphrase.
 
 ### Changed
 - **New vault format (format 2).** Each vault has a random X25519 vault key, stored in `vlt.age` encrypted to your passphrase, and secrets are encrypted to the vault key. Unlocking costs one scrypt derivation however many secrets you have, and changing the passphrase rewrites only `vlt.age`, atomically. `vlt.json` records the format.
@@ -37,7 +38,7 @@ These were part of the internal store, crypto and ui APIs (`internal/` packages)
 
 ### Fixed
 - Opening or switching to the folder above a vault (for example `…/vlt` instead of `…/vlt/vault`) no longer treats the vault as a group of a legacy vault and "migrates" it, which re-encrypted the inner vault's key so its own passphrase stopped working. A subfolder that is itself a vault is now ignored when looking for secrets, and *Open Existing Vault…* points to it instead.
-- A vault whose `vlt.age` is missing says so in plain words and suggests restoring it from a backup.
+- A vault whose `vlt.age` is missing says so in plain words and suggests restoring it from a backup, even if `vlt.json` is gone too (previously reported as an incorrect passphrase).
 - Group names are kept as typed (`Personal Finance`) instead of being replaced by their directory name (`personal-finance`). A new or imported secret whose group differs from an existing group only in case or punctuation uses the existing spelling. Groups saved by earlier versions keep their slugified name, and new secrets in them use that spelling too.
 - Every vault write is atomic (temp file, fsync, rename), so a crash or full disk can no longer truncate a secret.
 - Changing the passphrase can no longer strand secrets under the old passphrase.

@@ -432,6 +432,29 @@ func TestStore_Open_ReportsMissingKeyFile(t *testing.T) {
 	}
 }
 
+// A partial backup without vlt.age and vlt.json looks like a format-1 vault,
+// but its secrets are encrypted to the lost vault key: report the missing
+// key rather than a wrong passphrase.
+func TestStore_Open_ReportsMissingKeyWhenTheFormatMarkerIsGoneToo(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	s := createVault(t, dir)
+	if err := s.Create(context.Background(), testutil.PasswordSecret("a", "1", "work")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"vlt.age", "vlt.json"} {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err := store.Open(context.Background(), dir, testPass, quietLog(), store.WithWorkFactor(testWorkFactor))
+	if !errors.Is(err, store.ErrKeyMissing) {
+		t.Fatalf("expected ErrKeyMissing, got %v", err)
+	}
+}
+
 func TestStore_ChangePassphrase_RejectsForeignKeyFile(t *testing.T) {
 	t.Parallel()
 
