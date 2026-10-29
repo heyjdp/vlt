@@ -1,15 +1,13 @@
 filters:
   and:
     - file.hasTag("fix")
-    - 'file.ext == "md"'
+    - file.ext == "md"
     - '!file.inFolder("Templates")'
-
 formulas:
-  severity_rank: 'if(severity == "critical", 1, if(severity == "high", 2, if(severity == "medium", 3, 4)))'
-  severity_label: 'if(severity == "critical", "🔴 critical", if(severity == "high", "🟠 high", if(severity == "medium", "🟡 medium", "🟢 low")))'
-  status_icon: 'if(status == "done", "✅", if(status == "in-progress", "🚧", "⬜"))'
+  severity_rank: if(severity == "critical", 1, if(severity == "high", 2, if(severity == "medium", 3, 4)))
+  severity_label: if(severity == "critical", "🔴 critical", if(severity == "high", "🟠 high", if(severity == "medium", "🟡 medium", "🟢 low")))
+  status_icon: if(status == "done", "✅", if(status == "in-progress", "🚧", "⬜"))
   phase_label: '"Phase " + phase.toString()'
-
 properties:
   id:
     displayName: ID
@@ -19,19 +17,16 @@ properties:
     displayName: Finding
   formula.severity_label:
     displayName: Severity
-  formula.status_icon:
-    displayName: ""
   formula.phase_label:
     displayName: Phase
   formula.severity_rank:
     displayName: Rank
-
 views:
   - type: table
     name: Open by phase
     filters:
       and:
-        - 'status != "done"'
+        - status != "done"
     groupBy:
       property: formula.phase_label
       direction: ASC
@@ -47,7 +42,6 @@ views:
         direction: ASC
       - property: id
         direction: ASC
-
   - type: table
     name: All fixes
     order:
@@ -61,7 +55,6 @@ views:
     sort:
       - property: id
         direction: ASC
-
   - type: table
     name: Progress
     groupBy:
@@ -73,7 +66,6 @@ views:
       - formula.phase_label
     summaries:
       id: Filled
-
   - type: cards
     name: Board
     groupBy:

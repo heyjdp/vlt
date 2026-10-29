@@ -1,5 +1,6 @@
 {
   "enabledCssSnippets": [
     "mermaid-fit"
-  ]
+  ],
+  "cssTheme": "Typewriter"
 }
