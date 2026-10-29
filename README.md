@@ -4,6 +4,19 @@ A cross-platform GUI secret manager using [age](https://age-encryption.org/) enc
 
 vlt replaces ad-hoc PGP-encrypted text file workflows with a structured, portable vault. Secrets are stored as individual `.age` files in a directory, organised by group, unlocked by a single passphrase. The only key material on disk is the vault key, stored encrypted to your passphrase inside the vault itself. The vault directory is fully portable — copy it anywhere and unlock with the same passphrase.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/light-main.png">
+    <img src="docs/screenshots/dark-main.png" alt="vlt: the secret list on the left and a record open on the right" width="720">
+  </picture>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/dark-unlock.png" alt="The unlock screen" width="360">
+</p>
+
+vlt follows the system's light or dark mode. `make screenshots` re-renders the main view and the unlock screen, in dark and light mode, into `docs/screenshots/` with Fyne's software renderer, from made-up sample secrets; no display is needed.
+
 ## Features
 
 - **Passphrase-only unlock** — no external key files, no OS keychain dependency
@@ -277,24 +290,26 @@ internal/
 │   ├── migrate.go           Crash-safe format-1 → format-2 migration
 │   └── atomic.go            Atomic file writes
 ├── ui/
-│   ├── app.go               Lock/unlock state machine, toolbar, layout
+│   ├── app.go               Lock/unlock state machine, header bar, layout
 │   ├── unlock.go            Passphrase entry screen (existing vault)
 │   ├── create.go            Create-vault screen (passphrase + confirmation, open existing)
 │   ├── runner.go            Runs vault I/O off the UI thread, results via fyne.Do
 │   ├── activity.go          Tracks user input for the auto-lock countdown
 │   ├── clipboard.go         Copies secrets and clears them after the TTL or on lock
 │   ├── config.go            Settings: load (env → saved → default), clamp, save
-│   ├── list.go              Secret browser with search/filter
+│   ├── list.go              Secret browser with search/filter (type icon, name, group)
 │   ├── detail.go            View/edit forms for all secret types, clipboard copy
 │   ├── fileops.go           File import (picker, base64, MIME) and export
 │   ├── settings.go          Change passphrase, vault location, lock timeout, clipboard TTL
-│   └── theme.go             Custom Fyne theme (reduced font sizes)
+│   ├── style.go             Shared look: cards, headings, empty states, type icons
+│   ├── theme.go             Fyne theme: teal accent, light and dark palettes, text sizes
+│   └── icon.png             App icon (256px), embedded for the window, header bar and unlock/create screens
 └── testutil/
     └── fixtures.go          Shared test helpers and secret builders
 packaging/
 ├── macos/                   vlt.app bundler (Info.plist template, build-app.sh)
 └── linux/                   AppImage: build-appimage.sh, desktop entry, 256px icon
-Icon.png                     App icon (1024×1024)
+Icon.png                     App icon (1024×1024), the source of the 256px copies in internal/ui/ and packaging/linux/
 ```
 
 ### Layered Design

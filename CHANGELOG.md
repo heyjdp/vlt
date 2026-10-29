@@ -16,10 +16,12 @@ release; until then, builds are identified by commit hash.
 - The import completion message shows the file's SHA-256.
 - The build version (`git describe`) in the window title and logs, embedded by `make build` and CI.
 - An MIT `LICENSE` and this changelog.
+- Screenshots in the README, and `make screenshots` to re-render them headlessly.
 - Installable packages: a macOS app (`vlt.app`, Apple silicon, ad-hoc signed) and a Linux AppImage (x86-64), built by CI after the checks pass and published as a GitHub release for `v*` tags. An app icon, and `make package-mac` and `make package-linux` to build them locally.
 - A *Your Data* section in the README: where the vault and settings live, what survives uninstalling and reinstalling, how to back up, restore or move a vault, and what happens if you forget or change the passphrase.
 
 ### Changed
+- **A redesigned interface.** A teal accent taken from the app icon, with light and dark palettes in which body text, secondary text and text on accent buttons meet WCAG AA contrast. Unlock, create and error screens are centred cards; unlock and create show the app icon. The main view has a header bar with icon buttons and a sidebar whose rows show each secret's type icon, name and group, with a count of the secrets shown. Secrets open with a header (icon, name, type and group) above a labelled form in a card, an action row with Delete on the right, and readable timestamps. Settings are grouped in cards. Long forms now scroll instead of being cut off, and wrapped text on the create screen no longer clips. The window has the app icon.
 - **New vault format (format 2).** Each vault has a random X25519 vault key, stored in `vlt.age` encrypted to your passphrase, and secrets are encrypted to the vault key. Unlocking costs one scrypt derivation however many secrets you have, and changing the passphrase rewrites only `vlt.age`, atomically. `vlt.json` records the format.
 - Vault work (unlock, save, delete, import, export, passphrase change) runs off the UI thread, with progress shown while scrypt runs.
 - Auto-lock measures real inactivity (typing, selections, dialog answers) instead of resetting only on toolbar clicks.

@@ -2,12 +2,15 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/yourorg/vlt/internal/store"
@@ -25,6 +28,7 @@ type SecretList struct {
 
 	searchEntry *widget.Entry
 	list        *widget.List
+	count       *widget.Label // "n secrets" under the list
 	content     *fyne.Container
 
 	secrets  []*store.Secret
@@ -53,7 +57,8 @@ func NewSecretList(window fyne.Window, s *store.Store, detail *DetailView, log *
 	}
 
 	sl.searchEntry = widget.NewEntry()
-	sl.searchEntry.SetPlaceHolder("Search secrets...")
+	sl.searchEntry.SetPlaceHolder("Search secrets")
+	sl.searchEntry.ActionItem = widget.NewIcon(theme.SearchIcon())
 	sl.searchEntry.OnChanged = func(query string) {
 		sl.filter(query)
 	}
@@ -62,22 +67,12 @@ func NewSecretList(window fyne.Window, s *store.Store, detail *DetailView, log *
 		func() int {
 			return len(sl.filtered)
 		},
-		func() fyne.CanvasObject {
-			return container.NewHBox(
-				widget.NewLabel("group"),
-				widget.NewLabel("Secret Name"),
-				widget.NewLabel("type"),
-			)
-		},
+		newListRow,
 		func(id widget.ListItemID, obj fyne.CanvasObject) {
 			if id >= len(sl.filtered) {
 				return
 			}
-			sec := sl.filtered[id]
-			items := obj.(*fyne.Container).Objects
-			items[0].(*widget.Label).SetText(sec.Group)
-			items[1].(*widget.Label).SetText(sec.Name)
-			items[2].(*widget.Label).SetText(string(sec.Type))
+			updateListRow(obj, sl.filtered[id])
 		},
 	)
 
@@ -95,15 +90,54 @@ func NewSecretList(window fyne.Window, s *store.Store, detail *DetailView, log *
 		}
 	}
 
-	sl.content = container.NewBorder(
-		sl.searchEntry,
-		nil,
+	sl.count = caption("")
+	sl.content = panelBackground(container.NewBorder(
+		padded(sl.searchEntry, 8),
+		container.NewVBox(widget.NewSeparator(), container.NewCenter(sl.count)),
 		nil,
 		nil,
 		sl.list,
-	)
+	))
 
 	return sl
+}
+
+// newListRow returns a list row template: the secret type's icon, then the
+// name above the group.
+func newListRow() fyne.CanvasObject {
+	name := widget.NewLabel("Secret Name")
+	name.TextStyle = fyne.TextStyle{Bold: true}
+	name.Truncation = fyne.TextTruncateEllipsis
+	group := caption("group")
+	group.Truncation = fyne.TextTruncateEllipsis
+	lines := container.New(layout.NewCustomPaddedVBoxLayout(-12), name, group)
+	icon := container.New(layout.NewCustomPaddedLayout(0, 0, 6, 0), widget.NewIcon(keyIcon))
+	return container.NewBorder(nil, nil, icon, nil, lines)
+}
+
+// updateListRow shows sec in a row made by newListRow.
+func updateListRow(obj fyne.CanvasObject, sec *store.Secret) {
+	row := obj.(*fyne.Container)
+	lines := row.Objects[0].(*fyne.Container)
+	lines.Objects[0].(*widget.Label).SetText(sec.Name)
+	detail := typeName(sec.Type)
+	if sec.Group != "" {
+		detail = sec.Group + " · " + detail
+	}
+	lines.Objects[1].(*widget.Label).SetText(detail)
+	icon := row.Objects[1].(*fyne.Container).Objects[0].(*widget.Icon)
+	icon.SetResource(typeIcon(sec.Type))
+}
+
+// countText describes how many secrets the list shows.
+func countText(shown, total int) string {
+	switch {
+	case shown != total:
+		return fmt.Sprintf("%d of %d secrets", shown, total)
+	case total == 1:
+		return "1 secret"
+	}
+	return fmt.Sprintf("%d secrets", total)
 }
 
 // Content returns the list panel widget.
@@ -248,6 +282,7 @@ func (sl *SecretList) filter(query string) {
 		}
 	}
 
+	sl.count.SetText(countText(len(sl.filtered), len(sl.secrets)))
 	sl.list.Refresh()
 	sl.syncSelection()
 }
@@ -281,6 +316,7 @@ func (sl *SecretList) clear() {
 	sl.secrets, sl.filtered, sl.replay, sl.selected = nil, nil, nil, nil
 	sl.searchEntry.OnChanged = nil // clearing the search is not user activity
 	sl.searchEntry.SetText("")
+	sl.count.SetText("")
 	sl.list.OnSelected, sl.list.OnUnselected = nil, nil
 	sl.list.Refresh()
 }

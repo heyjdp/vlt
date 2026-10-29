@@ -186,11 +186,14 @@ vlt/
 │       ├── config.go        # Settings load/clamp/save (Fyne preferences)
 │       ├── list.go          # Secret browser (left panel)
 │       ├── detail.go        # Secret view/edit (right panel)
-│       └── settings.go      # Vault path, lock timeout, clipboard TTL
+│       ├── settings.go      # Vault path, lock timeout, clipboard TTL
+│       ├── style.go         # Cards, headings, empty states, type icons
+│       ├── theme.go         # Teal accent, light/dark palettes, text sizes
+│       └── icon.png         # App icon (256px), embedded
 ├── packaging/
 │   ├── macos/               # vlt.app bundler: Info.plist template, build-app.sh
 │   └── linux/               # AppImage build script, desktop entry, 256px icon
-├── Icon.png                 # App icon (1024×1024)
+├── Icon.png                 # App icon (1024×1024); the 256px copies in internal/ui and packaging/linux come from it (sips -z 256 256 Icon.png --out …)
 └── go.mod
 ```
 
@@ -212,7 +215,8 @@ vlt/
 - `create.go` — shown instead of `unlock.go` when `store.Exists` is false: displays the target directory, takes the passphrase twice (at least 12 characters excluding surrounding spaces; five or more random words recommended), then `App` calls `store.Create`. If `store.Exists` returns an error (directory unreadable), an error screen with Retry is shown instead of either screen. Unless `VLT_VAULT_DIR` sets the location, it also offers *Open Existing Vault…*: a folder picker whose choice is checked with `store.Exists` and refused if it holds no vault; otherwise `App` switches to it and shows the unlock screen, saving the location after the next successful unlock
 - `runner.go` — every blocking store call (unlock/create scrypt, the folder check for Open Existing Vault, list, save, delete, import, passphrase change, vault copy) runs off the Fyne main goroutine via `background`, which delivers the result with `fyne.Do`. Unlock and create show a progress bar with input disabled; save and passphrase change disable their button and show status text. After unlock, components share a runner bound to the session context: `Lock` cancels it, store calls receive it, and any result that arrives after the lock is dropped rather than shown or acted on. An unlock, create or open-existing result for a screen that has since been replaced is discarded (and any opened store closed). Saves, deletes and imports update the list row in place instead of re-listing (changes made during the first load are replayed onto it). Tests inject an inline or queued runner so app-level tests are deterministic
 - `list.go` — secret list; filters by search query; fires selection events. `Upsert`/`Remove` update rows in place, keep the current filter, and keep the highlight on the selected secret (moving it if its row moves, clearing it if the secret is deleted or filtered out)
-- `detail.go` — renders the correct form for the secret type; its copy buttons call the app's `clipboardClearer`
+- `detail.go` — renders the correct form for the secret type; its copy buttons call the app's `clipboardClearer`. The form sits in a vertical scroll so long records never clip
+- `theme.go` / `style.go` — `VltTheme` sets a teal accent (the icon's) on neutral light and dark palettes, rounded inputs and text sizes; `style.go` builds every screen from plain containers (cards, headings, empty states), never wrapping widgets, so the activity tracker and the lock-time blanking of entries still reach every field. A theme test checks WCAG contrast for body text, secondary text (including read-only entries) and accent-button text in both variants
 - `clipboard.go` — one `clipboardClearer` per app: per-copy countdown, clears only vlt's own value (SHA-256 check), cleared on lock
 - `settings.go` — vault path picker, auto-lock on/off and timeout slider, clipboard TTL slider. Slider changes are saved when a drag ends; `App` saves the vault location after every successful unlock or create (unless `VLT_VAULT_DIR` sets it), so a new location from Settings or the create screen's *Open Existing Vault…* sticks only once a vault opens there, and the default location, which on Linux depends on `XDG_DATA_HOME`, stays the same across launches. Settings provided by environment variables are disabled and labelled
 - `config.go` — `LoadConfig` resolves each setting from env var → saved preference → default and clamps it (auto-lock 30 s–30 min or off; clipboard TTL 5–120 s); `SaveVaultDir`/`SaveLockTimeout`/`SaveClipboardTTL` save one setting each, only when the user changes it, so environment values are never persisted

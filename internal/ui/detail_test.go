@@ -48,13 +48,7 @@ func TestSecretList_GroupsAreSortedAndDistinct(t *testing.T) {
 // order (the group selector and the notes box are a SelectEntry and a
 // multi-line Entry; notes is included last).
 func formEntries(dv *DetailView) []*widget.Entry {
-	var entries []*widget.Entry
-	for _, obj := range dv.Content().Objects {
-		if e, ok := obj.(*widget.Entry); ok {
-			entries = append(entries, e)
-		}
-	}
-	return entries
+	return containedEntries(dv.Content())
 }
 
 // openOnly unlocks a vault holding sec and selects it.

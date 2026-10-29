@@ -11,6 +11,8 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/yourorg/vlt/internal/store"
@@ -31,6 +33,8 @@ type DetailView struct {
 	onDeleted func(*store.Secret)
 
 	content *fyne.Container
+	// panel is content in a scroll container, as placed in the window.
+	panel *container.Scroll
 	// current is the existing secret shown in the panel, or nil when the
 	// panel shows a new-secret form, a message, or settings.
 	current *store.Secret
@@ -60,16 +64,27 @@ func NewDetailView(window fyne.Window, s *store.Store, copyValue func(string), s
 		activity:  noActivity,
 	}
 
-	dv.content = container.NewVBox(
-		widget.NewLabel("Select a secret to view details"),
-	)
+	dv.content = container.NewVBox(nothingSelected())
+	dv.panel = container.NewVScroll(padded(dv.content, 16))
 
 	return dv
 }
 
-// Content returns the detail panel widget.
+// Content returns the container holding the panel's current contents.
 func (dv *DetailView) Content() *fyne.Container {
 	return dv.content
+}
+
+// Panel returns the detail panel as placed in the window: Content in a
+// vertical scroll, so long forms never clip.
+func (dv *DetailView) Panel() fyne.CanvasObject {
+	return dv.panel
+}
+
+// nothingSelected is the panel's contents before a secret is chosen.
+func nothingSelected() fyne.CanvasObject {
+	return emptyState(lockIcon, "Select a secret",
+		"Choose a secret from the list, or add one with the buttons above.")
 }
 
 // SetCallbacks sets the functions called after a secret is saved or deleted
@@ -90,6 +105,7 @@ func (dv *DetailView) ShowContent(obj fyne.CanvasObject) {
 func (dv *DetailView) setObjects(objs ...fyne.CanvasObject) {
 	dv.content.Objects = objs
 	dv.content.Refresh()
+	dv.panel.ScrollToTop()
 	if dv.onRender != nil {
 		dv.onRender(dv.content)
 	}
@@ -121,7 +137,7 @@ func (dv *DetailView) ShowSecret(secret *store.Secret) {
 	case store.TypeFile:
 		dv.showFileDetail(secret)
 	default:
-		dv.setObjects(widget.NewLabel("Unknown secret type: " + string(secret.Type)))
+		dv.setObjects(emptyState(theme.QuestionIcon(), "Unknown secret type", string(secret.Type)))
 	}
 }
 
@@ -190,9 +206,9 @@ func newEntry(text string, password bool) *widget.Entry {
 
 // showPasswordDetail renders a password secret form.
 func (dv *DetailView) showPasswordDetail(secret *store.Secret, isNew bool) {
-	dv.showForm("Password Secret", secret, isNew,
+	dv.showForm(secret, isNew,
 		[]formField{
-			{"Password / Value:", newEntry(secret.Value, true), func(s *store.Secret, t string) { s.Value = t }},
+			{"Password", newEntry(secret.Value, true), func(s *store.Secret, t string) { s.Value = t }},
 		},
 		[]copyAction{
 			{"Copy Password", func() string { return secret.Value }},
@@ -203,12 +219,12 @@ func (dv *DetailView) showPasswordDetail(secret *store.Secret, isNew bool) {
 func (dv *DetailView) showRecordDetail(secret *store.Secret, isNew bool) {
 	totp := newEntry(secret.TOTPSecret, true)
 	totp.SetPlaceHolder("TOTP secret (optional)")
-	dv.showForm("Record Secret", secret, isNew,
+	dv.showForm(secret, isNew,
 		[]formField{
-			{"URL:", newEntry(secret.URL, false), func(s *store.Secret, t string) { s.URL = t }},
-			{"Username:", newEntry(secret.Username, false), func(s *store.Secret, t string) { s.Username = t }},
-			{"Password:", newEntry(secret.Password, true), func(s *store.Secret, t string) { s.Password = t }},
-			{"TOTP Secret:", totp, func(s *store.Secret, t string) { s.TOTPSecret = t }},
+			{"URL", newEntry(secret.URL, false), func(s *store.Secret, t string) { s.URL = t }},
+			{"Username", newEntry(secret.Username, false), func(s *store.Secret, t string) { s.Username = t }},
+			{"Password", newEntry(secret.Password, true), func(s *store.Secret, t string) { s.Password = t }},
+			{"TOTP secret", totp, func(s *store.Secret, t string) { s.TOTPSecret = t }},
 		},
 		[]copyAction{
 			{"Copy Password", func() string { return secret.Password }},
@@ -219,7 +235,7 @@ func (dv *DetailView) showRecordDetail(secret *store.Secret, isNew bool) {
 // showForm renders a secret form: name and group (read-only for existing
 // secrets), the type-specific fields, tags and notes, Save and copy buttons,
 // Delete and timestamps for existing secrets.
-func (dv *DetailView) showForm(title string, secret *store.Secret, isNew bool, fields []formField, copies []copyAction) {
+func (dv *DetailView) showForm(secret *store.Secret, isNew bool, fields []formField, copies []copyAction) {
 	nameEntry := newEntry(secret.Name, false)
 	groupEntry := dv.groupSelect(secret.Group)
 	if !isNew {
@@ -233,7 +249,7 @@ func (dv *DetailView) showForm(title string, secret *store.Secret, isNew bool, f
 	notesEntry.SetMinRowsVisible(3)
 
 	var saveBtn *widget.Button
-	saveBtn = widget.NewButton("Save", func() {
+	saveBtn = widget.NewButtonWithIcon("Save", theme.DocumentSaveIcon(), func() {
 		edited := *secret
 		edited.Name = nameEntry.Text
 		edited.Group = groupEntry.Text
@@ -249,73 +265,106 @@ func (dv *DetailView) showForm(title string, secret *store.Secret, isNew bool, f
 	})
 	saveBtn.Importance = widget.HighImportance
 
-	objects := []fyne.CanvasObject{
-		widget.NewLabel(title), widget.NewSeparator(),
-		widget.NewLabel("Name:"), nameEntry,
-		widget.NewLabel("Group:"), groupEntry,
-	}
-	for _, f := range fields {
-		objects = append(objects, widget.NewLabel(f.label), f.entry)
-	}
-	objects = append(objects,
-		widget.NewLabel("Tags:"), tagsEntry,
-		widget.NewLabel("Notes:"), notesEntry,
-		dv.formButtons(saveBtn, copies, isNew),
+	form := container.New(layout.NewFormLayout(),
+		fieldLabel("Name"), nameEntry,
+		fieldLabel("Group"), groupEntry,
 	)
+	for _, f := range fields {
+		form.Add(fieldLabel(f.label))
+		form.Add(f.entry)
+	}
+	form.Add(fieldLabel("Tags"))
+	form.Add(tagsEntry)
+	form.Add(fieldLabel("Notes"))
+	form.Add(notesEntry)
+
+	objects := []fyne.CanvasObject{
+		secretHeader(secret, isNew),
+		card(form),
+		dv.formButtons(saveBtn, copies, isNew, secret),
+	}
 	if !isNew {
-		objects = append(objects, dv.existingFooter(secret)...)
+		objects = append(objects, timestamps(secret))
 	}
 	dv.setObjects(objects...)
 }
 
-// formButtons returns the Save button followed by the copy buttons, which
-// are disabled for a secret that has not been saved yet.
-func (dv *DetailView) formButtons(save *widget.Button, copies []copyAction, isNew bool) *fyne.Container {
-	buttons := container.NewHBox(save)
+// secretHeader shows the secret's type icon, its name (or "New …" while it
+// is being created) and its type and group.
+func secretHeader(secret *store.Secret, isNew bool) fyne.CanvasObject {
+	title := secret.Name
+	sub := typeName(secret.Type)
+	if secret.Group != "" {
+		sub += " · " + secret.Group
+	}
+	if isNew {
+		title = "New " + strings.ToLower(typeName(secret.Type))
+		sub = "Fill in the details, then Save."
+	}
+	icon := fixedHeight(fixedWidth(widget.NewIcon(typeIcon(secret.Type)), 40), 40)
+	text := container.New(layout.NewCustomPaddedVBoxLayout(-10), heading(title), caption(sub))
+	return container.NewBorder(nil, nil, container.NewCenter(icon), nil, text)
+}
+
+// timestamps shows when a saved secret was created and last modified.
+func timestamps(secret *store.Secret) fyne.CanvasObject {
+	return caption(fmt.Sprintf("Created %s  ·  Modified %s",
+		formatTime(secret.CreatedAt), formatTime(secret.ModifiedAt)))
+}
+
+// formatTime formats a stored (UTC) time for display.
+func formatTime(t time.Time) string {
+	return t.UTC().Format("2 Jan 2006 15:04 UTC")
+}
+
+// formButtons returns the action row: Save and the copy buttons (disabled
+// for a secret that has not been saved yet) on the left, and Delete on the
+// right for a saved secret.
+func (dv *DetailView) formButtons(save *widget.Button, copies []copyAction, isNew bool, secret *store.Secret) *fyne.Container {
+	left := container.NewHBox(save)
 	for _, c := range copies {
-		btn := widget.NewButton(c.label, func() { dv.copyValue(c.value()) })
+		btn := widget.NewButtonWithIcon(c.label, theme.ContentCopyIcon(), func() { dv.copyValue(c.value()) })
 		if isNew {
 			btn.Disable()
 		}
-		buttons.Add(btn)
+		left.Add(btn)
 	}
-	return buttons
+	var right fyne.CanvasObject
+	if !isNew {
+		right = dv.deleteButton(secret)
+	}
+	return container.NewBorder(nil, nil, left, right)
 }
 
-// existingFooter returns the Delete button and timestamps shown under the
-// form of a saved secret.
-func (dv *DetailView) existingFooter(secret *store.Secret) []fyne.CanvasObject {
-	deleteBtn := widget.NewButton("Delete", func() { dv.confirmDelete(secret) })
-	deleteBtn.Importance = widget.DangerImportance
-	return []fyne.CanvasObject{
-		deleteBtn,
-		widget.NewSeparator(),
-		widget.NewLabel(fmt.Sprintf("Created: %s", secret.CreatedAt.Format(time.RFC3339))),
-		widget.NewLabel(fmt.Sprintf("Modified: %s", secret.ModifiedAt.Format(time.RFC3339))),
-	}
+// deleteButton asks to delete secret.
+func (dv *DetailView) deleteButton(secret *store.Secret) *widget.Button {
+	btn := widget.NewButtonWithIcon("Delete", theme.DeleteIcon(), func() { dv.confirmDelete(secret) })
+	btn.Importance = widget.DangerImportance
+	return btn
 }
 
 // showFileDetail renders a file secret detail view.
 func (dv *DetailView) showFileDetail(secret *store.Secret) {
-	exportBtn := widget.NewButton("Export File", func() {
+	exportBtn := widget.NewButtonWithIcon("Export File", theme.DownloadIcon(), func() {
 		dv.exportFile(secret)
 	})
+	exportBtn.Importance = widget.HighImportance
 
-	deleteBtn := widget.NewButton("Delete", func() {
-		dv.confirmDelete(secret)
-	})
-	deleteBtn.Importance = widget.DangerImportance
-
+	value := func(text string) *widget.Label {
+		l := widget.NewLabel(text)
+		l.Wrapping = fyne.TextWrapBreak
+		return l
+	}
 	dv.setObjects(
-		widget.NewLabel("File Secret"),
-		widget.NewSeparator(),
-		widget.NewLabel("Name: "+secret.Name),
-		widget.NewLabel("Group: "+secret.Group),
-		widget.NewLabel("Original Filename: "+secret.OriginalFilename),
-		widget.NewLabel("MIME Type: "+secret.MIMEType),
-		widget.NewLabel(fmt.Sprintf("Created: %s", secret.CreatedAt.Format(time.RFC3339))),
-		widget.NewLabel(fmt.Sprintf("Modified: %s", secret.ModifiedAt.Format(time.RFC3339))),
-		container.NewHBox(exportBtn, deleteBtn),
+		secretHeader(secret, false),
+		card(container.New(layout.NewFormLayout(),
+			fieldLabel("Name"), value(secret.Name),
+			fieldLabel("Group"), value(secret.Group),
+			fieldLabel("Original file"), value(secret.OriginalFilename),
+			fieldLabel("Type"), value(secret.MIMEType),
+		)),
+		container.NewBorder(nil, nil, exportBtn, dv.deleteButton(secret)),
+		timestamps(secret),
 	)
 }
 
@@ -416,7 +465,8 @@ func (dv *DetailView) deleteSecret(secret *store.Secret) {
 			// user may have moved on while the delete ran.
 			if dv.current != nil && sameSecret(dv.current, deleted) {
 				dv.current = nil
-				dv.setObjects(widget.NewLabel("Secret deleted"))
+				dv.setObjects(emptyState(theme.DeleteIcon(), "Secret deleted",
+					"Choose another secret from the list."))
 			}
 			if dv.onDeleted != nil {
 				dv.onDeleted(deleted)

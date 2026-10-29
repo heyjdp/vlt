@@ -1,4 +1,4 @@
-.PHONY: build run lint fmt vet test test-race test-cover bench vuln clean package-mac package-linux check
+.PHONY: build run lint fmt vet test test-race test-cover bench vuln clean package-mac package-linux check screenshots
 
 BINARY   := vlt
 CMD      := ./cmd/vlt
@@ -72,6 +72,9 @@ package-mac: build
 # supported Ubuntu, see .github/workflows/ci.yml). Needs curl and sha256sum.
 package-linux: build
 	packaging/linux/build-appimage.sh $(BINARY) $(PKG_VERSION) dist
+
+screenshots:  ## Render the README screenshots into docs/screenshots (no display needed)
+	VLT_SCREENSHOTS=$(CURDIR)/docs/screenshots go test ./internal/ui -run '^TestScreenshots$$' -count=1
 
 clean:
 	rm -f $(BINARY) coverage.out

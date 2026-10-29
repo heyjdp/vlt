@@ -2,13 +2,12 @@ package ui
 
 import (
 	"errors"
-	"image/color"
 	"strings"
 	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -67,30 +66,26 @@ func NewCreateScreen(vaultDir string, onCreate func(passphrase string), onOpen f
 	s.confirm.SetPlaceHolder("Confirm passphrase")
 	s.confirm.OnSubmitted = func(string) { s.submit() }
 
-	s.errorLabel = widget.NewLabel("")
-	s.errorLabel.Wrapping = fyne.TextWrapWord
-	s.errorLabel.Hide()
+	s.errorLabel = errorText()
 
 	s.progress = widget.NewProgressBarInfinite()
 	s.progress.Stop()
 	s.progress.Hide()
 
-	s.createBtn = widget.NewButton("Create Vault", s.submit)
+	s.createBtn = widget.NewButtonWithIcon("Create Vault", theme.ConfirmIcon(), s.submit)
 	s.createBtn.Importance = widget.HighImportance
 
-	title := widget.NewLabel("Create a new vault")
+	title := heading("Create a new vault")
 	title.Alignment = fyne.TextAlignCenter
-	title.TextStyle = fyne.TextStyle{Bold: true}
 
-	location := widget.NewLabel("No vault was found at:\n" + vaultDir)
+	location := muted("No vault was found at:\n" + vaultDir)
 	location.Alignment = fyne.TextAlignCenter
-	location.Wrapping = fyne.TextWrapWord
 
-	guidance := widget.NewLabel("Choose a passphrase of five or more random words. " +
+	guidance := muted("Choose a passphrase of five or more random words. " +
 		"It cannot be recovered: if you forget it, the vault cannot be opened.")
-	guidance.Wrapping = fyne.TextWrapWord
 
-	form := container.NewVBox(
+	objects := []fyne.CanvasObject{
+		container.NewCenter(brandMark(64)),
 		title,
 		location,
 		widget.NewSeparator(),
@@ -100,15 +95,15 @@ func NewCreateScreen(vaultDir string, onCreate func(passphrase string), onOpen f
 		s.errorLabel,
 		s.progress,
 		s.createBtn,
-	)
-	if onOpen != nil {
-		s.openBtn = widget.NewButton("Open Existing Vault…", onOpen)
-		form.Add(widget.NewLabel("Already have a vault in another folder?"))
-		form.Add(s.openBtn)
 	}
-	width := canvas.NewRectangle(color.Transparent)
-	width.SetMinSize(fyne.NewSize(createFormWidth, 0))
-	s.content = container.NewCenter(container.NewStack(width, form))
+	if onOpen != nil {
+		s.openBtn = widget.NewButtonWithIcon("Open Existing Vault…", theme.FolderOpenIcon(), onOpen)
+		s.openBtn.Importance = widget.LowImportance
+		hint := caption("Already have a vault in another folder?")
+		hint.Alignment = fyne.TextAlignCenter
+		objects = append(objects, widget.NewSeparator(), hint, s.openBtn)
+	}
+	s.content = centeredCard(createFormWidth, objects...)
 	return s
 }
 

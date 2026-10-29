@@ -90,7 +90,7 @@ These can run in parallel with phases 1–3.
 - [[F15 UI tests with fyne test]]
 
 ### Phase 6: Release
-Added 2026-10-28. Goal: an installable macOS app and Linux AppImage, built on GitHub after CI passes. Windows packaging waits. The first three fixes come from verifying that a vault survives an uninstall and reinstall: it does, but a vault in a custom folder could look lost.
+Added 2026-10-28. Goal: an installable macOS app and Linux AppImage, built on GitHub after CI passes. Windows packaging waits. The first three fixes come from verifying that a vault survives an uninstall and reinstall: it does, but a vault in a custom folder could look lost. [[F23 UI makeover]] came later, at the user's request (2026-10-29).
 - [[F16 Keep group names as typed]]
 - [[F17 Open an existing vault from the create screen]]
 - [[F18 Backup and uninstall guidance]]
@@ -98,6 +98,7 @@ Added 2026-10-28. Goal: an installable macOS app and Linux AppImage, built on Gi
 - [[F20 App metadata, icon and local packaging]]
 - [[F21 Release builds for macOS and Linux]]
 - [[F22 Publish to GitHub]]
+- [[F23 UI makeover]]
 
 ```mermaid
 flowchart LR

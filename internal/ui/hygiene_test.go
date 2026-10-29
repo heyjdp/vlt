@@ -96,14 +96,19 @@ func TestApp_LockEmptiesSecretsAndBlanksFormsStillReachableElsewhere(t *testing.
 
 	loaded := app.secretList.secrets[0]
 	app.secretList.list.Select(0)
-	var formEntries []*widget.Entry
-	for _, obj := range app.detailView.Content().Objects {
-		if e, ok := obj.(*widget.Entry); ok {
-			formEntries = append(formEntries, e)
-		}
-	}
+	formEntries := containedEntries(app.detailView.Content())
 	if len(formEntries) == 0 {
 		t.Fatal("expected entries in the secret form")
+	}
+	// Every entry in the form, looking inside widgets too, must be one that
+	// blankEntries can reach (it only walks containers): an entry wrapped in
+	// a widget would keep its text after the lock.
+	if all := deepEntries(app.detailView.Content()); len(all) != len(formEntries) {
+		t.Fatalf("%d entries in the form, but only %d are in plain containers", len(all), len(formEntries))
+	}
+	group := findType[*widget.SelectEntry](app.detailView.Content())
+	if group == nil || group.Text == "" {
+		t.Fatal("expected the group selector to show the group")
 	}
 
 	app.Lock()
@@ -117,6 +122,9 @@ func TestApp_LockEmptiesSecretsAndBlanksFormsStillReachableElsewhere(t *testing.
 		if e.Text != "" {
 			t.Fatalf("form entry %d still shows %q after lock", i, e.Text)
 		}
+	}
+	if group.Text != "" {
+		t.Fatalf("the group selector still shows %q after lock", group.Text)
 	}
 	if w.Canvas().OnTypedKey() != nil || w.Canvas().OnTypedRune() != nil {
 		t.Fatal("the session's key handlers must be removed on lock")

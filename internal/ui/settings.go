@@ -9,6 +9,8 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/yourorg/vlt/internal/store"
@@ -66,38 +68,20 @@ func (ss *SettingsScreen) Content() *fyne.Container {
 }
 
 func (ss *SettingsScreen) build() *fyne.Container {
-	title := widget.NewLabel("Settings")
-	title.TextStyle = fyne.TextStyle{Bold: true}
-
-	// --- Change Passphrase ---
-	changePassSection := ss.buildChangePassphrase()
-
-	// --- Vault Location ---
-	vaultLocSection := ss.buildVaultLocation()
-
-	// --- Auto-lock ---
-	lockSection := ss.buildLockTimeout()
-
-	// --- Clipboard TTL ---
-	clipSection := ss.buildClipboardTTL()
-
 	return container.NewVBox(
-		title,
-		widget.NewSeparator(),
-		changePassSection,
-		widget.NewSeparator(),
-		vaultLocSection,
-		widget.NewSeparator(),
-		lockSection,
-		widget.NewSeparator(),
-		clipSection,
+		heading("Settings"),
+		ss.buildChangePassphrase(),
+		ss.buildVaultLocation(),
+		card(subheading("Auto-lock"),
+			muted("Lock the vault after a period without input."),
+			ss.buildLockTimeout()),
+		card(subheading("Clipboard"),
+			muted("Clear a copied secret from the clipboard after this long."),
+			ss.buildClipboardTTL()),
 	)
 }
 
 func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
-	sectionLabel := widget.NewLabel("Change Passphrase")
-	sectionLabel.TextStyle = fyne.TextStyle{Bold: true}
-
 	currentEntry := widget.NewPasswordEntry()
 	currentEntry.SetPlaceHolder("Current passphrase")
 
@@ -107,8 +91,7 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 	confirmEntry := widget.NewPasswordEntry()
 	confirmEntry.SetPlaceHolder("Confirm new passphrase")
 
-	errorLabel := widget.NewLabel("")
-	errorLabel.Hide()
+	errorLabel := errorText()
 
 	var changeBtn *widget.Button
 	changeBtn = widget.NewButton("Change Passphrase", func() {
@@ -167,32 +150,29 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 	})
 	changeBtn.Importance = widget.HighImportance
 
-	return container.NewVBox(
-		sectionLabel,
-		widget.NewLabel("Current Passphrase:"),
-		currentEntry,
-		widget.NewLabel("New Passphrase:"),
-		newEntry,
-		widget.NewLabel("Confirm New Passphrase:"),
-		confirmEntry,
+	return card(
+		subheading("Change Passphrase"),
+		muted("Only the vault key is re-encrypted; your secrets are not rewritten. The vault locks afterwards."),
+		container.New(layout.NewFormLayout(),
+			fieldLabel("Current"), currentEntry,
+			fieldLabel("New"), newEntry,
+			fieldLabel("Confirm"), confirmEntry,
+		),
 		errorLabel,
-		changeBtn,
+		container.NewHBox(changeBtn),
 	)
 }
 
 func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
-	sectionLabel := widget.NewLabel("Vault Location")
-	sectionLabel.TextStyle = fyne.TextStyle{Bold: true}
-
 	currentLabel := widget.NewLabel("Current: " + ss.config.VaultDir)
+	currentLabel.Wrapping = fyne.TextWrapBreak
 
 	pathEntry := widget.NewEntry()
 	pathEntry.SetPlaceHolder("New vault directory path")
 
-	errorLabel := widget.NewLabel("")
-	errorLabel.Hide()
+	errorLabel := errorText()
 
-	browseBtn := widget.NewButton("Browse...", func() {
+	browseBtn := widget.NewButtonWithIcon("Browse…", theme.FolderOpenIcon(), func() {
 		fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
 			ss.activity()
 			if err != nil {
@@ -273,10 +253,10 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 		switchBtn.Disable()
 	}
 
-	return container.NewVBox(
-		sectionLabel,
+	return card(
+		subheading("Vault Location"),
 		currentLabel,
-		widget.NewLabel("New Location:"),
+		muted("Move copies every secret to a new folder and keeps the original. Switch opens the vault in another folder, or creates one there."),
 		container.NewBorder(nil, nil, nil, browseBtn, pathEntry),
 		errorLabel,
 		container.NewHBox(moveBtn, switchBtn),

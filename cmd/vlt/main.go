@@ -45,6 +45,7 @@ func run() error {
 
 	// Create the Fyne application; its preferences hold saved settings.
 	fyneApp := app.NewWithID("io.yourorg.vlt")
+	fyneApp.SetIcon(ui.AppIcon)
 	fyneApp.Settings().SetTheme(&ui.VltTheme{})
 
 	defaultDir, err := defaultVaultDir()

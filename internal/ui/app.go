@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"image/color"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,9 +13,10 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/yourorg/vlt/internal/store"
@@ -87,7 +87,7 @@ func newApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logge
 	quitItem.IsQuit = true
 	window.SetMainMenu(fyne.NewMainMenu(fyne.NewMenu("File", quitItem)))
 
-	app.statusBar = widget.NewLabel("Locked")
+	app.statusBar = caption("Locked")
 	app.clipboard = newClipboardClearer(fyneApp.Clipboard(), app.statusBar,
 		func() time.Duration { return time.Duration(app.config.ClipboardTTLs) * time.Second }, timers)
 	app.showUnlockScreen()
@@ -100,7 +100,7 @@ func newApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logge
 // location. Inspecting the directory runs in the background.
 func (a *App) showUnlockScreen() {
 	a.unlockScreen, a.createScreen = nil, nil
-	a.setScreen(container.NewCenter(widget.NewLabel("Checking vault…")))
+	a.setScreen(container.NewCenter(muted("Checking vault…")))
 
 	a.screenGen++
 	gen := a.screenGen
@@ -131,18 +131,25 @@ func (a *App) showUnlockScreen() {
 
 // setScreen shows content above the status bar.
 func (a *App) setScreen(content fyne.CanvasObject) {
-	a.window.SetContent(container.NewBorder(nil, a.statusBar, nil, nil, content))
+	a.window.SetContent(container.NewBorder(nil, a.statusRow(), nil, nil, content))
+}
+
+// statusRow is the status bar along the bottom of the window.
+func (a *App) statusRow() fyne.CanvasObject {
+	return container.NewVBox(widget.NewSeparator(),
+		container.New(layout.NewCustomPaddedLayout(0, 0, 6, 6), a.statusBar))
 }
 
 // vaultErrorContent explains why the vault directory cannot be used and
 // offers a retry (for example after fixing permissions).
 func (a *App) vaultErrorContent(err error) fyne.CanvasObject {
-	msg := widget.NewLabel(fmt.Sprintf("Cannot read the vault directory:\n%s\n\n%v", a.config.VaultDir, err))
-	msg.Wrapping = fyne.TextWrapWord
-	retry := widget.NewButton("Retry", a.showUnlockScreen)
-	width := canvas.NewRectangle(color.Transparent)
-	width.SetMinSize(fyne.NewSize(createFormWidth, 0))
-	return container.NewCenter(container.NewStack(width, container.NewVBox(msg, retry)))
+	title := subheading("Cannot read the vault directory")
+	title.Alignment = fyne.TextAlignCenter
+	msg := muted(fmt.Sprintf("%s\n\n%v", a.config.VaultDir, err))
+	retry := widget.NewButtonWithIcon("Retry", theme.ViewRefreshIcon(), a.showUnlockScreen)
+	retry.Importance = widget.HighImportance
+	icon := container.NewCenter(fixedHeight(fixedWidth(widget.NewIcon(theme.ErrorIcon()), 40), 40))
+	return centeredCard(createFormWidth, icon, title, msg, retry)
 }
 
 // openResult is the outcome of a background unlock attempt.
@@ -352,33 +359,37 @@ func (a *App) showMainView(s *store.Store, session runner) {
 	fileOps := NewFileOps(a.window, s, a.log, session, a.secretList.Groups, onImported)
 	a.detailView.SetFileOps(fileOps)
 
-	// Toolbar with actions
-	toolbar := container.NewHBox(
-		widget.NewButton("Add Password", func() {
-			a.detailView.ShowNewPassword()
-		}),
-		widget.NewButton("Add Record", func() {
-			a.detailView.ShowNewRecord()
-		}),
-		widget.NewButton("Import File", func() {
-			fileOps.ImportFile()
-		}),
-		widget.NewButton("Settings", func() { a.openSettings(s, session) }),
-		widget.NewButton("Lock", func() {
-			a.Lock()
-		}),
-	)
+	toolButton := func(label string, icon fyne.Resource, tapped func()) *widget.Button {
+		b := widget.NewButtonWithIcon(label, icon, tapped)
+		b.Importance = widget.LowImportance
+		return b
+	}
+	lockBtn := widget.NewButtonWithIcon("Lock", lockIcon, func() { a.Lock() })
+	brand := widget.NewLabel("vlt")
+	brand.TextStyle = fyne.TextStyle{Bold: true}
+	header := panelBackground(container.NewVBox(
+		padded(container.NewBorder(nil, nil,
+			container.NewHBox(brandMark(22), brand),
+			container.NewHBox(
+				toolButton("Add Password", keyIcon, a.detailView.ShowNewPassword),
+				toolButton("Add Record", theme.AccountIcon(), a.detailView.ShowNewRecord),
+				toolButton("Import File", theme.UploadIcon(), fileOps.ImportFile),
+				toolButton("Settings", theme.SettingsIcon(), func() { a.openSettings(s, session) }),
+				lockBtn,
+			)), 4),
+		widget.NewSeparator(),
+	))
 
 	// Split: list on left, detail on right
 	split := container.NewHSplit(
 		a.secretList.Content(),
-		a.detailView.Content(),
+		a.detailView.Panel(),
 	)
-	split.SetOffset(0.3)
+	split.SetOffset(0.32)
 
 	a.mainContent = container.NewBorder(
-		toolbar,
-		a.statusBar,
+		header,
+		a.statusRow(),
 		nil,
 		nil,
 		split,

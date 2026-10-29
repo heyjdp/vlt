@@ -6,6 +6,9 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
+// unlockCardWidth is the width of the unlock screen's card.
+const unlockCardWidth = 360
+
 // UnlockScreen handles passphrase entry for vault unlock.
 type UnlockScreen struct {
 	window     fyne.Window
@@ -25,41 +28,37 @@ func NewUnlockScreen(window fyne.Window, onUnlock func(passphrase string)) *Unlo
 	}
 
 	s.entry = widget.NewPasswordEntry()
-	s.entry.SetPlaceHolder("Enter vault passphrase...")
+	s.entry.SetPlaceHolder("Passphrase")
 	s.entry.OnSubmitted = func(_ string) {
 		s.submit()
 	}
 
-	s.errorLabel = widget.NewLabel("")
-	s.errorLabel.Hide()
+	s.errorLabel = errorText()
 
 	s.progress = widget.NewProgressBarInfinite()
 	s.progress.Stop()
 	s.progress.Hide()
 
-	s.unlockBtn = widget.NewButton("Unlock", func() {
+	s.unlockBtn = widget.NewButtonWithIcon("Unlock", lockIcon, func() {
 		s.submit()
 	})
 	s.unlockBtn.Importance = widget.HighImportance
 
-	title := widget.NewLabel("vlt — Secret Manager")
+	title := heading("vlt")
 	title.Alignment = fyne.TextAlignCenter
-	title.TextStyle = fyne.TextStyle{Bold: true}
 
-	subtitle := widget.NewLabel("Enter your passphrase to unlock the vault")
+	subtitle := muted("Your vault is locked. Enter your passphrase to unlock it.")
 	subtitle.Alignment = fyne.TextAlignCenter
 
-	form := container.NewVBox(
+	s.content = centeredCard(unlockCardWidth,
+		container.NewCenter(brandMark(72)),
 		title,
 		subtitle,
-		widget.NewSeparator(),
 		s.entry,
 		s.errorLabel,
 		s.progress,
 		s.unlockBtn,
 	)
-
-	s.content = container.NewCenter(form)
 
 	return s
 }

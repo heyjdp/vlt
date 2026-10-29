@@ -149,6 +149,35 @@ func findDeep(obj fyne.CanvasObject, match func(fyne.CanvasObject) bool) fyne.Ca
 	return nil
 }
 
+// containedEntries returns the entries in obj's tree of containers, in
+// order. Like blankEntries it does not look inside widgets, so a form whose
+// entries it finds is one that blankEntries can reach.
+func containedEntries(obj fyne.CanvasObject) []*widget.Entry {
+	var entries []*widget.Entry
+	switch w := obj.(type) {
+	case *fyne.Container:
+		for _, child := range w.Objects {
+			entries = append(entries, containedEntries(child)...)
+		}
+	case *widget.Entry:
+		entries = append(entries, w)
+	}
+	return entries
+}
+
+// deepEntries returns every plain or password entry in obj's tree,
+// including inside other widgets' renderers.
+func deepEntries(obj fyne.CanvasObject) []*widget.Entry {
+	var entries []*widget.Entry
+	findDeep(obj, func(o fyne.CanvasObject) bool {
+		if e, ok := o.(*widget.Entry); ok {
+			entries = append(entries, e)
+		}
+		return false
+	})
+	return entries
+}
+
 // findType returns the first object of type T in obj's tree, or the zero T.
 func findType[T fyne.CanvasObject](obj fyne.CanvasObject) T {
 	var zero T
