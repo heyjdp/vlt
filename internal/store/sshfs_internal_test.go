@@ -321,13 +321,13 @@ func TestRemoteFS_RefusesAServerWithoutSafeWrites(t *testing.T) {
 
 func TestSSHArgs(t *testing.T) {
 	t.Parallel()
-	got := sshArgs(Location{Host: "vault.example", User: "jas", Port: 2222, Path: "/srv/vault"})
+	got := sshArgs(Location{Host: "vault.example", User: "me", Port: 2222, Path: "/srv/vault"})
 	want := []string{
 		"-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
 		"-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
 		"-T", "-x", "-a",
 		"-o", "ClearAllForwardings=yes", "-o", "PermitLocalCommand=no", "-o", "RemoteCommand=none",
-		"-p", "2222", "-l", "jas", "-s", "--", "vault.example", "sftp",
+		"-p", "2222", "-l", "me", "-s", "--", "vault.example", "sftp",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("sshArgs =\n%q\nwant\n%q", got, want)
@@ -346,13 +346,13 @@ func TestDialSSH_ReportsWhatSSHPrinted(t *testing.T) {
 		t.Skip("uses a shell script as ssh")
 	}
 	bin := t.TempDir()
-	script := "#!/bin/sh\necho 'jas@vault.example: Permission denied (publickey).' >&2\nexit 255\n"
+	script := "#!/bin/sh\necho 'me@vault.example: Permission denied (publickey).' >&2\nexit 255\n"
 	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
 
-	_, err := Exists(context.Background(), "jas@vault.example:/srv/vault")
+	_, err := Exists(context.Background(), "me@vault.example:/srv/vault")
 	if !errors.Is(err, ErrUnreachable) || !strings.Contains(err.Error(), "Permission denied (publickey)") {
 		t.Fatalf("Exists = %v, want ErrUnreachable with ssh's message", err)
 	}

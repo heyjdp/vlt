@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yourorg/vlt/internal/store"
-	"github.com/yourorg/vlt/internal/testutil"
+	"github.com/heyjdp/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/testutil"
 )
 
 func TestStore_Open_MigratesLegacyVault(t *testing.T) {

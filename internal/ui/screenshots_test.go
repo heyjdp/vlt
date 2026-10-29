@@ -11,7 +11,7 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
 
-	"github.com/yourorg/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/store"
 )
 
 // envScreenshots names the directory TestScreenshots writes to; the test is

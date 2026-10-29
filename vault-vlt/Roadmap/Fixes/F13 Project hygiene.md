@@ -28,7 +28,7 @@ created: 2026-10-27
 ## Checklist
 - [x] Add `LICENSE` (MIT, © 2026 Jas). The README now says "MIT — see LICENSE".
 - [x] Add `CHANGELOG.md` in Keep a Changelog format (required by `CLAUDE.md` §6.2)
-- [ ] Replace the `github.com/yourorg/vlt` module path and the `io.yourorg.vlt` app ID: **deferred to the owner** (see Outcome)
+- [x] Replace the `github.com/yourorg/vlt` module path and the `io.yourorg.vlt` app ID: deferred to the owner (see Outcome), then done in [[F22 Publish to GitHub]] as `github.com/heyjdp/vlt` and `io.github.heyjdp.vlt`, with 0.1.0's settings carried over
 - [x] Add `claude.resume` to `.gitignore` (already present)
 - [x] Format the tree (done with `golangci-lint fmt` in [[F12 Fix CI pipeline]]; CI now enforces it)
 - [x] Embed the version with `-X main.version=$(git describe …)` in the Makefile `LDFLAGS` (and the CI build, with full history so tags are visible)
@@ -42,7 +42,7 @@ The module path and app ID are **deliberately not renamed**:
 - Renaming the module touches every import.
 - Renaming the app ID moves Fyne's saved preferences, orphaning the settings [[F06 Persist settings]] now saves unless they're migrated. That migration should land in the same change.
 
-The README flags both as placeholders.
+The README flagged both as placeholders until [[F22 Publish to GitHub]] renamed them.
 
 ## Related
 - [[F12 Fix CI pipeline]]

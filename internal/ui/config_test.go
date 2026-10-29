@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,7 +12,7 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/yourorg/vlt/internal/testutil"
+	"github.com/heyjdp/vlt/internal/testutil"
 )
 
 func env(vars map[string]string) func(string) string {
@@ -289,4 +290,90 @@ func TestApp_LocationFromEnvironmentIsNeverSaved(t *testing.T) {
 		t.Fatalf("a location set by %s must not be saved, got %q", envVaultDir, got)
 	}
 	app.Lock()
+}
+
+func TestMigratePreferences_CarriesOverTheSettingsOfTheOldAppID(t *testing.T) {
+	a := test.NewTempApp(t)
+	legacy := filepath.Join(t.TempDir(), "preferences.json")
+	if err := os.WriteFile(legacy, []byte(`{"vaultDir":"/Users/me/vaults/main","lockTimeoutMs":600000,"clipboardTTLs":15,"other":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	MigratePreferences(a.Preferences(), legacy, quietLog())
+	got := LoadConfig(a.Preferences(), func(string) string { return "" }, "/default", quietLog())
+	if got.VaultDir != "/Users/me/vaults/main" || got.LockTimeoutMs != 600_000 || got.ClipboardTTLs != 15 {
+		t.Fatalf("after migrating: %+v", got)
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatal("the old settings file should be left in place")
+	}
+}
+
+func TestMigratePreferences_NeverOverwritesSettingsUnderTheNewID(t *testing.T) {
+	a := test.NewTempApp(t)
+	SaveVaultDir(a.Preferences(), "/new/vault")
+	legacy := filepath.Join(t.TempDir(), "preferences.json")
+	if err := os.WriteFile(legacy, []byte(`{"vaultDir":"/old/vault","clipboardTTLs":15}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	MigratePreferences(a.Preferences(), legacy, quietLog())
+	if got := a.Preferences().String(prefVaultDir); got != "/new/vault" {
+		t.Fatalf("vaultDir = %q", got)
+	}
+	if got := a.Preferences().Int(prefClipboardTTL); got != 0 {
+		t.Fatalf("nothing should be migrated once settings exist, clipboard TTL = %d", got)
+	}
+}
+
+func TestMigratePreferences_MissingOrBrokenOldFileIsIgnored(t *testing.T) {
+	a := test.NewTempApp(t)
+	dir := t.TempDir()
+	MigratePreferences(a.Preferences(), filepath.Join(dir, "absent.json"), quietLog())
+	broken := filepath.Join(dir, "broken.json")
+	if err := os.WriteFile(broken, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	MigratePreferences(a.Preferences(), broken, quietLog())
+	if a.Preferences().String(prefVaultDir) != "" {
+		t.Fatal("nothing should be set")
+	}
+}
+
+func TestMigratePreferences_RunsOnceSoLaterChangesStick(t *testing.T) {
+	a := test.NewTempApp(t)
+	legacy := filepath.Join(t.TempDir(), "preferences.json")
+	if err := os.WriteFile(legacy, []byte(`{"lockTimeoutMs":600000}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	MigratePreferences(a.Preferences(), legacy, quietLog())
+	SaveLockTimeout(a.Preferences(), 0) // the user turns auto-lock off
+	MigratePreferences(a.Preferences(), legacy, quietLog())
+	if got := a.Preferences().Int(prefLockTimeout); got != 0 {
+		t.Fatalf("a later start brought the old timeout back: %d", got)
+	}
+}
+
+func TestMigratePreferences_ANumberSavedUnderTheNewIDStopsIt(t *testing.T) {
+	a := test.NewTempApp(t)
+	SaveClipboardTTL(a.Preferences(), 45)
+	legacy := filepath.Join(t.TempDir(), "preferences.json")
+	if err := os.WriteFile(legacy, []byte(`{"vaultDir":"/old/vault"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	MigratePreferences(a.Preferences(), legacy, quietLog())
+	if got := a.Preferences().String(prefVaultDir); got != "" {
+		t.Fatalf("vaultDir = %q; nothing should be copied once a setting exists", got)
+	}
+}
+
+func TestMigratePreferences_AnEmptyOldLocationIsNotCopied(t *testing.T) {
+	a := test.NewTempApp(t)
+	legacy := filepath.Join(t.TempDir(), "preferences.json")
+	if err := os.WriteFile(legacy, []byte(`{"vaultDir":""}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	MigratePreferences(a.Preferences(), legacy, quietLog())
+	if got := LoadConfig(a.Preferences(), func(string) string { return "" }, "/default", quietLog()); got.VaultDir != "/default" {
+		t.Fatalf("VaultDir = %q, want the default", got.VaultDir)
+	}
 }

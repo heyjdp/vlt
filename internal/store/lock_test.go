@@ -59,7 +59,7 @@ func TestLock_AnotherComputersLockIsReportedAndCanBeTakenOver(t *testing.T) {
 	t.Parallel()
 	s := openedVault(t)
 	since := time.Date(2026, 10, 29, 9, 30, 0, 0, time.UTC)
-	plantLock(t, s, &LockInfo{Host: "laptop.local", User: "jas", PID: 4242, Since: since, Token: "theirs"})
+	plantLock(t, s, &LockInfo{Host: "laptop.local", User: "me", PID: 4242, Since: since, Token: "theirs"})
 
 	err := s.AcquireLock(context.Background(), false)
 	var inUse *InUseError

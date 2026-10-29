@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yourorg/vlt/internal/crypto"
+	"github.com/heyjdp/vlt/internal/crypto"
 )
 
 // ErrSecretNotFound is returned when a secret does not exist in the vault.

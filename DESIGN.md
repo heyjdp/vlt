@@ -107,9 +107,9 @@ For structured login records with URL, username, password, and optional TOTP.
   "modified_at": "2026-03-14T10:00:00Z",
   "tags": ["work"],
   "notes": "",
-  "username": "jas@safenav.io",
+  "username": "me@example.com",
   "password": "xxx",
-  "url": "https://safenav.atlassian.net",
+  "url": "https://jira.example.com",
   "totp_secret": ""
 }
 ```
@@ -229,7 +229,7 @@ vlt/
 - `theme.go` / `style.go` — `VltTheme` sets a teal accent (the icon's) on neutral light and dark palettes, rounded inputs and text sizes; `style.go` builds every screen from plain containers (cards, headings, empty states), never wrapping widgets, so the activity tracker and the lock-time blanking of entries still reach every field. A theme test checks WCAG contrast for body text, secondary text (including read-only entries) and accent-button text in both variants
 - `clipboard.go` — one `clipboardClearer` per app: per-copy countdown, clears only vlt's own value (SHA-256 check), cleared on lock
 - `settings.go` — vault path picker, auto-lock on/off and timeout slider, clipboard TTL slider. Slider changes are saved when a drag ends; `App` saves the vault location after every successful unlock or create (unless `VLT_VAULT_DIR` sets it), so a new location from Settings or the create screen's *Open Existing Vault…* sticks only once a vault opens there, and the default location, which on Linux depends on `XDG_DATA_HOME`, stays the same across launches. Settings provided by environment variables are disabled and labelled
-- `config.go` — `LoadConfig` resolves each setting from env var → saved preference → default and clamps it (auto-lock 30 s–30 min or off; clipboard TTL 5–120 s); `SaveVaultDir`/`SaveLockTimeout`/`SaveClipboardTTL` save one setting each, only when the user changes it, so environment values are never persisted. `Config.DefaultVaultDir` keeps the default local location for that offer
+- `config.go` — `LoadConfig` resolves each setting from env var → saved preference → default and clamps it (auto-lock 30 s–30 min or off; clipboard TTL 5–120 s); `SaveVaultDir`/`SaveLockTimeout`/`SaveClipboardTTL` save one setting each, only when the user changes it, so environment values are never persisted. `Config.DefaultVaultDir` keeps the default local location for that offer. `MigratePreferences` carries the vault location, auto-lock timeout and clipboard TTL over from vlt 0.1.0, whose app ID was the placeholder `io.yourorg.vlt` (Fyne keeps settings per app ID), once (it then sets a marker, so a later start never copies an old value over a newer one), and only while no vlt setting is saved under the current ID `io.github.heyjdp.vlt`
 - `about.go` — the About dialog, opened from the status bar's *About* button (present on every screen) and the *About* menu item (*vlt → About vlt* on macOS, *Help → About* elsewhere). `aboutDetails` passes `debug.ReadBuildInfo` to `readBuildDetails`, which takes the VCS revision and time and the Fyne version from it, plus the version (`main.version`, via `NewApp`) and the `runtime` platform and Go version; the vault is described only as local or on a server, and locked or unlocked. *Copy Details* puts that text on the clipboard; *Report a Bug…* opens `https://github.com/heyjdp/vlt/issues/new` with it in the body
 - `app.go` — wires everything together; manages lock/unlock state; runs the inactivity timer. After a vault opens or is created it takes the lock; if another copy of vlt holds it, the opened store waits (`App.pending`) behind a "Vault Already Open" dialog: *Open Anyway* takes the lock over, *Cancel* closes the store, and no answer within the auto-lock timeout closes it too. Quitting closes the open or waiting store and waits up to 3 seconds for a remote one to release its lock
 

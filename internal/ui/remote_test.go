@@ -20,7 +20,7 @@ import (
 func plantLock(t *testing.T, dir string) {
 	t.Helper()
 	data, err := json.Marshal(map[string]any{
-		"host": "laptop.local", "user": "jas", "pid": 4242,
+		"host": "laptop.local", "user": "me", "pid": 4242,
 		"since": time.Date(2026, 10, 29, 9, 30, 0, 0, time.UTC), "token": "theirs",
 	})
 	if err != nil {
@@ -194,10 +194,10 @@ func TestApp_ServerDialogValidatesAndSwitchesTheLocation(t *testing.T) {
 			t.Errorf("%q should be refused", bad)
 		}
 	}
-	test.Type(entry, "jas@nas:/srv/vault")
+	test.Type(entry, "me@nas:/srv/vault")
 	test.Tap(dialogButton(t, w, "Use This Location"))
 
-	if app.config.VaultDir != "jas@nas:/srv/vault" {
+	if app.config.VaultDir != "me@nas:/srv/vault" {
 		t.Fatalf("location = %q", app.config.VaultDir)
 	}
 	if app.createScreen != nil {

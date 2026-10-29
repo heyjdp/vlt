@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yourorg/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/store"
 )
 
 func TestSecretType_Constants(t *testing.T) {

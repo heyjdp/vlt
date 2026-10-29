@@ -11,8 +11,8 @@ import (
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/test"
 
-	"github.com/yourorg/vlt/internal/store"
-	"github.com/yourorg/vlt/internal/testutil"
+	"github.com/heyjdp/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/testutil"
 )
 
 // F15: end-to-end flows through the real widgets and dialogs, headless.

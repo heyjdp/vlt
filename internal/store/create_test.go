@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/yourorg/vlt/internal/store"
-	"github.com/yourorg/vlt/internal/testutil"
+	"github.com/heyjdp/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/testutil"
 )
 
 // TestStore_Create_ConcurrentSameNameExactlyOneWins checks the no-overwrite

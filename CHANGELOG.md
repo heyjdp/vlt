@@ -1,11 +1,12 @@
 # Changelog
 
 All notable changes to vlt are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases will use
-[Semantic Versioning](https://semver.org/), starting from the first tagged
-release; until then, builds are identified by commit hash.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases use [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+
+### Changed
+- The module path is `github.com/heyjdp/vlt` and the app ID `io.github.heyjdp.vlt` (they were the placeholders `github.com/yourorg/vlt` and `io.yourorg.vlt`). Fyne keeps settings per app ID, so on its first start vlt carries the vault location, auto-lock timeout and clipboard TTL over from 0.1.0's settings file. On macOS the app's bundle ID changes too, so Gatekeeper asks once more (*Open Anyway*).
 
 ## [0.1.0] - 2026-10-29
 

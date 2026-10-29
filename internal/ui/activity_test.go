@@ -6,7 +6,7 @@ import (
 
 	"fyne.io/fyne/v2/test"
 
-	"github.com/yourorg/vlt/internal/testutil"
+	"github.com/heyjdp/vlt/internal/testutil"
 )
 
 const testTimeout = 5 * time.Minute

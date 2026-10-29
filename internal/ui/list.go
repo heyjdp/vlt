@@ -13,7 +13,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/yourorg/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/store"
 )
 
 // SecretList displays a filterable list of secrets with category headers.

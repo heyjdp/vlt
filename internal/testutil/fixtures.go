@@ -11,8 +11,8 @@ import (
 
 	"filippo.io/age"
 
-	"github.com/yourorg/vlt/internal/crypto"
-	"github.com/yourorg/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/crypto"
+	"github.com/heyjdp/vlt/internal/store"
 )
 
 // legacyWorkFactor keeps scrypt fast when building format-1 fixtures.

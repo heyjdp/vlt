@@ -18,8 +18,8 @@ import (
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/yourorg/vlt/internal/crypto"
-	"github.com/yourorg/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/crypto"
+	"github.com/heyjdp/vlt/internal/store"
 )
 
 // maxFileSize is the largest file that can be imported: 10 MiB.

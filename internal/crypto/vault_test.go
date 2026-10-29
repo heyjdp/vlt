@@ -7,7 +7,7 @@ import (
 
 	"filippo.io/age"
 
-	"github.com/yourorg/vlt/internal/crypto"
+	"github.com/heyjdp/vlt/internal/crypto"
 )
 
 func TestEncryptDecrypt_RoundTrip(t *testing.T) {

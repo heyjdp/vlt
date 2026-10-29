@@ -13,8 +13,8 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/yourorg/vlt/internal/store"
-	"github.com/yourorg/vlt/internal/testutil"
+	"github.com/heyjdp/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/testutil"
 )
 
 func TestCountText(t *testing.T) {
@@ -49,13 +49,13 @@ func TestDisplayLocation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("os.UserHomeDir reads USERPROFILE")
 	}
-	t.Setenv("HOME", "/home/jas")
+	t.Setenv("HOME", "/home/me")
 	for in, want := range map[string]string{
-		"/home/jas/vault":                  "~/vault",
-		"/home/jas":                        "/home/jas",
-		"/home/jasper/vault":               "/home/jasper/vault",
-		"/srv/vault":                       "/srv/vault",
-		"jas@10.20.20.150:/home/jas/vault": "jas@10.20.20.150:/home/jas/vault",
+		"/home/me/vault":               "~/vault",
+		"/home/me":                     "/home/me",
+		"/home/meg/vault":              "/home/meg/vault",
+		"/srv/vault":                   "/srv/vault",
+		"me@192.0.2.10:/home/me/vault": "me@192.0.2.10:/home/me/vault",
 	} {
 		if got := displayLocation(in); got != want {
 			t.Errorf("displayLocation(%q) = %q, want %q", in, got, want)

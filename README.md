@@ -82,10 +82,10 @@ Override with the `VLT_VAULT_DIR` environment variable, or move or switch the va
 By default vlt keeps its data in your user folder, never inside the app, so removing or replacing the app doesn't touch your secrets.
 
 - **Vault** (secrets and the vault key): see [Default Vault Location](#default-vault-location), or wherever you put it with Settings or `VLT_VAULT_DIR`.
-- **Settings file**: macOS `~/Library/Preferences/fyne/io.yourorg.vlt/preferences.json`; Linux and OpenBSD `$XDG_CONFIG_HOME/fyne/io.yourorg.vlt/preferences.json` (default `~/.config/fyne/io.yourorg.vlt/preferences.json`); Windows `%APPDATA%\fyne\io.yourorg.vlt\preferences.json`. It holds the vault location, the auto-lock timeout, the clipboard TTL and the last folder used in a file dialog. No secret, passphrase or key is ever stored there.
+- **Settings file**: macOS `~/Library/Preferences/fyne/io.github.heyjdp.vlt/preferences.json`; Linux and OpenBSD `$XDG_CONFIG_HOME/fyne/io.github.heyjdp.vlt/preferences.json` (default `~/.config/fyne/io.github.heyjdp.vlt/preferences.json`); Windows `%APPDATA%\fyne\io.github.heyjdp.vlt\preferences.json`. It holds the vault location, the auto-lock timeout, the clipboard TTL, the last folder used in a file dialog, and a marker (`migratedFrom010`) recording that 0.1.0's settings were checked. No secret, passphrase or key is ever stored there. vlt 0.1.0 kept it under `…/fyne/io.yourorg.vlt/`; later versions carry its vault location, auto-lock timeout and clipboard TTL over on their first start, and leave the old file in place.
 - **Exported files** are decrypted copies saved wherever you chose. They are not part of the vault; delete them when you no longer need them.
 
-**Uninstalling.** Deleting `vlt.app`, the AppImage or the binary leaves the vault and the settings file in place. Uninstaller tools such as AppCleaner often offer to delete `~/Library/Application Support/vlt` as well: that deletes the vault itself, so untick it unless you mean to. For a complete removal, delete the vault folder and the settings folder (`…/fyne/io.yourorg.vlt/`). A vault on a server stays on the server.
+**Uninstalling.** Deleting `vlt.app`, the AppImage or the binary leaves the vault and the settings file in place. Uninstaller tools such as AppCleaner often offer to delete `~/Library/Application Support/vlt` as well: that deletes the vault itself, so untick it unless you mean to. For a complete removal, delete the vault folder and the settings folder (`…/fyne/io.github.heyjdp.vlt/`). A vault on a server stays on the server.
 
 **Reinstalling.** A reinstalled vlt finds the vault at the saved location and unlocks with the same passphrase, with every secret, group, tag and file as before. If the settings file was lost and the vault is not at the default location, vlt shows the create screen: choose *Open Existing Vault…* and pick the vault folder (or *Use a Vault on a Server…* and enter its location) instead of creating a new vault. If an older copy is still at the default location (*Move Vault* keeps the original), vlt opens that copy instead; use *Switch Vault (no copy)* in Settings to go back to the right folder.
 
@@ -165,10 +165,8 @@ Three secret types share this structure:
 
 ## Clone and Build
 
-> The module path `github.com/yourorg/vlt` and the app ID `io.yourorg.vlt` are placeholders. Renaming the app ID moves Fyne's saved settings to a new location, so a rename should migrate them from the old ID.
-
 ```bash
-git clone https://github.com/yourorg/vlt.git
+git clone https://github.com/heyjdp/vlt.git
 cd vlt
 
 # Install dependencies
@@ -220,7 +218,7 @@ make package-mac    # vlt.app and dist/vlt-<version>-macos-<arch>.zip, on a Mac
 make package-linux  # dist/vlt-<version>-x86_64.AppImage, on Linux (needs curl and sha256sum)
 ```
 
-`packaging/macos/` holds the `Info.plist` template and `build-app.sh`, which uses only tools that ship with macOS. `packaging/linux/` holds the AppImage's desktop entry, icon and build script, which downloads `appimagetool` and the AppImage runtime at pinned versions and checks their SHA-256. The app ID (`io.yourorg.vlt`) is set in the Makefile and in `cmd/vlt/main.go`; the macOS bundle version is the latest `vX.Y.Z` tag (`0.0.0` before the first release).
+`packaging/macos/` holds the `Info.plist` template and `build-app.sh`, which uses only tools that ship with macOS. `packaging/linux/` holds the AppImage's desktop entry, icon and build script, which downloads `appimagetool` and the AppImage runtime at pinned versions and checks their SHA-256. The app ID (`io.github.heyjdp.vlt`) is set in the Makefile and in `cmd/vlt/main.go`; the macOS bundle version is the latest `vX.Y.Z` tag (`0.0.0` before the first release).
 
 ## Testing
 

@@ -45,7 +45,7 @@ There was no way to keep a vault on a server.
 - [x] `TestParseLocation`, `TestParseLocation_Rejects`, `TestLocation_StringRoundTrips`
 - [x] `TestRemoteStore_FullLifecycle` over pkg/sftp's server on an in-process pipe: create, CRUD, passphrase change, reopen, copy local↔remote, only ciphertext on the server
 - [x] `TestRemoteFS_ReconnectsAfterTheConnectionDrops`, `TestRemoteFS_RefusesAServerWithoutSafeWrites`, `TestSSHArgs`, `TestDialSSH_ReportsWhatSSHPrinted`
-- [x] `TestRemoteStore_RealServer` passes against OpenSSH on 10.20.20.150 (Debian 13): `fsync` offered, vault, temp and group folders 0700, files 0600, lock released
+- [x] `TestRemoteStore_RealServer` passes against a real OpenSSH server on the LAN (Debian 13): `fsync` offered, vault, temp and group folders 0700, files 0600, lock released
 - [x] `govulncheck`: no vulnerable code reached. `golang.org/x/net` bumped to v0.62.0
 
 ## Outcome

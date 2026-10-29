@@ -224,13 +224,13 @@ func TestAbout_AServerVaultIsNotNamed(t *testing.T) {
 	fakeSSH(t)
 	a := test.NewTempApp(t)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, Config{VaultDir: "jas@nas.example:/home/jas/vault"}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, w, Config{VaultDir: "vltuser@nas.example:/home/vltuser/vault"}, quietLog(), inlineRunner(), noTimers, testKDF)
 
 	text := app.aboutDetails().String()
 	if !strings.Contains(text, "Vault: on a server, locked") {
 		t.Fatalf("details = %q", text)
 	}
-	for _, leak := range []string{"jas", "nas.example", "/home"} {
+	for _, leak := range []string{"vltuser", "nas.example", "/home"} {
 		if strings.Contains(text, leak) {
 			t.Fatalf("details name the vault (%q): %q", leak, text)
 		}

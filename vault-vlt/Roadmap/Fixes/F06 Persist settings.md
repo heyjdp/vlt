@@ -57,8 +57,8 @@ It also added the auto-lock on/off control and tests for the lock slider, Move V
 
 Known limit: Fyne batches preference writes within 100 ms. A crash or kill in that window can lose the latest change; a normal quit flushes it.
 
-> [!warning] For [[F13 Project hygiene]]
-> Saved settings live under the app ID `io.yourorg.vlt`. Renaming the ID orphans them unless they're migrated.
+> [!note] Renamed in [[F22 Publish to GitHub]]
+> Saved settings live under the app ID `io.github.heyjdp.vlt`. vlt 0.1.0 used the placeholder `io.yourorg.vlt`, whose settings are carried over on the first start (`ui.MigratePreferences`).
 
 ## Related
 - [[F07 Inactivity-based auto-lock]] · [[F08 Correct clipboard clearing]]

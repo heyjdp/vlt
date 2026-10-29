@@ -11,7 +11,7 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/yourorg/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/store"
 )
 
 // Shared helpers for the ui tests.

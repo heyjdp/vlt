@@ -10,7 +10,7 @@ import (
 	"log/slog"
 	"syscall"
 
-	"github.com/yourorg/vlt/internal/crypto"
+	"github.com/heyjdp/vlt/internal/crypto"
 )
 
 // Vault-level files in the vault root. Group directories hold the secrets.

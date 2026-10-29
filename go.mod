@@ -1,4 +1,4 @@
-module github.com/yourorg/vlt
+module github.com/heyjdp/vlt
 
 go 1.26.1
 

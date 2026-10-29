@@ -10,7 +10,7 @@ import (
 
 	"fyne.io/fyne/v2/test"
 
-	"github.com/yourorg/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/store"
 )
 
 func TestValidateNewPassphrase(t *testing.T) {

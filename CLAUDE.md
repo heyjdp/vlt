@@ -227,7 +227,7 @@ Before adding a dependency, ask:
 ```bash
 # Create module
 mkdir vlt && cd vlt
-go mod init github.com/yourorg/vlt
+go mod init github.com/heyjdp/vlt
 
 # Add core dependencies
 go get filippo.io/age
@@ -286,7 +286,7 @@ vlt/
 ### 2.2 go.mod
 
 ```go
-module github.com/yourorg/vlt
+module github.com/heyjdp/vlt
 
 go 1.23
 
@@ -374,7 +374,7 @@ linters-settings:
   govet:
     enable-all: true
   gofumpt:
-    module-path: github.com/yourorg/vlt
+    module-path: github.com/heyjdp/vlt
     extra-rules: true
   gocritic:
     enabled-tags:
@@ -1061,9 +1061,9 @@ GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o vlt-darwin-arm6
 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o vlt-windows-amd64.exe ./cmd/vlt
 
 # Fyne native packages (produces .app, .exe with icon, .tar.gz)
-fyne package -os darwin  -icon Icon.png -name "vlt" -appID io.yourorg.vlt
-fyne package -os windows -icon Icon.png -name "vlt" -appID io.yourorg.vlt
-fyne package -os linux   -icon Icon.png -name "vlt" -appID io.yourorg.vlt
+fyne package -os darwin  -icon Icon.png -name "vlt" -appID io.github.heyjdp.vlt
+fyne package -os windows -icon Icon.png -name "vlt" -appID io.github.heyjdp.vlt
+fyne package -os linux   -icon Icon.png -name "vlt" -appID io.github.heyjdp.vlt
 
 # OpenBSD (build on target — no fyne cross-compile support)
 GOOS=openbsd GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o vlt ./cmd/vlt

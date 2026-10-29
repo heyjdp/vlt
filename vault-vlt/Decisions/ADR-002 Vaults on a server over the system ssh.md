@@ -16,7 +16,7 @@ aliases:
 **Accepted** (2026-10-29) and implemented by [[F24 Storage abstraction]], [[F25 SFTP backend and server locations]], [[F26 Vault lock file]] and [[F27 Server vaults in the UI]].
 
 ## Context
-The user wants a vault to live optionally on an SSH server, for example `10.20.20.150:/home/jas/vault`, instead of only on local disk. vlt encrypts secrets and the vault key on the client, so the server holds ciphertext (plus the plain-text `vlt.json` format marker), as a cloud-synced folder would. The open question was how vlt reaches the server.
+The user wants a vault to live optionally on an SSH server, for example `me@nas.example:/home/me/vault`, instead of only on local disk. vlt encrypts secrets and the vault key on the client, so the server holds ciphertext (plus the plain-text `vlt.json` format marker), as a cloud-synced folder would. The open question was how vlt reaches the server.
 
 ## Options
 | Option | Pros | Cons |

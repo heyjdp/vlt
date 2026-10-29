@@ -4,7 +4,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
 
@@ -85,5 +87,32 @@ func TestVaultDirFor_HomeErrorIsReported(t *testing.T) {
 				t.Fatal("want an error when the home directory is unknown")
 			}
 		})
+	}
+}
+
+func TestLegacyPrefsFile_IsTheOldAppIDsFolderNextToThisOne(t *testing.T) {
+	t.Parallel()
+	base := filepath.Join(t.TempDir(), "fyne") // <config dir>/fyne
+	root := filepath.Join(base, appID)
+	want := filepath.Join(base, "io.yourorg.vlt", "preferences.json")
+	if got := legacyPrefsFile(root); got != want {
+		t.Fatalf("legacyPrefsFile(%q) = %q, want %q", root, got, want)
+	}
+}
+
+// The macOS bundle ID comes from the Makefile's APP_ID and the settings
+// folder from appID; they must not drift apart.
+func TestAppID_MatchesTheMakefile(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^APP_ID\s*:=\s*(\S+)`).FindSubmatch(data)
+	if m == nil {
+		t.Fatal("no APP_ID in the Makefile")
+	}
+	if got := string(m[1]); got != appID {
+		t.Fatalf("Makefile APP_ID = %q, but main.appID = %q", got, appID)
 	}
 }

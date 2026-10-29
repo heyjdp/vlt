@@ -14,13 +14,21 @@ import (
 
 	"github.com/awnumar/memguard"
 
-	"github.com/yourorg/vlt/internal/store"
-	"github.com/yourorg/vlt/internal/ui"
+	"github.com/heyjdp/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/ui"
 )
 
 // version is set at build time with -ldflags "-X main.version=..." (see the
 // Makefile); plain go build/run leaves it as "dev".
 var version = "dev"
+
+// appID identifies the app to Fyne (its preferences folder) and to macOS
+// (the bundle ID, set from the Makefile's APP_ID, which must match).
+const appID = "io.github.heyjdp.vlt"
+
+// legacyAppID is the placeholder ID vlt 0.1.0 shipped with. Its saved
+// settings are carried over on the first start under appID.
+const legacyAppID = "io.yourorg.vlt"
 
 func main() {
 	if err := run(); err != nil {
@@ -45,8 +53,11 @@ func run() error {
 	slog.Info("starting vlt", "version", version)
 
 	// Create the Fyne application; its preferences hold saved settings.
-	fyneApp := app.NewWithID("io.yourorg.vlt")
+	fyneApp := app.NewWithID(appID)
 	fyneApp.SetIcon(ui.AppIcon)
+	// Fyne keeps each app's settings in <config dir>/fyne/<app ID>/, so the
+	// 0.1.0 settings sit next to this app's folder.
+	ui.MigratePreferences(fyneApp.Preferences(), legacyPrefsFile(fyneApp.Storage().RootURI().Path()), logger)
 	fyneApp.Settings().SetTheme(&ui.VltTheme{})
 
 	defaultDir, err := defaultVaultDir()
@@ -61,6 +72,13 @@ func run() error {
 	_ = ui.NewApp(fyneApp, window, config, logger, version)
 	window.ShowAndRun()
 	return nil
+}
+
+// legacyPrefsFile returns where vlt 0.1.0 kept its settings, given this
+// app's storage folder: Fyne uses <config dir>/fyne/<app ID>/, so it is the
+// sibling folder named after legacyAppID.
+func legacyPrefsFile(storageRoot string) string {
+	return filepath.Join(filepath.Dir(storageRoot), legacyAppID, "preferences.json")
 }
 
 // existsFunc reports whether a directory holds a vault (store.Exists).

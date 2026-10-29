@@ -1,8 +1,12 @@
 package ui
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"os"
 	"strconv"
 
 	"fyne.io/fyne/v2"
@@ -47,6 +51,8 @@ const (
 	prefVaultDir     = "vaultDir"
 	prefLockTimeout  = "lockTimeoutMs"
 	prefClipboardTTL = "clipboardTTLs"
+	// prefMigrated records that MigratePreferences has run.
+	prefMigrated = "migratedFrom010"
 )
 
 // LoadConfig resolves each setting from, in order of precedence, an
@@ -81,6 +87,52 @@ func LoadConfig(prefs fyne.Preferences, getenv func(string) string, defaultVault
 // Each setting is saved on its own, only when the user changes it, so a
 // value that came from an environment variable is never written as if the
 // user had chosen it.
+
+// MigratePreferences carries the saved settings of vlt 0.1.0, which used a
+// placeholder app ID, over to prefs. Fyne keeps settings per app ID, so
+// without this an upgrade would forget the vault's location (and, if it was
+// not the default, show the create screen). It runs once: afterwards
+// prefMigrated is set, so a later start never copies an old value over one
+// changed since (auto-lock off is saved as 0, which looks unset). It also
+// skips copying if prefs already holds a vlt setting, and does nothing more
+// if legacyFile is missing or unreadable. The old file is left in place.
+func MigratePreferences(prefs fyne.Preferences, legacyFile string, log *slog.Logger) {
+	if prefs.Bool(prefMigrated) {
+		return
+	}
+	prefs.SetBool(prefMigrated, true)
+	for _, key := range []string{prefVaultDir, prefLockTimeout, prefClipboardTTL} {
+		if prefs.String(key) != "" || prefs.Int(key) != 0 {
+			return // already set up under this app ID
+		}
+	}
+	data, err := os.ReadFile(legacyFile) //nolint:gosec // a fixed file in Fyne's settings folder
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			log.Warn("cannot read the settings of vlt 0.1.0", "err", err)
+		}
+		return
+	}
+	var old map[string]any
+	if err := json.Unmarshal(data, &old); err != nil {
+		log.Warn("cannot parse the settings of vlt 0.1.0", "err", err)
+		return
+	}
+	migrated := 0
+	if dir, ok := old[prefVaultDir].(string); ok && dir != "" {
+		prefs.SetString(prefVaultDir, dir)
+		migrated++
+	}
+	for _, key := range []string{prefLockTimeout, prefClipboardTTL} {
+		if v, ok := old[key].(float64); ok { // JSON numbers decode as float64
+			prefs.SetInt(key, int(v))
+			migrated++
+		}
+	}
+	if migrated > 0 {
+		log.Info("carried over the settings of vlt 0.1.0", "settings", migrated, "from", legacyFile)
+	}
+}
 
 // SaveVaultDir stores the vault directory in prefs.
 func SaveVaultDir(prefs fyne.Preferences, dir string) { prefs.SetString(prefVaultDir, dir) }

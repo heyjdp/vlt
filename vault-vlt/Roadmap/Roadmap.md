@@ -140,5 +140,5 @@ Each fix note's `status` property is one of `todo`, `in-progress`, or `done`. Th
 > [!success] Phases 1–5 are done (2026-10-27)
 > All 15 review fixes went through independent code, documentation and tooling verification before their commits, and were merged into `main`.
 
-> [!todo] Phase 6 is in progress
-> The first CI run and the `yourorg` rename are now part of [[F22 Publish to GitHub]].
+> [!success] Phase 6 is done (2026-10-29)
+> [vlt 0.1.0](https://github.com/heyjdp/vlt/releases/tag/v0.1.0) is released with the macOS app and the AppImage. The `yourorg` placeholders were then renamed in [[F22 Publish to GitHub]].

@@ -11,7 +11,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/yourorg/vlt/internal/crypto"
+	"github.com/heyjdp/vlt/internal/crypto"
 )
 
 // Migration from format 1 (every secret encrypted directly to the passphrase,

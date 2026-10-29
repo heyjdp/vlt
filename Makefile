@@ -42,7 +42,7 @@ vuln:
 check: fmt lint vet test-race vuln  ## Format, then run the checks CI runs
 
 # Packaging (see packaging/). APP_ID is also set in cmd/vlt/main.go.
-APP_ID      := io.yourorg.vlt
+APP_ID      := io.github.heyjdp.vlt
 # Package file names carry the full version: the tag on a release
 # (v0.1.0), or tag, commit count and hash in between (v0.1.0-5-gabc1234).
 PKG_VERSION := $(shell git describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null || echo dev)

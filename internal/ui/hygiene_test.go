@@ -7,7 +7,7 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/yourorg/vlt/internal/testutil"
+	"github.com/heyjdp/vlt/internal/testutil"
 )
 
 // F11: passphrases and decrypted secrets must not stay reachable from

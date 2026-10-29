@@ -12,8 +12,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/yourorg/vlt/internal/store"
-	"github.com/yourorg/vlt/internal/testutil"
+	"github.com/heyjdp/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/testutil"
 )
 
 const testPass = "correct-horse-battery-staple"

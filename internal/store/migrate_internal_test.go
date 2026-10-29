@@ -12,7 +12,7 @@ import (
 
 	"filippo.io/age"
 
-	"github.com/yourorg/vlt/internal/crypto"
+	"github.com/heyjdp/vlt/internal/crypto"
 )
 
 const internalPass = "internal-test-passphrase"

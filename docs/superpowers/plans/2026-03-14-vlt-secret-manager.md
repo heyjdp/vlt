@@ -37,8 +37,8 @@ go version
 
 - [ ] **Step 1: Initialize go module**
 ```bash
-cd /Users/jas/code/vlt
-go mod init github.com/yourorg/vlt
+mkdir vlt && cd vlt
+go mod init github.com/heyjdp/vlt
 ```
 
 - [ ] **Step 2: Add core dependencies**
@@ -109,7 +109,7 @@ package crypto_test
 import (
     "testing"
 
-    "github.com/yourorg/vlt/internal/crypto"
+    "github.com/heyjdp/vlt/internal/crypto"
 )
 
 func TestNewIdentity_CreatesIdentityFromPassphrase(t *testing.T) {
@@ -273,7 +273,7 @@ package crypto_test
 import (
     "testing"
 
-    "github.com/yourorg/vlt/internal/crypto"
+    "github.com/heyjdp/vlt/internal/crypto"
 )
 
 func TestEncryptDecrypt_RoundTrip(t *testing.T) {
@@ -454,7 +454,7 @@ import (
     "testing"
     "time"
 
-    "github.com/yourorg/vlt/internal/store"
+    "github.com/heyjdp/vlt/internal/store"
 )
 
 func TestSecretType_Constants(t *testing.T) {
@@ -592,8 +592,8 @@ import (
     "testing"
     "time"
 
-    "github.com/yourorg/vlt/internal/crypto"
-    "github.com/yourorg/vlt/internal/store"
+    "github.com/heyjdp/vlt/internal/crypto"
+    "github.com/heyjdp/vlt/internal/store"
 )
 
 // NewTestIdentity creates a crypto.Identity for testing.

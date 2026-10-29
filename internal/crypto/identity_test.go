@@ -8,7 +8,7 @@ import (
 
 	"filippo.io/age"
 
-	"github.com/yourorg/vlt/internal/crypto"
+	"github.com/heyjdp/vlt/internal/crypto"
 )
 
 func newID(t *testing.T) *crypto.Identity {
