@@ -7,7 +7,10 @@ release; until then, builds are identified by commit hash.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-29
+
 ### Added
+- **An About dialog**, from the *About* button in the status bar (on every screen, locked or not) and the *About* menu item (*vlt → About vlt* on macOS, *Help → About* elsewhere). It shows the version, commit, platform and Go and Fyne versions, with *Copy Details* and *Report a Bug…* (a new GitHub issue with the details filled in). The details hold no secrets, paths or names.
 - **Vaults on an SSH server.** A vault location can be a folder on a server, as `[user@]host:path` or `ssh://[user@]host[:port]/path`, in Settings (Move, Switch), on the create screen (*Use a Vault on a Server…*) and in `VLT_VAULT_DIR`. vlt speaks SFTP over the system's `ssh` client, so `~/.ssh/config`, keys, `ssh-agent` and `known_hosts` apply. Writes stay atomic, and creating a secret still never overwrites one. Secrets and the vault key are encrypted before they are sent; `vlt.json` and `vlt.lock` are plain text. If the server can't be reached when vlt checks the location, it shows the error with *Retry* and (unless `VLT_VAULT_DIR` sets the location) *Use the Vault on This Computer*.
 - **A lock file, `vlt.lock`,** records who has a vault open. Unlocking a vault that another copy of vlt has open shows who and since when, and asks before going on. A lock left by a crashed copy on the same computer is taken over automatically. Quitting releases the lock, and an unanswered question closes the vault after the auto-lock timeout.
 - The unlock screen names the vault it unlocks, and the status bar names the server of a remote vault.

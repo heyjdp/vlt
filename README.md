@@ -35,6 +35,7 @@ vlt follows the system's light or dark mode. `make screenshots` re-renders the m
 - **Move/switch vault** — copy secrets (including the wrapped key) to a new location, or point to a different vault directory
 - **Vaults on a server** — keep the vault in a folder on an SSH server (`me@nas.example:/home/me/vault`), reached with your own ssh setup. Encryption stays on your computer: secrets and the vault key are encrypted before they are sent. See [Vaults on a Server](#vaults-on-a-server)
 - **Open-elsewhere warning** — a lock file (`vlt.lock`) records who has the vault open; opening a vault that another copy of vlt has open asks first, because if both save the same secret the last save wins
+- **About and bug reports** — *About* in the status bar (on every screen, locked or not) and the *About* menu item (*vlt → About vlt* on macOS, *Help → About* elsewhere) show the version, commit, platform and Go and Fyne versions, with *Copy Details* and *Report a Bug…*, which opens a new GitHub issue with those details filled in. The details never include secrets, paths or names
 - **Cross-platform** — Linux, macOS, Windows, OpenBSD
 
 ## Vault Structure
@@ -254,6 +255,7 @@ The test suite covers:
   - *Real server* (optional): `VLT_TEST_SSH_LOCATION=me@host:/tmp/vlt-test go test ./internal/store -run RealServer` runs the backend against a real OpenSSH server (fsync, modes, 20 secrets, the lock), in a folder that must be empty or absent; it leaves its test vault there, so delete the folder before running it again
 - **ui** — headless [`fyne/test`](https://pkg.go.dev/fyne.io/fyne/v2/test), with inline or queued runners for background work, hand-fired fake timers, and real vaults created with a cheap scrypt work factor:
   - *Screens*: create (passphrase confirmation and validation; opening an existing vault in another folder, refusing a folder without one or pointing to the vault below it, ignoring a stale result, and hiding the option under `VLT_VAULT_DIR`; the server-location dialog), unlock (wrong passphrase; naming the vault), and the error screen for an unreadable vault directory or an unreachable server (with a fake `ssh`), including the way back to the local vault
+  - *About*: reachable from the unlock screen and the main view; shows the version, platform and vault state but never the vault's path; *Copy Details* copies it; the menu items are labelled so macOS puts About in the app menu; the issue link carries the details
   - *Lock file*: unlocking takes it, and locking or quitting releases it; a vault open elsewhere asks first, *Open Anyway* takes over, *Cancel* closes the waiting vault and leaves the other lock alone, and an unanswered question closes it after the auto-lock timeout
   - *Background work*: unlock and create run off the UI thread with progress; stale results after a vault switch or lock are dropped; lock cancels the initial list load
   - *List and detail*: saves, deletes and imports update rows in place (also under a search filter and during the first load); forms save every field, mask secrets, and copy the right value; group suggestions show one spelling per group, a new or imported secret typed into a differently spelled group uses the existing one, and search matches a group by either spelling
@@ -335,6 +337,7 @@ internal/
 │   └── atomic.go            Atomic file writes
 ├── ui/
 │   ├── app.go               Lock/unlock state machine, header bar, layout
+│   ├── about.go             About dialog: build details, Copy Details, Report a Bug
 │   ├── unlock.go            Passphrase entry screen (existing vault)
 │   ├── create.go            Create-vault screen (passphrase + confirmation, open existing)
 │   ├── runner.go            Runs vault I/O off the UI thread, results via fyne.Do
@@ -417,6 +420,10 @@ This is best-effort, and the limits are worth stating plainly. Go strings cannot
 - decrypted byte buffers that vlt owns are zeroed after use (copies made inside libraries are not)
 
 It does not, and in Go cannot, guarantee that secret text is erased from memory.
+
+## Reporting Bugs
+
+Open *About* (bottom right of the window; or *vlt → About vlt* on macOS, *Help → About* elsewhere) and choose *Report a Bug…*: it opens a new issue at [github.com/heyjdp/vlt](https://github.com/heyjdp/vlt/issues) with the build details already filled in (version, commit, platform, Go and Fyne versions, and whether the vault is local or on a server, locked or unlocked). (*Help → Report a Bug…* goes straight there.) Or choose *Copy Details* and paste them into your report. Please never paste secrets, passphrases or vault files into an issue.
 
 ## Changelog
 

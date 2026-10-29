@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,9 +26,13 @@ import (
 
 // App is the main application controller managing lock/unlock state.
 type App struct {
-	mu        sync.Mutex
-	fyneApp   fyne.App
-	window    fyne.Window
+	mu      sync.Mutex
+	fyneApp fyne.App
+	window  fyne.Window
+	// version is the build's version (main.version), shown in About.
+	version string
+	// open opens a link in the browser (fyneApp.OpenURL; tests replace it).
+	open      func(*url.URL) error
 	config    Config
 	log       *slog.Logger
 	store     *store.Store
@@ -70,9 +75,12 @@ type App struct {
 	statusBar    *widget.Label
 }
 
-// NewApp creates the main application controller.
-func NewApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logger) *App {
-	return newApp(fyneApp, window, config, log, goroutineRunner(), realTimers)
+// NewApp creates the main application controller. version is the build's
+// version, shown in the About dialog.
+func NewApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logger, version string) *App {
+	app := newApp(fyneApp, window, config, log, goroutineRunner(), realTimers)
+	app.version = version
+	return app
 }
 
 // newApp creates the controller with an explicit runner, timer factory and
@@ -80,6 +88,7 @@ func NewApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logge
 // scrypt work factor).
 func newApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logger, run runner, timers timerFactory, storeOpts ...store.Option) *App {
 	app := &App{
+		open:      fyneApp.OpenURL,
 		fyneApp:   fyneApp,
 		window:    window,
 		config:    config,
@@ -96,7 +105,16 @@ func newApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logge
 	window.SetCloseIntercept(app.quit)
 	quitItem := fyne.NewMenuItem("Quit", app.quit)
 	quitItem.IsQuit = true
-	window.SetMainMenu(fyne.NewMainMenu(fyne.NewMenu("File", quitItem)))
+	// An item labelled exactly "About" becomes the app menu's "About vlt"
+	// on macOS (Fyne replaces the system About panel with it); elsewhere it
+	// stays in the Help menu.
+	window.SetMainMenu(fyne.NewMainMenu(
+		fyne.NewMenu("File", quitItem),
+		fyne.NewMenu("Help",
+			fyne.NewMenuItem("About", app.showAbout),
+			fyne.NewMenuItem("Report a Bug…", func() { app.openURL(issueURL(app.aboutDetails().String())) }),
+		),
+	))
 
 	app.statusBar = caption("Locked")
 	app.clipboard = newClipboardClearer(fyneApp.Clipboard(), app.statusBar,
@@ -145,10 +163,14 @@ func (a *App) setScreen(content fyne.CanvasObject) {
 	a.window.SetContent(container.NewBorder(nil, a.statusRow(), nil, nil, content))
 }
 
-// statusRow is the status bar along the bottom of the window.
+// statusRow is the status bar along the bottom of the window, with the
+// About button at its right, so About is reachable from every screen.
 func (a *App) statusRow() fyne.CanvasObject {
+	about := widget.NewButtonWithIcon("About", theme.InfoIcon(), a.showAbout)
+	about.Importance = widget.LowImportance
 	return container.NewVBox(widget.NewSeparator(),
-		container.New(layout.NewCustomPaddedLayout(0, 0, 6, 6), a.statusBar))
+		container.NewBorder(nil, nil, nil, about,
+			container.New(layout.NewCustomPaddedLayout(0, 0, 6, 6), a.statusBar)))
 }
 
 // vaultErrorContent explains why the vault cannot be used and offers a

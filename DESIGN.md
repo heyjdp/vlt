@@ -182,6 +182,7 @@ vlt/
 │   │   └── secret.go        # Secret types and JSON envelope schema
 │   └── ui/
 │       ├── app.go           # Fyne app and window bootstrap
+│       ├── about.go         # About dialog: build details, Copy Details, Report a Bug
 │       ├── unlock.go        # Passphrase entry screen (existing vault)
 │       ├── create.go        # Create-vault screen (passphrase + confirmation, open existing)
 │       ├── runner.go        # Background execution of vault I/O
@@ -229,6 +230,7 @@ vlt/
 - `clipboard.go` — one `clipboardClearer` per app: per-copy countdown, clears only vlt's own value (SHA-256 check), cleared on lock
 - `settings.go` — vault path picker, auto-lock on/off and timeout slider, clipboard TTL slider. Slider changes are saved when a drag ends; `App` saves the vault location after every successful unlock or create (unless `VLT_VAULT_DIR` sets it), so a new location from Settings or the create screen's *Open Existing Vault…* sticks only once a vault opens there, and the default location, which on Linux depends on `XDG_DATA_HOME`, stays the same across launches. Settings provided by environment variables are disabled and labelled
 - `config.go` — `LoadConfig` resolves each setting from env var → saved preference → default and clamps it (auto-lock 30 s–30 min or off; clipboard TTL 5–120 s); `SaveVaultDir`/`SaveLockTimeout`/`SaveClipboardTTL` save one setting each, only when the user changes it, so environment values are never persisted. `Config.DefaultVaultDir` keeps the default local location for that offer
+- `about.go` — the About dialog, opened from the status bar's *About* button (present on every screen) and the *About* menu item (*vlt → About vlt* on macOS, *Help → About* elsewhere). `aboutDetails` passes `debug.ReadBuildInfo` to `readBuildDetails`, which takes the VCS revision and time and the Fyne version from it, plus the version (`main.version`, via `NewApp`) and the `runtime` platform and Go version; the vault is described only as local or on a server, and locked or unlocked. *Copy Details* puts that text on the clipboard; *Report a Bug…* opens `https://github.com/heyjdp/vlt/issues/new` with it in the body
 - `app.go` — wires everything together; manages lock/unlock state; runs the inactivity timer. After a vault opens or is created it takes the lock; if another copy of vlt holds it, the opened store waits (`App.pending`) behind a "Vault Already Open" dialog: *Open Anyway* takes the lock over, *Cancel* closes the store, and no answer within the auto-lock timeout closes it too. Quitting closes the open or waiting store and waits up to 3 seconds for a remote one to release its lock
 
 ---

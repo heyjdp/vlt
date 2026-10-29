@@ -111,11 +111,12 @@ flowchart LR
 ```
 
 ### Phase 7: Vaults on a server
-Added 2026-10-29, at the user's request. Goal: a vault can live in a folder on an SSH server, reached with the system's ssh ([[ADR-002 Vaults on a server over the system ssh]]), with the local guarantees (atomic writes, no overwrites, private modes). No offline copy. A lock file warns when a vault is open twice.
+Added 2026-10-29, at the user's request. Goal: a vault can live in a folder on an SSH server, reached with the system's ssh ([[ADR-002 Vaults on a server over the system ssh]]), with the local guarantees (atomic writes, no overwrites, private modes). No offline copy. A lock file warns when a vault is open twice. [[F28 About dialog for bug reports]] came later, at the user's request (2026-10-29).
 - [[F24 Storage abstraction]]
 - [[F25 SFTP backend and server locations]]
 - [[F26 Vault lock file]]
 - [[F27 Server vaults in the UI]]
+- [[F28 About dialog for bug reports]]
 
 ```mermaid
 flowchart LR
