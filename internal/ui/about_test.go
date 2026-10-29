@@ -237,9 +237,11 @@ func TestAbout_AServerVaultIsNotNamed(t *testing.T) {
 	}
 }
 
+// NewApp itself starts real background work, which would outlive the test,
+// so this goes through newVersionedApp, which NewApp calls with the version.
 func TestNewApp_KeepsTheVersion(t *testing.T) {
 	a := test.NewTempApp(t)
-	app := NewApp(a, test.NewTempWindow(t, nil), Config{VaultDir: t.TempDir()}, quietLog(), "v0.1.0")
+	app := newVersionedApp("v0.1.0", a, test.NewTempWindow(t, nil), Config{VaultDir: t.TempDir()}, quietLog(), inlineRunner(), noTimers, testKDF)
 	if app.version != "v0.1.0" || !strings.HasPrefix(app.aboutDetails().String(), "vlt v0.1.0\n") {
 		t.Fatalf("version = %q", app.version)
 	}

@@ -78,16 +78,21 @@ type App struct {
 // NewApp creates the main application controller. version is the build's
 // version, shown in the About dialog.
 func NewApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logger, version string) *App {
-	app := newApp(fyneApp, window, config, log, goroutineRunner(), realTimers)
-	app.version = version
-	return app
+	return newVersionedApp(version, fyneApp, window, config, log, goroutineRunner(), realTimers)
 }
 
 // newApp creates the controller with an explicit runner, timer factory and
 // store options (tests run work inline, fire timers by hand, and use a cheap
 // scrypt work factor).
 func newApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logger, run runner, timers timerFactory, storeOpts ...store.Option) *App {
+	return newVersionedApp("", fyneApp, window, config, log, run, timers, storeOpts...)
+}
+
+// newVersionedApp is newApp with the build's version, set before the first
+// screen starts any background work.
+func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logger, run runner, timers timerFactory, storeOpts ...store.Option) *App {
 	app := &App{
+		version:   version,
 		open:      fyneApp.OpenURL,
 		fyneApp:   fyneApp,
 		window:    window,
