@@ -71,7 +71,7 @@ All fixes are complete (see the [[Roadmap]]):
 - [[F06 Persist settings]]: settings saved per change in Fyne preferences; env values never saved; a new vault path saved only once opened
 - [[F11 Memory hygiene and honest docs]]: passphrase entries cleared on read; lock empties secrets and drops references; docs state best-effort limits
 - [[F12 Fix CI pipeline]]: Go from go.mod, native cgo builds on three OSes, golangci-lint v2 config and lint job, SHA-pinned actions, patched toolchain and dependencies for govulncheck
-- [[F13 Project hygiene]]: MIT LICENSE, CHANGELOG, version embedded by make and CI; the `yourorg` rename was deferred to the owner and done in [[F22 Publish to GitHub]]
+- [[F13 Project hygiene]]: LICENSE (MIT, later BSD 3-Clause), CHANGELOG, version embedded by make and CI; the `yourorg` rename was deferred to the owner and done in [[F22 Publish to GitHub]]
 - [[F14 Remove reinvented stdlib and dead code]]: stdlib string helpers, dead code removed, shared form builder, TOTP masked, `dupl`/`unparam` lint
 - [[F15 UI tests with fyne test]]: headless `fyne/test` suite including end-to-end dialog flows; `internal/ui` coverage 86%
 

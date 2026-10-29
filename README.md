@@ -429,4 +429,4 @@ See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+BSD 3-Clause — see [LICENSE](LICENSE). vlt is provided as is, without warranty of any kind; the copyright holder and contributors are not liable for any damages arising from its use, including lost or exposed secrets. Versions up to 0.1.0 were released under the MIT License.

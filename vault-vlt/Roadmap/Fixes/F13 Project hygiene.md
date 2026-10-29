@@ -26,7 +26,7 @@ created: 2026-10-27
 # F13: Project hygiene
 
 ## Checklist
-- [x] Add `LICENSE` (MIT, © 2026 Jas). The README now says "MIT — see LICENSE".
+- [x] Add `LICENSE` (MIT, © 2026 Jas). The README now says "MIT — see LICENSE". Changed to BSD 3-Clause after 0.1.0, at the owner's request (2026-10-29).
 - [x] Add `CHANGELOG.md` in Keep a Changelog format (required by `CLAUDE.md` §6.2)
 - [x] Replace the `github.com/yourorg/vlt` module path and the `io.yourorg.vlt` app ID: deferred to the owner (see Outcome), then done in [[F22 Publish to GitHub]] as `github.com/heyjdp/vlt` and `io.github.heyjdp.vlt`, with 0.1.0's settings carried over
 - [x] Add `claude.resume` to `.gitignore` (already present)
