@@ -62,6 +62,12 @@ CGO_CFLAGS ?= -O2 -g
 export MACOSX_DEPLOYMENT_TARGET := $(MACOS_MIN)
 export CGO_CFLAGS  += -mmacosx-version-min=$(MACOS_MIN)
 export CGO_LDFLAGS += -mmacosx-version-min=$(MACOS_MIN)
+# Fyne's cgo packages each link -lobjc, and Apple's linker (Xcode 15+) warns
+# "ignoring duplicate libraries". The warning is harmless; silence it when
+# the linker knows the flag (older linkers reject it).
+ifeq ($(shell printf 'int main(void){return 0;}' | cc -x c - -o /dev/null -Wl,-no_warn_duplicate_libraries 2>/dev/null && echo yes),yes)
+export CGO_LDFLAGS += -Wl,-no_warn_duplicate_libraries
+endif
 endif
 
 # vlt.app and dist/vlt-<version>-macos-<arch>.zip, ad-hoc signed; on a Mac.
