@@ -6,7 +6,7 @@ aliases:
 tags:
   - fix
 severity: high
-status: in-progress
+status: done
 phase: 6
 area: ci
 review_finding: Release goal
@@ -32,8 +32,8 @@ Package and release jobs in `.github/workflows/ci.yml`, run on pushes to `main` 
 
 ## Acceptance criteria
 - [x] Workflow passes `actionlint` and `zizmor`; actions pinned to SHAs; least-privilege permissions
-- [ ] The AppImage is assembled and checked in CI (desktop entry validated locally; the script passes `shellcheck`; pinned downloads' SHA-256 verified)
-- [ ] First green run on GitHub ([[F22 Publish to GitHub]])
+- [x] The AppImage is assembled and checked in CI (desktop entry validated locally; the script passes `shellcheck`; pinned downloads' SHA-256 verified)
+- [x] First green run on GitHub ([[F22 Publish to GitHub]]): run 3, after the vuln job got the C headers (2026-10-29)
 
 ## Related
 - [[Roadmap]]
