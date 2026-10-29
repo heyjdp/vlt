@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -67,7 +68,8 @@ type existsFunc func(dir string) (bool, error)
 
 // defaultVaultDir returns the platform-appropriate default vault directory.
 func defaultVaultDir() (string, error) {
-	return vaultDirFor(runtime.GOOS, os.Getenv, os.UserHomeDir, store.Exists, slog.Default())
+	exists := func(dir string) (bool, error) { return store.Exists(context.Background(), dir) }
+	return vaultDirFor(runtime.GOOS, os.Getenv, os.UserHomeDir, exists, slog.Default())
 }
 
 // vaultDirFor returns the default vault directory for goos:

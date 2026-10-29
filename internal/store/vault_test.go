@@ -28,7 +28,7 @@ func quietLog() *slog.Logger {
 
 func createVault(t *testing.T, dir string) *store.Store {
 	t.Helper()
-	s, err := store.Create(dir, testPass, quietLog(), store.WithWorkFactor(testWorkFactor))
+	s, err := store.Create(context.Background(), dir, testPass, quietLog(), store.WithWorkFactor(testWorkFactor))
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestStore_Create_RefusesExistingVault(t *testing.T) {
 	dir := t.TempDir()
 	createVault(t, dir)
 
-	_, err := store.Create(dir, "another-passphrase", quietLog())
+	_, err := store.Create(context.Background(), dir, "another-passphrase", quietLog())
 	if !errors.Is(err, store.ErrVaultExists) {
 		t.Fatalf("expected ErrVaultExists, got %v", err)
 	}
@@ -166,7 +166,7 @@ func TestStore_Create_WritesFormatMarker(t *testing.T) {
 
 func mustExist(t *testing.T, dir string) bool {
 	t.Helper()
-	ok, err := store.Exists(dir)
+	ok, err := store.Exists(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("Exists: %v", err)
 	}
@@ -205,10 +205,10 @@ func TestStore_Exists_ReportsUnreadableGroupInsteadOfNoVault(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
 
-	if _, err := store.Exists(dir); err == nil {
+	if _, err := store.Exists(context.Background(), dir); err == nil {
 		t.Fatal("expected an error when a group directory cannot be read")
 	}
-	if _, err := store.Create(dir, testPass, quietLog(), store.WithWorkFactor(testWorkFactor)); err == nil {
+	if _, err := store.Create(context.Background(), dir, testPass, quietLog(), store.WithWorkFactor(testWorkFactor)); err == nil {
 		t.Fatal("Create must refuse a directory it cannot fully inspect")
 	}
 }

@@ -165,7 +165,7 @@ func TestFlow_SwitchVaultThroughSettings(t *testing.T) {
 	unlock(app)
 	ss := app.openSettings(app.store, app.run)
 	box := ss.buildVaultLocation()
-	path := entryWithPlaceholder(t, box, "New vault directory path")
+	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")
 	newDir := filepath.Join(t.TempDir(), "other")
 
 	path.SetText(newDir)

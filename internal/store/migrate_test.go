@@ -92,7 +92,7 @@ func TestStore_Open_LegacyUndecryptableFileIsLeftUntouched(t *testing.T) {
 
 	s := openVault(t, dir, testPass)
 
-	if got := s.SkippedFiles(); len(got) != 1 || got[0] != filepath.Join("work", "stray.age") {
+	if got := s.SkippedFiles(); len(got) != 1 || got[0] != "work/stray.age" {
 		t.Fatalf("expected stray file to be reported as skipped, got %v", got)
 	}
 	after, err := os.ReadFile(strayPath)
@@ -149,7 +149,7 @@ func TestStore_Open_MigratesLegacyVaultWithoutSentinel(t *testing.T) {
 	if !mustExist(t, dir) {
 		t.Fatal("a directory of legacy secrets must count as an existing vault")
 	}
-	if _, err := store.Create(dir, testPass, quietLog(), store.WithWorkFactor(testWorkFactor)); !errors.Is(err, store.ErrVaultExists) {
+	if _, err := store.Create(context.Background(), dir, testPass, quietLog(), store.WithWorkFactor(testWorkFactor)); !errors.Is(err, store.ErrVaultExists) {
 		t.Fatalf("Create over legacy secrets: expected ErrVaultExists, got %v", err)
 	}
 

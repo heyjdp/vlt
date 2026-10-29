@@ -44,7 +44,7 @@ graph TD
 |---|---|---|
 | `cmd/vlt` | Read env config, set up `slog`, create the Fyne app and window | `main.go` |
 | `internal/crypto` | Generate the X25519 vault key and hold it in memguard; wrap/unwrap it with the passphrase (scrypt); encrypt and decrypt secrets to it | `identity.go`, `vault.go` |
-| `internal/store` | `Secret` JSON envelope, slugs and groups, directory CRUD, vault create/open/change-passphrase, format-1 migration, atomic writes, copy | `secret.go`, `store.go`, `vault.go`, `migrate.go`, `atomic.go` |
+| `internal/store` | `Secret` JSON envelope, slugs and groups, CRUD, vault create/open/change-passphrase, format-1 migration, atomic writes, copy; storage on local disk or an SSH server; the vault lock | `secret.go`, `store.go`, `vault.go`, `migrate.go`, `atomic.go`, `fs.go`, `location.go`, `sshfs.go`, `lock.go` |
 | `internal/ui` | Lock state machine, screens, background runner, clipboard TTL, file import/export, settings (persisted in Fyne preferences), theme and shared styling | `app.go`, `runner.go`, `activity.go`, `clipboard.go`, `config.go`, `create.go`, `unlock.go`, `detail.go`, `list.go`, `fileops.go`, `settings.go`, `style.go`, `theme.go`, `icon.png` |
 | `internal/testutil` | Test identities and secret builders | `fixtures.go` |
 
@@ -60,7 +60,11 @@ stateDiagram-v2
     Creating --> Unlocked: confirmed, vault created
     Locked --> Unlocking: passphrase submitted
     Unlocking --> Locked: wrong passphrase / I/O error
-    Unlocking --> Unlocked: vault key unwrapped (or migrated)
+    Unlocking --> Unlocked: vault key unwrapped (or migrated), lock taken (failure logged)
+    Unlocking --> Asking: vlt.lock held by another copy
+    Creating --> Asking: vlt.lock held by another copy
+    Asking --> Unlocked: Open Anyway
+    Asking --> Locked: Cancel / no answer within the auto-lock timeout
     Unlocked --> Locked: Lock button
     Unlocked --> Locked: auto-lock timer fires
     Unlocked --> Locked: passphrase changed / vault moved / switched
@@ -76,6 +80,7 @@ Widget input (entries, buttons, list selection, sliders), unfocused key presses 
 | `filippo.io/age` v1.3.1 | File encryption | no |
 | `fyne.io/fyne/v2` v2.7.3 | GUI | **yes** (desktop driver uses go-gl/glfw) |
 | `github.com/awnumar/memguard` v0.23.0 | Locked memory buffers | no |
+| `github.com/pkg/sftp` v1.13.12 | SFTP client for vaults on a server, over the system `ssh` | no |
 
 Because Fyne's desktop driver needs CGO, CI builds natively on Linux, macOS and Windows runners with cgo enabled ([[F12 Fix CI pipeline]]).
 

@@ -47,6 +47,7 @@ type CreateScreen struct {
 	confirm    *widget.Entry
 	createBtn  *widget.Button
 	openBtn    *widget.Button // nil when opening another folder isn't offered
+	serverBtn  *widget.Button // nil when choosing a server isn't offered
 	progress   *widget.ProgressBarInfinite
 	errorLabel *widget.Label
 	content    *fyne.Container
@@ -56,8 +57,9 @@ type CreateScreen struct {
 // called with the passphrase once both entries match and pass validation.
 // If onOpen is not nil, an "Open Existing Vault…" button calls it, so a vault
 // kept in another folder can be found again (for example after the saved
-// location was lost).
-func NewCreateScreen(vaultDir string, onCreate func(passphrase string), onOpen func()) *CreateScreen {
+// location was lost). If onServer is not nil, a "Use a Vault on a Server…"
+// button calls it.
+func NewCreateScreen(vaultDir string, onCreate func(passphrase string), onOpen, onServer func()) *CreateScreen {
 	s := &CreateScreen{onCreate: onCreate}
 
 	s.entry = widget.NewPasswordEntry()
@@ -96,12 +98,20 @@ func NewCreateScreen(vaultDir string, onCreate func(passphrase string), onOpen f
 		s.progress,
 		s.createBtn,
 	}
+	if onOpen != nil || onServer != nil {
+		hint := caption("Already have a vault in another folder or on a server?")
+		hint.Alignment = fyne.TextAlignCenter
+		objects = append(objects, widget.NewSeparator(), hint)
+	}
 	if onOpen != nil {
 		s.openBtn = widget.NewButtonWithIcon("Open Existing Vault…", theme.FolderOpenIcon(), onOpen)
 		s.openBtn.Importance = widget.LowImportance
-		hint := caption("Already have a vault in another folder?")
-		hint.Alignment = fyne.TextAlignCenter
-		objects = append(objects, widget.NewSeparator(), hint, s.openBtn)
+		objects = append(objects, s.openBtn)
+	}
+	if onServer != nil {
+		s.serverBtn = widget.NewButtonWithIcon("Use a Vault on a Server…", theme.StorageIcon(), onServer)
+		s.serverBtn.Importance = widget.LowImportance
+		objects = append(objects, s.serverBtn)
 	}
 	s.content = centeredCard(createFormWidth, objects...)
 	return s
@@ -139,8 +149,10 @@ func (s *CreateScreen) SetBusy(busy bool) {
 		s.entry.Disable()
 		s.confirm.Disable()
 		s.createBtn.Disable()
-		if s.openBtn != nil {
-			s.openBtn.Disable()
+		for _, b := range []*widget.Button{s.openBtn, s.serverBtn} {
+			if b != nil {
+				b.Disable()
+			}
 		}
 		s.progress.Show()
 		s.progress.Start()
@@ -151,7 +163,9 @@ func (s *CreateScreen) SetBusy(busy bool) {
 	s.entry.Enable()
 	s.confirm.Enable()
 	s.createBtn.Enable()
-	if s.openBtn != nil {
-		s.openBtn.Enable()
+	for _, b := range []*widget.Button{s.openBtn, s.serverBtn} {
+		if b != nil {
+			b.Enable()
+		}
 	}
 }

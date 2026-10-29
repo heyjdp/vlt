@@ -8,6 +8,9 @@ release; until then, builds are identified by commit hash.
 ## [Unreleased]
 
 ### Added
+- **Vaults on an SSH server.** A vault location can be a folder on a server, as `[user@]host:path` or `ssh://[user@]host[:port]/path`, in Settings (Move, Switch), on the create screen (*Use a Vault on a Server…*) and in `VLT_VAULT_DIR`. vlt speaks SFTP over the system's `ssh` client, so `~/.ssh/config`, keys, `ssh-agent` and `known_hosts` apply. Writes stay atomic, and creating a secret still never overwrites one. Secrets and the vault key are encrypted before they are sent; `vlt.json` and `vlt.lock` are plain text. If the server can't be reached when vlt checks the location, it shows the error with *Retry* and (unless `VLT_VAULT_DIR` sets the location) *Use the Vault on This Computer*.
+- **A lock file, `vlt.lock`,** records who has a vault open. Unlocking a vault that another copy of vlt has open shows who and since when, and asks before going on. A lock left by a crashed copy on the same computer is taken over automatically. Quitting releases the lock, and an unanswered question closes the vault after the auto-lock timeout.
+- The unlock screen names the vault it unlocks, and the status bar names the server of a remote vault.
 - A create-vault screen, shown when no vault exists at the configured location, which names the target folder and asks for the passphrase twice (at least 12 characters).
 - *Open Existing Vault…* on the create-vault screen, to reopen a vault kept in another folder (for example on a new Mac or after preferences were cleared). The location is saved once the vault unlocks.
 - An auto-lock warning 30 seconds before locking, with *Stay unlocked* and *Lock now*, and an *Auto-lock* on/off setting.

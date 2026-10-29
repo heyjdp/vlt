@@ -23,7 +23,7 @@ func TestLoadConfig_DefaultsWhenNothingIsSet(t *testing.T) {
 
 	cfg := LoadConfig(a.Preferences(), env(nil), "/default/vault", quietLog())
 
-	want := Config{VaultDir: "/default/vault", LockTimeoutMs: DefaultLockTimeoutMs, ClipboardTTLs: DefaultClipboardTTLs}
+	want := Config{VaultDir: "/default/vault", DefaultVaultDir: "/default/vault", LockTimeoutMs: DefaultLockTimeoutMs, ClipboardTTLs: DefaultClipboardTTLs}
 	if cfg != want {
 		t.Fatalf("got %+v, want %+v", cfg, want)
 	}
@@ -38,7 +38,7 @@ func TestLoadConfig_SavedSettingsSurviveRestart(t *testing.T) {
 
 	got := LoadConfig(prefs, env(nil), "/default/vault", quietLog())
 
-	want := Config{VaultDir: "/moved/vault", LockTimeoutMs: 600_000, ClipboardTTLs: 15}
+	want := Config{VaultDir: "/moved/vault", DefaultVaultDir: "/default/vault", LockTimeoutMs: 600_000, ClipboardTTLs: 15}
 	if got != want {
 		t.Fatalf("after restart got %+v, want %+v", got, want)
 	}
@@ -56,7 +56,7 @@ func TestLoadConfig_EnvironmentOverridesSavedSettings(t *testing.T) {
 	}), "/default", quietLog())
 
 	want := Config{
-		VaultDir: "/from/env", LockTimeoutMs: 120_000, ClipboardTTLs: 60,
+		VaultDir: "/from/env", DefaultVaultDir: "/default", LockTimeoutMs: 120_000, ClipboardTTLs: 60,
 		FromEnv: EnvSettings{VaultDir: true, LockTimeout: true, ClipboardTTL: true},
 	}
 	if got != want {

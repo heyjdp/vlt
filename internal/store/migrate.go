@@ -6,9 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
-	"os"
-	"path/filepath"
+	"path"
+	"strings"
 
 	"github.com/yourorg/vlt/internal/crypto"
 )
@@ -32,8 +33,8 @@ import (
 // reported via Store.SkippedFiles: they were already unreadable, and
 // migration must not destroy data it cannot read.
 
-// beginMigration starts migrating the format-1 vault in dir.
-func beginMigration(ctx context.Context, dir, passphrase string, log *slog.Logger, o options) (*Store, error) {
+// beginMigration starts migrating the format-1 vault in fsys.
+func beginMigration(ctx context.Context, fsys vaultFS, loc Location, passphrase string, log *slog.Logger, o options) (*Store, error) {
 	id, err := crypto.GenerateIdentity()
 	if err != nil {
 		return nil, fmt.Errorf("store.migrate: %w", err)
@@ -45,22 +46,22 @@ func beginMigration(ctx context.Context, dir, passphrase string, log *slog.Logge
 	}
 	// Exclusive create: if another vlt instance started migrating first, use
 	// its key rather than replacing it (which would strand its rewrites).
-	err = writeFileExclusive(filepath.Join(dir, migratingFile), wrapped)
-	if errors.Is(err, os.ErrExist) {
+	err = fsys.WriteFileExclusive(migratingFile, wrapped)
+	if errors.Is(err, fs.ErrExist) {
 		id.Zero()
-		existing, readErr := os.ReadFile(filepath.Join(dir, migratingFile))
+		existing, readErr := fsys.ReadFile(migratingFile)
 		if readErr != nil {
 			return nil, fmt.Errorf("store.migrate: %w", readErr)
 		}
-		return resumeMigration(ctx, dir, passphrase, existing, log, o)
+		return resumeMigration(ctx, fsys, loc, passphrase, existing, log, o)
 	}
 	if err != nil {
 		id.Zero()
 		return nil, fmt.Errorf("store.migrate: write %s: %w", migratingFile, err)
 	}
-	log.Info("migrating vault to format 2", "dir", dir)
+	log.Info("migrating vault to format 2", "location", loc.String())
 
-	s := newStore(id, dir, log, o)
+	s := newStore(id, fsys, loc, log, o)
 	if err := s.finishMigration(ctx, passphrase, wrapped); err != nil {
 		id.Zero()
 		return nil, err
@@ -69,15 +70,15 @@ func beginMigration(ctx context.Context, dir, passphrase string, log *slog.Logge
 }
 
 // resumeMigration continues a migration interrupted after step 1.
-func resumeMigration(ctx context.Context, dir, passphrase string, wrapped []byte, log *slog.Logger, o options) (*Store, error) {
+func resumeMigration(ctx context.Context, fsys vaultFS, loc Location, passphrase string, wrapped []byte, log *slog.Logger, o options) (*Store, error) {
 	o.kdf()
 	id, err := crypto.UnwrapIdentity(passphrase, wrapped)
 	if err != nil {
 		return nil, fmt.Errorf("store.Open: %w", err)
 	}
-	log.Info("resuming vault migration", "dir", dir)
+	log.Info("resuming vault migration", "location", loc.String())
 
-	s := newStore(id, dir, log, o)
+	s := newStore(id, fsys, loc, log, o)
 	if err := s.finishMigration(ctx, passphrase, wrapped); err != nil {
 		id.Zero()
 		return nil, err
@@ -87,7 +88,7 @@ func resumeMigration(ctx context.Context, dir, passphrase string, wrapped []byte
 
 // finishMigration runs steps 2–4.
 func (s *Store) finishMigration(ctx context.Context, passphrase string, wrapped []byte) error {
-	paths, err := secretFiles(s.dir)
+	paths, err := secretFiles(s.fs)
 	if err != nil {
 		return fmt.Errorf("store.migrate: %w", err)
 	}
@@ -106,28 +107,28 @@ func (s *Store) finishMigration(ctx context.Context, passphrase string, wrapped 
 		}
 	}
 
-	if err := writeFileAtomic(filepath.Join(s.dir, keyFile), wrapped); err != nil {
+	if err := s.fs.WriteFileAtomic(keyFile, wrapped); err != nil {
 		return fmt.Errorf("store.migrate: replace %s: %w", keyFile, err)
 	}
 	if err := s.writeFormatMarker(); err != nil {
 		return fmt.Errorf("store.migrate: %w", err)
 	}
-	if err := os.Remove(filepath.Join(s.dir, migratingFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := s.fs.Remove(migratingFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("store.migrate: remove %s: %w", migratingFile, err)
 	}
-	if err := syncDir(s.dir); err != nil {
+	if err := s.fs.SyncDir("."); err != nil {
 		return fmt.Errorf("store.migrate: %w", err)
 	}
 
-	s.log.Info("vault migrated", "dir", s.dir, "migrated", migrated, "skipped", len(s.skipped))
+	s.log.Info("vault migrated", "location", s.loc.String(), "migrated", migrated, "skipped", len(s.skipped))
 	return nil
 }
 
 // migrateFile re-encrypts one legacy file to the vault key. It reports
 // whether the file was rewritten. Already-migrated files are left alone, and
 // files the passphrase cannot decrypt are recorded in s.skipped.
-func (s *Store) migrateFile(passphrase, path string) (bool, error) {
-	data, err := os.ReadFile(path)
+func (s *Store) migrateFile(passphrase, name string) (bool, error) {
+	data, err := s.fs.ReadFile(name)
 	if err != nil {
 		return false, err
 	}
@@ -144,12 +145,8 @@ func (s *Store) migrateFile(passphrase, path string) (bool, error) {
 		err = errNotASecret
 	}
 	if err != nil {
-		rel, relErr := filepath.Rel(s.dir, path)
-		if relErr != nil {
-			rel = path
-		}
-		s.log.Warn("cannot migrate secret; left untouched", "path", rel, "err", err)
-		s.skipped = append(s.skipped, rel)
+		s.log.Warn("cannot migrate secret; left untouched", "path", name, "err", err)
+		s.skipped = append(s.skipped, name)
 		return false, nil
 	}
 
@@ -158,7 +155,7 @@ func (s *Store) migrateFile(passphrase, path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if err := writeFileAtomic(path, ciphertext); err != nil {
+	if err := s.fs.WriteFileAtomic(name, ciphertext); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -176,25 +173,24 @@ func isSecretEnvelope(plaintext []byte) bool {
 	return len(trimmed) > 0 && trimmed[0] == '{' && json.Valid(trimmed)
 }
 
-// secretFiles returns the path of every .age file in a group directory of
-// dir, in directory order. A subdirectory holding a format marker or a
+// secretFiles returns the vault-relative path of every .age file in a group
+// directory, in directory order. A subdirectory holding a format marker or a
 // migration in progress is another vault, not a group, so its files are not
 // counted, probed or migrated. Other nested vaults (format 1, or missing
 // vlt.json) can't be told from a group by layout alone, because a secret
 // named "vlt" is stored in its group as vlt.age; isSecretEnvelope keeps
 // their files from being taken for secrets.
-func secretFiles(dir string) ([]string, error) {
-	groups, err := os.ReadDir(dir)
+func secretFiles(fsys vaultFS) ([]string, error) {
+	groups, err := fsys.ReadDir(".")
 	if err != nil {
 		return nil, err
 	}
 	var paths []string
 	for _, g := range groups {
-		if !g.IsDir() {
+		if !isGroupDir(g) {
 			continue
 		}
-		groupDir := filepath.Join(dir, g.Name())
-		entries, err := os.ReadDir(groupDir)
+		entries, err := fsys.ReadDir(g.Name())
 		if err != nil {
 			return nil, err
 		}
@@ -202,18 +198,26 @@ func secretFiles(dir string) ([]string, error) {
 			continue
 		}
 		for _, e := range entries {
-			if !e.IsDir() && filepath.Ext(e.Name()) == ".age" {
-				paths = append(paths, filepath.Join(groupDir, e.Name()))
+			if !e.IsDir() && path.Ext(e.Name()) == ".age" {
+				paths = append(paths, path.Join(g.Name(), e.Name()))
 			}
 		}
 	}
 	return paths, nil
 }
 
+// isGroupDir reports whether a vault directory entry can be a group: a
+// directory whose name does not start with a dot. Group directories are
+// slugs ([a-z0-9-]), so dot-folders are never groups; vlt's own temp folder
+// on a server (.vlt-tmp) and folders such as .git are skipped.
+func isGroupDir(e fs.DirEntry) bool {
+	return e.IsDir() && !strings.HasPrefix(e.Name(), ".")
+}
+
 // hasVaultMarker reports whether a directory with these entries holds a
 // format marker or a migration in progress. Neither name can be a secret's
 // file, so such a directory is a vault, never a group.
-func hasVaultMarker(entries []os.DirEntry) bool {
+func hasVaultMarker(entries []fs.DirEntry) bool {
 	for _, e := range entries {
 		if e.Name() == formatFile || e.Name() == migratingFile {
 			return true

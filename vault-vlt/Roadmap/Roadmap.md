@@ -9,7 +9,7 @@ source: "[[2026-10-27 Code Review]]"
 
 # Roadmap
 
-The fix plan from the [[2026-10-27 Code Review]], in five phases, plus a sixth release phase. Earlier phases unblock or de-risk later ones. Each fix is its own note in `Roadmap/Fixes/`, and its `status` property drives the tracker below.
+The fix plan from the [[2026-10-27 Code Review]], in five phases, plus a sixth release phase and a seventh for vaults on a server. Earlier phases unblock or de-risk later ones. Each fix is its own note in `Roadmap/Fixes/`, and its `status` property drives the tracker below.
 
 > [!important] Why storage goes first
 > [[F01 Scrypt-wrapped identity]] changes the on-disk format. Doing it before anyone has real vaults avoids writing a migration under pressure, and it removes the root cause of two critical findings.
@@ -55,7 +55,7 @@ flowchart LR
     class F04,F05,F07,F12,F15 internal-link;
 ```
 
-Phase colours: <span style="color:#e5484d">■</span> 1 storage · <span style="color:#f76b15">■</span> 2 UI · <span style="color:#ffc53d">■</span> 3 memory · <span style="color:#0090ff">■</span> 4 CI · <span style="color:#30a46c">■</span> 5 tests · <span style="color:#8e4ec6">■</span> 6 release. An arrow `A → B` means *do A before B*. Click a node to open its note.
+Phase colours: <span style="color:#e5484d">■</span> 1 storage · <span style="color:#f76b15">■</span> 2 UI · <span style="color:#ffc53d">■</span> 3 memory · <span style="color:#0090ff">■</span> 4 CI · <span style="color:#30a46c">■</span> 5 tests · <span style="color:#8e4ec6">■</span> 6 release · <span style="color:#0f766e">■</span> 7 server. An arrow `A → B` means *do A before B*. Click a node to open its note.
 
 The other fixes have no ordering constraints and can be picked up at any point within their phase: [[F03 Prevent silent overwrites]], [[F06 Persist settings]], [[F08 Correct clipboard clearing]], [[F09 Fail import on read errors]], [[F13 Project hygiene]], [[F14 Remove reinvented stdlib and dead code]].
 
@@ -108,6 +108,24 @@ flowchart LR
     classDef p6 fill:#8e4ec622,stroke:#8e4ec6
     class F17,F18,F20,F21,F22 p6
     class F17,F18,F20,F21,F22 internal-link;
+```
+
+### Phase 7: Vaults on a server
+Added 2026-10-29, at the user's request. Goal: a vault can live in a folder on an SSH server, reached with the system's ssh ([[ADR-002 Vaults on a server over the system ssh]]), with the local guarantees (atomic writes, no overwrites, private modes). No offline copy. A lock file warns when a vault is open twice.
+- [[F24 Storage abstraction]]
+- [[F25 SFTP backend and server locations]]
+- [[F26 Vault lock file]]
+- [[F27 Server vaults in the UI]]
+
+```mermaid
+flowchart LR
+    F24["`F24 Storage abstraction`"] --> F25["`F25 SFTP backend and server locations`"]
+    F24 --> F26["`F26 Vault lock file`"]
+    F25 --> F27["`F27 Server vaults in the UI`"]
+    F26 --> F27
+    classDef p7 fill:#0f766e22,stroke:#0f766e
+    class F24,F25,F26,F27 p7
+    class F24,F25,F26,F27 internal-link;
 ```
 
 ## Tracker

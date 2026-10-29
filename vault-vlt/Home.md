@@ -29,10 +29,11 @@ graph LR
     Arch --> Sec["`Security Model`"]
     Review --> Roadmap["`Roadmap`"]
     Roadmap --> ADR["`ADR-001 Scrypt-wrapped X25519 identity`"]
+    Roadmap --> ADR2["`ADR-002 Vaults on a server over the system ssh`"]
     Maths --> ADR
     Maths --> Pass["`Passphrase Strength`"]
 
-    class Arch,Review,Roadmap,Maths,Unlock,Storage,Sec,ADR,Pass internal-link;
+    class Arch,Review,Roadmap,Maths,Unlock,Storage,Sec,ADR,ADR2,Pass internal-link;
 ```
 
 ### Architecture
@@ -48,6 +49,7 @@ graph LR
 ### Reviews and decisions
 - [[2026-10-27 Code Review]]
 - [[ADR-001 Scrypt-wrapped X25519 identity]]
+- [[ADR-002 Vaults on a server over the system ssh]]
 
 ### Roadmap
 - [[Roadmap]]: phased plan

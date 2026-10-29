@@ -48,7 +48,7 @@ func TestCreateScreen_MismatchShowsErrorAndDoesNotCreate(t *testing.T) {
 	test.NewTempApp(t)
 
 	called := false
-	s := NewCreateScreen("/tmp/vault", func(string) { called = true }, nil)
+	s := NewCreateScreen("/tmp/vault", func(string) { called = true }, nil, nil)
 	test.NewTempWindow(t, s.Content())
 
 	test.Type(s.entry, "correct horse battery")
@@ -70,7 +70,7 @@ func TestCreateScreen_ErrorClearsAfterSuccessfulRetry(t *testing.T) {
 	test.NewTempApp(t)
 
 	created := false
-	s := NewCreateScreen("/tmp/vault", func(string) { created = true }, nil)
+	s := NewCreateScreen("/tmp/vault", func(string) { created = true }, nil, nil)
 	test.NewTempWindow(t, s.Content())
 
 	test.Type(s.entry, "correct horse battery")
@@ -91,7 +91,7 @@ func TestCreateScreen_MatchingPassphraseCreatesAndClearsEntries(t *testing.T) {
 	test.NewTempApp(t)
 
 	var got string
-	s := NewCreateScreen("/tmp/vault", func(p string) { got = p }, nil)
+	s := NewCreateScreen("/tmp/vault", func(p string) { got = p }, nil, nil)
 	test.NewTempWindow(t, s.Content())
 
 	test.Type(s.entry, "correct horse battery")
@@ -119,7 +119,7 @@ func TestApp_MissingVaultShowsCreateScreen(t *testing.T) {
 	test.Type(app.createScreen.confirm, "correct horse batterx")
 	test.Tap(app.createScreen.createBtn)
 
-	if exists, err := store.Exists(dir); err != nil || exists {
+	if exists, err := store.Exists(t.Context(), dir); err != nil || exists {
 		t.Fatalf("a mismatched confirmation must not create a vault (exists=%v err=%v)", exists, err)
 	}
 	if app.createScreen == nil {
@@ -255,7 +255,7 @@ func TestApp_OpenFolderWithoutVaultIsRefused(t *testing.T) {
 	if !screen.errorLabel.Visible() || !strings.Contains(screen.errorLabel.Text, "No vault was found") {
 		t.Fatalf("expected a no-vault error, got %q", screen.errorLabel.Text)
 	}
-	if exists, err := store.Exists(empty); err != nil || exists {
+	if exists, err := store.Exists(t.Context(), empty); err != nil || exists {
 		t.Fatalf("opening must never create a vault (exists=%v err=%v)", exists, err)
 	}
 }
@@ -272,7 +272,7 @@ func TestApp_OpenExistingIsNotOfferedWhenTheLocationIsFromTheEnvironment(t *test
 
 func TestCreateScreen_BusyDisablesOpen(t *testing.T) {
 	test.NewTempApp(t)
-	s := NewCreateScreen("/tmp/vault", func(string) {}, func() {})
+	s := NewCreateScreen("/tmp/vault", func(string) {}, func() {}, func() {})
 
 	s.SetBusy(true)
 	if !s.openBtn.Disabled() {

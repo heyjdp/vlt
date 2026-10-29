@@ -2,6 +2,8 @@ package ui
 
 import (
 	"image/color"
+	"os"
+	"path/filepath"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -20,6 +22,19 @@ var (
 	keyIcon = theme.NewThemedResource(fyne.NewStaticResource("key.svg", []byte(
 		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>`)))
 )
+
+// displayLocation shortens a vault location for display: a local path in
+// the home folder is shown as ~/…; anything else is shown as given.
+func displayLocation(location string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return location
+	}
+	if rel, err := filepath.Rel(home, location); err == nil && rel != "." && filepath.IsLocal(rel) {
+		return "~" + string(filepath.Separator) + rel
+	}
+	return location
+}
 
 // typeIcon returns the icon shown for a secret type.
 func typeIcon(t store.SecretType) fyne.Resource {

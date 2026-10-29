@@ -42,7 +42,10 @@ func TestScreenshots(t *testing.T) {
 		size := fyne.NewSize(900, 600)
 		w.Resize(size)
 
-		dir := t.TempDir()
+		// The unlock screen names the vault; show it under a home folder.
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		dir := filepath.Join(home, "Library", "Application Support", "vlt", "vault")
 		newVaultWith(t, dir, sampleSecrets()...)
 		app := newApp(a, w, Config{VaultDir: dir, LockTimeoutMs: DefaultLockTimeoutMs, ClipboardTTLs: 30},
 			quietLog(), inlineRunner(), noTimers, testKDF)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -168,7 +169,7 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 	currentLabel.Wrapping = fyne.TextWrapBreak
 
 	pathEntry := widget.NewEntry()
-	pathEntry.SetPlaceHolder("New vault directory path")
+	pathEntry.SetPlaceHolder("Folder, or user@host:/path on an SSH server")
 
 	errorLabel := errorText()
 
@@ -190,10 +191,8 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 	moveBtn := widget.NewButton("Move Vault", func() {
 		errorLabel.Hide()
 
-		newDir := pathEntry.Text
-		if newDir == "" {
-			errorLabel.SetText("Please enter or browse to a new vault directory")
-			errorLabel.Show()
+		newDir, ok := ss.targetLocation(pathEntry.Text, errorLabel, "Please enter or browse to a new vault directory")
+		if !ok {
 			return
 		}
 		if newDir == ss.config.VaultDir {
@@ -220,10 +219,8 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 	switchBtn := widget.NewButton("Switch Vault (no copy)", func() {
 		errorLabel.Hide()
 
-		newDir := pathEntry.Text
-		if newDir == "" {
-			errorLabel.SetText("Please enter or browse to a vault directory")
-			errorLabel.Show()
+		newDir, ok := ss.targetLocation(pathEntry.Text, errorLabel, "Please enter or browse to a vault directory")
+		if !ok {
 			return
 		}
 		if newDir == ss.config.VaultDir {
@@ -256,11 +253,31 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 	return card(
 		subheading("Vault Location"),
 		currentLabel,
-		muted("Move copies every secret to a new folder and keeps the original. Switch opens the vault in another folder, or creates one there."),
+		muted("Move copies every secret to a new folder and keeps the original. Switch opens the vault in another folder, or creates one there. "+
+			"Either can be a folder on an SSH server (user@host:/path), reached with your ssh setup; secrets and the vault key are encrypted before they are sent."),
 		container.NewBorder(nil, nil, nil, browseBtn, pathEntry),
 		errorLabel,
 		container.NewHBox(moveBtn, switchBtn),
 	)
+}
+
+// targetLocation reads the location typed for Move or Switch: it must parse
+// (a folder, or a folder on a server), and is returned in its canonical form
+// so the same place is always saved the same way. On a problem it shows the
+// error and returns false; empty shows emptyMsg.
+func (ss *SettingsScreen) targetLocation(text string, errorLabel *widget.Label, emptyMsg string) (string, bool) {
+	if strings.TrimSpace(text) == "" {
+		errorLabel.SetText(emptyMsg)
+		errorLabel.Show()
+		return "", false
+	}
+	loc, err := store.ParseLocation(text)
+	if err != nil {
+		errorLabel.SetText(err.Error())
+		errorLabel.Show()
+		return "", false
+	}
+	return loc.String(), true
 }
 
 func (ss *SettingsScreen) moveVault(newDir string, errorLabel, currentLabel *widget.Label) {

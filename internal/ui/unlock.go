@@ -20,8 +20,10 @@ type UnlockScreen struct {
 	content    *fyne.Container
 }
 
-// NewUnlockScreen creates a passphrase entry screen.
-func NewUnlockScreen(window fyne.Window, onUnlock func(passphrase string)) *UnlockScreen {
+// NewUnlockScreen creates a passphrase entry screen for the vault at
+// location, which it names so a vault on a server is never mistaken for a
+// local one.
+func NewUnlockScreen(window fyne.Window, location string, onUnlock func(passphrase string)) *UnlockScreen {
 	s := &UnlockScreen{
 		window:   window,
 		onUnlock: onUnlock,
@@ -49,11 +51,15 @@ func NewUnlockScreen(window fyne.Window, onUnlock func(passphrase string)) *Unlo
 
 	subtitle := muted("Your vault is locked. Enter your passphrase to unlock it.")
 	subtitle.Alignment = fyne.TextAlignCenter
+	where := caption(displayLocation(location))
+	where.Alignment = fyne.TextAlignCenter
+	where.Wrapping = fyne.TextWrapBreak
 
 	s.content = centeredCard(unlockCardWidth,
 		container.NewCenter(brandMark(72)),
 		title,
 		subtitle,
+		where,
 		s.entry,
 		s.errorLabel,
 		s.progress,

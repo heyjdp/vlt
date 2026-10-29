@@ -197,7 +197,7 @@ func TestApp_CreateRunsOffTheMainGoroutine(t *testing.T) {
 	test.Type(app.createScreen.confirm, "correct horse battery")
 	test.Tap(app.createScreen.createBtn)
 
-	if exists, _ := store.Exists(dir); exists {
+	if exists, _ := store.Exists(context.Background(), dir); exists {
 		t.Fatal("create must not run synchronously in the tap handler")
 	}
 	if !app.createScreen.createBtn.Disabled() || app.createScreen.progress.Hidden {

@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"errors"
+	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -29,6 +32,33 @@ func TestCountText(t *testing.T) {
 	for _, tt := range tests {
 		if got := countText(tt.shown, tt.total); got != tt.want {
 			t.Errorf("countText(%d, %d) = %q, want %q", tt.shown, tt.total, got, tt.want)
+		}
+	}
+}
+
+func TestUserMessage(t *testing.T) {
+	t.Parallel()
+	err := fmt.Errorf("store.Open: %w", fmt.Errorf("store.Exists %q: %w", "nas:/v", errors.New("ssh: Connection refused")))
+	if got := userMessage(err); got != "ssh: Connection refused" {
+		t.Fatalf("userMessage = %q", got)
+	}
+}
+
+// Not parallel: it sets HOME.
+func TestDisplayLocation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.UserHomeDir reads USERPROFILE")
+	}
+	t.Setenv("HOME", "/home/jas")
+	for in, want := range map[string]string{
+		"/home/jas/vault":                  "~/vault",
+		"/home/jas":                        "/home/jas",
+		"/home/jasper/vault":               "/home/jasper/vault",
+		"/srv/vault":                       "/srv/vault",
+		"jas@10.20.20.150:/home/jas/vault": "jas@10.20.20.150:/home/jas/vault",
+	} {
+		if got := displayLocation(in); got != want {
+			t.Errorf("displayLocation(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

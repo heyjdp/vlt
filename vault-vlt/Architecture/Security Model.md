@@ -18,6 +18,8 @@ created: 2026-10-27
 | Decrypted secrets in RAM | Same | Emptied and dereferenced on lock; byte buffers vlt owns zeroed ([[F11 Memory hygiene and honest docs]]) | Strings on the heap until GC, not overwritten; library-internal copies |
 | Clipboard | Other apps, clipboard history | TTL clear of vlt's own value; cleared on lock ([[F08 Correct clipboard clearing]]) | OS clipboard history or managers may keep a copy |
 | Unattended session | Shoulder surfing | Auto-lock on real inactivity, with a 30 s warning ([[F07 Inactivity-based auto-lock]]) | Scrolling and pointer movement don't count as activity |
+| Vault on a server | Server operator, network | Secrets and the vault key are age-encrypted before they are sent; OpenSSH authenticates the host (`known_hosts`, batch mode) and encrypts the transport ([[ADR-002 Vaults on a server over the system ssh]]) | The server sees names, sizes, times, `vlt.json` and `vlt.lock` (plain text); can guess passphrases offline against `vlt.age`; can delete files or roll any file back undetected. A user ssh config with `StrictHostKeyChecking accept-new` accepts new host keys |
+| Two copies editing one vault | Lost edit | `vlt.lock` warns before a second unlock ([[F26 Vault lock file]]); creates never overwrite | Same-secret edits are last-writer-wins; two computers with the same host name count as one |
 | Vault integrity | Crash mid-write, partial re-encrypt | Per-file atomic writes ([[F02 Atomic file writes]]); passphrase change rewrites one file and migration is resumable ([[F01 Scrypt-wrapped identity]]) | Concurrent writers other than migration are not coordinated |
 
 ## Where key material lives (after F01)

@@ -20,7 +20,7 @@ vlt follows the system's light or dark mode. `make screenshots` re-renders the m
 ## Features
 
 - **Passphrase-only unlock** — no external key files, no OS keychain dependency
-- **Safe vault creation** — when no vault exists at the configured location (first run, or after switching to an empty or missing folder), a dedicated screen shows where the vault will be created and asks for the passphrase twice (at least 12 characters not counting leading or trailing spaces; five or more random words recommended), so a typo can never become the passphrase. The same screen offers *Open Existing Vault…* (unless `VLT_VAULT_DIR` sets the location) to pick a folder that already holds a vault, for example after the saved location was lost. A folder without a vault is refused, with a pointer to the subfolder if you picked the folder above a vault, and the new location is saved once the vault unlocks. If the vault directory cannot be read (for example, permission denied), vlt shows the error and a Retry button rather than offering to create a vault over it
+- **Safe vault creation** — when no vault exists at the configured location (first run, or after switching to an empty or missing folder), a dedicated screen shows where the vault will be created and asks for the passphrase twice (at least 12 characters not counting leading or trailing spaces; five or more random words recommended), so a typo can never become the passphrase. The same screen offers *Open Existing Vault…* to pick a folder that already holds a vault, for example after the saved location was lost, and *Use a Vault on a Server…* for one on an SSH server (neither when `VLT_VAULT_DIR` sets the location). A folder without a vault is refused, with a pointer to the subfolder if you picked the folder above a vault, and the new location is saved once the vault unlocks. If the vault directory cannot be read (for example, permission denied) or its server cannot be reached, vlt shows the error and a Retry button rather than offering to create a vault over it
 - **age encryption** — each secret is an individual `.age` file encrypted to a random X25519 vault key; the vault key is encrypted to your passphrase with scrypt, so unlocking costs one scrypt derivation however many secrets you have
 - **Secure memory (best-effort)** — the vault key's encoded form is held in mlock'd memory via memguard and destroyed on lock; passphrase fields are cleared as soon as they are read, and on lock loaded secrets are emptied and vlt's references to them dropped. Go cannot wipe strings, so the parsed key and secret text live on the heap until garbage-collected
 - **Secret types** — passwords, structured login records (URL/username/password/TOTP; the password and TOTP secret are masked), and encrypted files
@@ -33,6 +33,8 @@ vlt follows the system's light or dark mode. `make screenshots` re-renders the m
 - **Change passphrase** — atomically rewrites only `vlt.age`; secrets are never re-encrypted, so an interrupted change leaves the old passphrase working
 - **Automatic migration** — vaults from earlier versions (every secret encrypted directly to the passphrase) are upgraded on first unlock; the upgrade is crash-safe and resumes if interrupted
 - **Move/switch vault** — copy secrets (including the wrapped key) to a new location, or point to a different vault directory
+- **Vaults on a server** — keep the vault in a folder on an SSH server (`me@nas.example:/home/me/vault`), reached with your own ssh setup. Encryption stays on your computer: secrets and the vault key are encrypted before they are sent. See [Vaults on a Server](#vaults-on-a-server)
+- **Open-elsewhere warning** — a lock file (`vlt.lock`) records who has the vault open; opening a vault that another copy of vlt has open asks first, because if both save the same secret the last save wins
 - **Cross-platform** — Linux, macOS, Windows, OpenBSD
 
 ## Vault Structure
@@ -41,6 +43,7 @@ vlt follows the system's light or dark mode. `make screenshots` re-renders the m
 vault/
 ├── vlt.age                  # Vault key, encrypted to the passphrase (scrypt)
 ├── vlt.json                 # Format marker: {"format":2}
+├── vlt.lock                 # Who has the vault open (while vlt has it unlocked)
 ├── work/
 │   ├── github-api-key.age
 │   └── jira-login.age
@@ -55,6 +58,8 @@ vault/
 - Groups are plain subdirectories, created on demand. The directory is the slugified group name; the secret keeps the group name as you typed it (`Personal Finance` is shown as typed and stored in `personal-finance/`). Group names that slugify to the same directory are one group, and a new or imported secret typed into `personal finance` joins an existing `Personal Finance` group. A group name with no ASCII letter or digit becomes `default`.
 - Filenames are slugified from the secret name (lowercase ASCII letters, digits and `-`). Names that slugify to the same filename, such as `GitHub Key` and `github-key`, cannot coexist in a group: creating one when the other exists is refused, and updating through the other name is refused. Names with no ASCII letter or digit, or whose filename would exceed 255 bytes, are rejected.
 - No database, no index file — the directory structure is the index
+- `vlt.lock` is written when a copy of vlt unlocks the vault and removed when it locks or quits. A copy that crashes leaves it behind; the next unlock on that computer takes it over. It holds that computer's host name, user name, process ID and when it opened the vault, never a secret. It is not part of the vault: Move and backups don't need it
+- On a server, vlt also keeps `.vlt-tmp/`, a private folder for writes in progress. Dot-folders are never groups
 - Every write is atomic: vlt writes a `.tmp-*` file beside the target, fsyncs it, renames it into place, and fsyncs the directory (skipped on Windows, where NTFS journals the rename). New group directories are fsynced into their parent too. A crash leaves either the old or the new file, never a partial one. Leftover `.tmp-*` files are ignored and can be deleted.
 - Trivially Git-compatible (add `.tmp-*` to the vault's `.gitignore` so an interrupted write never shows up as untracked)
 
@@ -69,7 +74,7 @@ vault/
 
 On Linux and OpenBSD, a relative `XDG_DATA_HOME` is ignored. A vault created by an earlier vlt in `~/.local/share/vlt/vault/` is still used when `XDG_DATA_HOME` points elsewhere and holds no vault.
 
-Override with the `VLT_VAULT_DIR` environment variable, or move or switch the vault in Settings. If no vault is found at the location, the create screen can open one from another folder. The choice is saved (see [Configuration](#configuration)). Backups, uninstalling and restoring: see [Your Data](#your-data).
+Override with the `VLT_VAULT_DIR` environment variable, or move or switch the vault in Settings. If no vault is found at the location, the create screen can open one from another folder or use one on a server. The choice is saved (see [Configuration](#configuration)). Backups, uninstalling and restoring: see [Your Data](#your-data).
 
 ## Your Data
 
@@ -79,17 +84,44 @@ By default vlt keeps its data in your user folder, never inside the app, so remo
 - **Settings file**: macOS `~/Library/Preferences/fyne/io.yourorg.vlt/preferences.json`; Linux and OpenBSD `$XDG_CONFIG_HOME/fyne/io.yourorg.vlt/preferences.json` (default `~/.config/fyne/io.yourorg.vlt/preferences.json`); Windows `%APPDATA%\fyne\io.yourorg.vlt\preferences.json`. It holds the vault location, the auto-lock timeout, the clipboard TTL and the last folder used in a file dialog. No secret, passphrase or key is ever stored there.
 - **Exported files** are decrypted copies saved wherever you chose. They are not part of the vault; delete them when you no longer need them.
 
-**Uninstalling.** Deleting `vlt.app`, the AppImage or the binary leaves the vault and the settings file in place. Uninstaller tools such as AppCleaner often offer to delete `~/Library/Application Support/vlt` as well: that deletes the vault itself, so untick it unless you mean to. For a complete removal, delete the vault folder and the settings folder (`…/fyne/io.yourorg.vlt/`).
+**Uninstalling.** Deleting `vlt.app`, the AppImage or the binary leaves the vault and the settings file in place. Uninstaller tools such as AppCleaner often offer to delete `~/Library/Application Support/vlt` as well: that deletes the vault itself, so untick it unless you mean to. For a complete removal, delete the vault folder and the settings folder (`…/fyne/io.yourorg.vlt/`). A vault on a server stays on the server.
 
-**Reinstalling.** A reinstalled vlt finds the vault at the saved location and unlocks with the same passphrase, with every secret, group, tag and file as before. If the settings file was lost and the vault is not at the default location, vlt shows the create screen: choose *Open Existing Vault…* and pick the vault folder instead of creating a new vault. If an older copy is still at the default location (*Move Vault* keeps the original), vlt opens that copy instead; use *Switch Vault (no copy)* in Settings to go back to the right folder.
+**Reinstalling.** A reinstalled vlt finds the vault at the saved location and unlocks with the same passphrase, with every secret, group, tag and file as before. If the settings file was lost and the vault is not at the default location, vlt shows the create screen: choose *Open Existing Vault…* and pick the vault folder (or *Use a Vault on a Server…* and enter its location) instead of creating a new vault. If an older copy is still at the default location (*Move Vault* keeps the original), vlt opens that copy instead; use *Switch Vault (no copy)* in Settings to go back to the right folder.
 
-**Backing up.** Copy the whole vault folder while vlt is locked or closed. The copy must include `vlt.age`: it holds the vault key, and without it no secret can be decrypted, even with the right passphrase. Secret contents are encrypted, so a backup can live on a USB drive or in cloud storage, and its contents are as strong as your passphrase. File and folder names are not encrypted: they show your group and secret names. Leftover `.tmp-*` files can be skipped.
+**Backing up.** Copy the whole vault folder while vlt is locked or closed. The copy must include `vlt.age`: it holds the vault key, and without it no secret can be decrypted, even with the right passphrase. Secret contents are encrypted, so a backup can live on a USB drive or in cloud storage, and its contents are as strong as your passphrase. File and folder names are not encrypted: they show your group and secret names. Leftover `.tmp-*` files can be skipped. For a vault on a server, copy the folder from the server (`scp -r` or `rsync`), or use *Move Vault* in Settings to copy it to a local folder.
 
 **Restoring or moving to a new computer.** Copy the vault folder back to where it was, and vlt finds it. Anywhere else: if vlt shows the create screen, choose *Open Existing Vault…* and pick the folder that contains `vlt.age`; if another vault is open, use *Switch Vault (no copy)* in Settings.
 
 **Changing the passphrase** rewrites only `vlt.age`; the vault key stays the same. A backup's `vlt.age` still opens with the old passphrase, and that key decrypts your current secrets too. If you change the passphrase because it may have leaked, destroy backups made before the change.
 
 **Forgetting the passphrase.** There is no recovery: the vault key is encrypted only to your passphrase, and no one can reset it. Keep a copy of it somewhere safe and offline.
+
+## Vaults on a Server
+
+A vault can live in a folder on an SSH server instead of on this computer. vlt reads and writes it over SFTP, using the system's `ssh` client, so it uses your `~/.ssh/config` (host aliases, users, ports, `ProxyJump`), your keys, `ssh-agent` and `known_hosts`.
+
+**Locations.** Anywhere vlt takes a vault location (the create screen's *Use a Vault on a Server…*, Settings' Move and Switch, and `VLT_VAULT_DIR`), you can write:
+
+| Form | Example | Notes |
+|------|---------|-------|
+| `[user@]host:path` | `me@nas.example:/home/me/vault` | Like `scp`. A relative path, or `~/path`, is relative to your home directory on the server |
+| `ssh://[user@]host[:port]/path` | `ssh://me@nas.example:2222/srv/vault` | Needed for a port, or a one-letter host name. `ssh://host/~/vault` is under your home directory |
+| IPv6 | `me@[fd00::1]:/srv/vault`, `ssh://[fd00::1]:22/srv/vault` | The address goes in brackets |
+
+`host` can be a `Host` alias from `~/.ssh/config`. A user or port in the location overrides the config. Host and user names may hold only letters, digits, `.`, `_` and `-` (not first): ssh can substitute them into commands from your ssh config, so anything else is refused. The host must have two or more characters in the short form, so `C:\vault` is always a local path. A local path whose first colon comes before any slash, such as `vault:old`, reads as a server; write `./vault:old`.
+
+**Setting it up.**
+1. Connect once from a terminal (`ssh me@nas.example`) so the server's host key is in `known_hosts`. vlt runs ssh in batch mode, which never prompts, so an unknown host key is refused, unless your ssh config sets `StrictHostKeyChecking` to `accept-new` or `no` for that host: vlt passes no host-key options of its own. Hosts reached through `ProxyJump` must be known too.
+2. Make sure your key works without a prompt: load it into `ssh-agent`, or use a key without a passphrase. Password logins are not supported. On macOS, `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` stores the key's passphrase in the Keychain; add `UseKeychain yes` and `AddKeysToAgent yes` for the host in `~/.ssh/config` so it is loaded again after a restart.
+3. In vlt, choose *Use a Vault on a Server…* on the create screen, or *Switch Vault (no copy)* in Settings, and enter the location. If a vault is there, vlt asks for its passphrase; if not, it offers to create one there. To put an existing vault on the server, use *Move Vault* in Settings with the server location.
+
+vlt runs ssh without a terminal, with forwarding, `RemoteCommand` and `LocalCommand` turned off, so the session only carries SFTP. The server needs SFTP with OpenSSH's `posix-rename` and `hardlink` extensions (any OpenSSH `sftp-server`), so writes stay atomic and creating a secret never overwrites another; vlt refuses a server without them. Each file is written in a private folder in the vault, `.vlt-tmp` (mode 0700, so no other user can open a file before its own mode is set), then renamed into place. With OpenSSH's `fsync` extension, which vlt uses when offered, each file is flushed to disk before the rename. SFTP cannot flush a directory, so if the server itself crashes, the most recent change to a file can be lost (the previous version remains), but a file is never left half-written.
+
+**What the server sees.** Secrets and the vault key are encrypted on your computer before they are sent, and your passphrase and decrypted secrets never leave your computer. Two small files are plain text: `vlt.json` (the format number) and `vlt.lock` (who has the vault open: a host name, a user name, a process ID and a time). Like any storage, the server sees the file and folder names (your group and secret names, slugified), file sizes and times. Whoever has the server's files can try passphrases against `vlt.age` offline, as with any copy of the vault, so your passphrase's strength is the protection. Whoever controls the server can also delete files, or put back an older copy of any file, which vlt cannot detect. Use a server you trust to keep your files, and keep backups.
+
+**Connection.** vlt connects when it checks the location and when you unlock, and keeps the connection until the vault locks. If the connection drops, the operation that noticed fails with an error (listing the vault fails as a whole rather than showing some secrets) and the next one reconnects. Nothing is retried automatically, because a write may or may not have landed. A connection that silently dies is noticed after about 45 seconds. A vault on a server needs the server; there is no offline copy. If the server can't be reached when vlt checks the location, vlt shows the error with *Retry* and, unless `VLT_VAULT_DIR` sets the location or the vault already is the default one, *Use the Vault on This Computer* (the default local location). If it fails while unlocking, the error is shown on the unlock screen. Each secret is a file, so listing a large vault over a slow link takes a while; vlt reads up to 8 files at once.
+
+**Two computers, one vault.** Both can use the vault. Creating a secret never overwrites one, but if both edit the same secret the last save wins. `vlt.lock` warns about this: unlocking a vault that another copy of vlt has open shows who has it and since when, and asks before going on. *Open Anyway* takes the lock over; *Cancel* closes the vault again. If the question is not answered within the auto-lock timeout, the vault is closed as if locked. A lock left by a copy of vlt that crashed on this computer is taken over without asking. Computers are told apart by host name, so two computers with the same name count as one. The lock only warns; it never keeps you out.
 
 ## Secret Envelope Format
 
@@ -215,8 +247,14 @@ The test suite covers:
 
 - **crypto** — vault-key generation, wrap/unwrap with a passphrase, wrong-passphrase rejection, zeroing, encrypt/decrypt round-trips, X25519-only secret encryption, legacy passphrase decryption
 - **store** — secret types and JSON marshalling, slugification, name validation, group directories and labels (kept as typed), CRUD operations (create/update/get/delete/list), refusal to overwrite on create and on slug collision, vault create/open/exists (a vault in a subfolder is never mistaken for a group), one-scrypt-per-unlock check, passphrase change (only `vlt.age` rewritten, failures keep the old passphrase), format-1 migration (including resume after a crash), atomic writes, vault copy, `List` stopping when its context is cancelled
+  - *Storage*: one contract test runs against both the local file system and the SFTP backend (through pkg/sftp's server over an in-process pipe): atomic and exclusive writes, permissions, missing-file errors. A whole vault lifecycle runs on the SFTP backend (create, CRUD, passphrase change, reopen, copy between local and remote, only ciphertext on the server). Other tests cover reconnecting after a dropped connection, refusing a server without safe writes, the ssh arguments, and reporting what a failing `ssh` printed
+  - *Locations*: parsing local paths, `host:path` and `ssh://` forms (IPv6, ports, `~`), rejecting values ssh could read as options, and round trips through `String`
+  - *Lock file*: recorded on unlock and removed on close, another computer's lock reported and taken over on request, a crashed local copy's lock taken over, someone else's lock never removed
+  - *Server safety*: listings come back sorted by name with names that aren't a single path element dropped, temp files live in a private `.vlt-tmp` (tightened to 0700 if loosened) that is never a group or copied, listing fails as a whole when the connection drops, and a remote close releases the lock
+  - *Real server* (optional): `VLT_TEST_SSH_LOCATION=me@host:/tmp/vlt-test go test ./internal/store -run RealServer` runs the backend against a real OpenSSH server (fsync, modes, 20 secrets, the lock), in a folder that must be empty or absent; it leaves its test vault there, so delete the folder before running it again
 - **ui** — headless [`fyne/test`](https://pkg.go.dev/fyne.io/fyne/v2/test), with inline or queued runners for background work, hand-fired fake timers, and real vaults created with a cheap scrypt work factor:
-  - *Screens*: create (passphrase confirmation and validation; opening an existing vault in another folder, refusing a folder without one or pointing to the vault below it, ignoring a stale result, and hiding the option under `VLT_VAULT_DIR`), unlock (wrong passphrase), and the error screen for an unreadable vault directory
+  - *Screens*: create (passphrase confirmation and validation; opening an existing vault in another folder, refusing a folder without one or pointing to the vault below it, ignoring a stale result, and hiding the option under `VLT_VAULT_DIR`; the server-location dialog), unlock (wrong passphrase; naming the vault), and the error screen for an unreadable vault directory or an unreachable server (with a fake `ssh`), including the way back to the local vault
+  - *Lock file*: unlocking takes it, and locking or quitting releases it; a vault open elsewhere asks first, *Open Anyway* takes over, *Cancel* closes the waiting vault and leaves the other lock alone, and an unanswered question closes it after the auto-lock timeout
   - *Background work*: unlock and create run off the UI thread with progress; stale results after a vault switch or lock are dropped; lock cancels the initial list load
   - *List and detail*: saves, deletes and imports update rows in place (also under a search filter and during the first load); forms save every field, mask secrets, and copy the right value; group suggestions show one spelling per group, a new or imported secret typed into a differently spelled group uses the existing one, and search matches a group by either spelling
   - *Auto-lock*: activity resets the countdown, idleness locks, the warning and its buttons work, timeout changes apply, zero disables it
@@ -267,7 +305,7 @@ Every action is pinned to a commit SHA, checkout does not persist credentials, a
 
 | Environment Variable     | Default   | Range                     | Description                          |
 |--------------------------|-----------|---------------------------|--------------------------------------|
-| `VLT_VAULT_DIR`         | (see [Default Vault Location](#default-vault-location)) |                           | Override the vault directory location |
+| `VLT_VAULT_DIR`         | (see [Default Vault Location](#default-vault-location)) |                           | Override the vault location: a folder, or a folder on a server (see [Vaults on a Server](#vaults-on-a-server)) |
 | `VLT_LOCK_TIMEOUT_MS`   | `300000`  | 30000–1800000, or 0 (off) | Auto-lock after N ms of inactivity   |
 | `VLT_CLIPBOARD_TTL_S`   | `30`      | 5–120                     | Clear clipboard after N seconds      |
 
@@ -286,6 +324,12 @@ internal/
 ├── store/
 │   ├── secret.go            Secret types, JSON envelope, slugification, group directories and labels
 │   ├── store.go             Secret CRUD, list, copy
+│   ├── location.go          Vault locations: local paths, host:path, ssh:// URLs
+│   ├── fs.go                Storage interface; the local file system
+│   ├── sshfs.go             SFTP storage over the system's ssh client
+│   ├── lock.go              vlt.lock: who has the vault open
+│   ├── process_*.go         Whether a process is still running (stale locks)
+│   ├── console_*.go         Starting ssh without a console window on Windows
 │   ├── vault.go             Create/Open/ChangePassphrase, format marker
 │   ├── migrate.go           Crash-safe format-1 → format-2 migration
 │   └── atomic.go            Atomic file writes

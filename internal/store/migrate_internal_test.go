@@ -87,7 +87,11 @@ func TestMigration_ResumesAfterCrashMidway(t *testing.T) {
 		t.Fatal(err)
 	}
 	partial := New(id, dir, quiet())
-	if done, err := partial.migrateFile(internalPass, paths[0]); err != nil || !done {
+	rel, err := filepath.Rel(dir, paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done, err := partial.migrateFile(internalPass, filepath.ToSlash(rel)); err != nil || !done {
 		t.Fatalf("migrateFile: done=%v err=%v", done, err)
 	}
 	firstAfterCrash, err := os.ReadFile(paths[0])
@@ -170,7 +174,7 @@ func TestOpen_RunsExactlyOneScrypt(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	s, err := Create(dir, internalPass, quiet(), WithWorkFactor(10))
+	s, err := Create(context.Background(), dir, internalPass, quiet(), WithWorkFactor(10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +226,7 @@ func TestBeginMigration_JoinsMigrationStartedElsewhere(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := beginMigration(context.Background(), dir, internalPass, quiet(), options{workFactor: 10})
+	s, err := beginMigration(context.Background(), localFS{root: dir}, Location{Path: dir}, internalPass, quiet(), options{workFactor: 10})
 	if err != nil {
 		t.Fatalf("beginMigration: %v", err)
 	}

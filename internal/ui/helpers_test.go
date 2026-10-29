@@ -90,7 +90,7 @@ func noTimers(d time.Duration, f func()) stoppableTimer { return &fakeTimer{d: d
 // factor and testPassphrase.
 func newVaultWith(t *testing.T, dir string, secrets ...*store.Secret) {
 	t.Helper()
-	s, err := store.Create(dir, testPassphrase, quietLog(), testKDF)
+	s, err := store.Create(context.Background(), dir, testPassphrase, quietLog(), testKDF)
 	if err != nil {
 		t.Fatalf("store.Create: %v", err)
 	}

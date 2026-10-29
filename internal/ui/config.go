@@ -10,9 +10,12 @@ import (
 
 // Config holds the user-adjustable settings.
 type Config struct {
-	VaultDir      string // directory holding the vault
-	LockTimeoutMs int    // auto-lock after this many ms of inactivity; 0 disables it
-	ClipboardTTLs int    // seconds before a copied secret is cleared
+	VaultDir string // the vault's location: a directory, or a folder on an SSH server
+	// DefaultVaultDir is the local default location, offered when a vault on
+	// a server cannot be reached.
+	DefaultVaultDir string
+	LockTimeoutMs   int // auto-lock after this many ms of inactivity; 0 disables it
+	ClipboardTTLs   int // seconds before a copied secret is cleared
 	// FromEnv records which settings were set by environment variables.
 	// Those are not saved and cannot be changed in Settings, because the
 	// variable would override the change on the next launch anyway.
@@ -52,9 +55,10 @@ const (
 // with a warning logged either way.
 func LoadConfig(prefs fyne.Preferences, getenv func(string) string, defaultVaultDir string, log *slog.Logger) Config {
 	cfg := Config{
-		VaultDir:      prefs.StringWithFallback(prefVaultDir, defaultVaultDir),
-		LockTimeoutMs: prefs.IntWithFallback(prefLockTimeout, DefaultLockTimeoutMs),
-		ClipboardTTLs: prefs.IntWithFallback(prefClipboardTTL, DefaultClipboardTTLs),
+		VaultDir:        prefs.StringWithFallback(prefVaultDir, defaultVaultDir),
+		DefaultVaultDir: defaultVaultDir,
+		LockTimeoutMs:   prefs.IntWithFallback(prefLockTimeout, DefaultLockTimeoutMs),
+		ClipboardTTLs:   prefs.IntWithFallback(prefClipboardTTL, DefaultClipboardTTLs),
 	}
 	if dir := getenv(envVaultDir); dir != "" {
 		cfg.VaultDir = dir

@@ -6,9 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"syscall"
 
 	"github.com/yourorg/vlt/internal/crypto"
@@ -37,10 +36,10 @@ const FormatVersion = 2
 // ErrWrongPassphrase is returned when the passphrase cannot decrypt vlt.age.
 var ErrWrongPassphrase = crypto.ErrWrongPassphrase
 
-// ErrVaultNotFound is returned by Open when dir holds no vault.
+// ErrVaultNotFound is returned by Open when the location holds no vault.
 var ErrVaultNotFound = errors.New("vault not found")
 
-// ErrVaultExists is returned by Create and CopyTo when the target directory
+// ErrVaultExists is returned by Create and CopyTo when the target location
 // already holds a vault or secret files.
 var ErrVaultExists = errors.New("vault already exists")
 
@@ -58,6 +57,9 @@ type Option func(*options)
 // options holds the settings Options apply.
 type options struct {
 	workFactor int
+	// dial, when set, replaces the ssh client for remote locations. It
+	// exists so tests can serve SFTP in-process.
+	dial dialFunc
 	// onKDF, when set, is called before every scrypt derivation. It exists
 	// so internal tests can count derivations.
 	onKDF func()
@@ -68,6 +70,11 @@ type options struct {
 // tests only.
 func WithWorkFactor(logN int) Option {
 	return func(o *options) { o.workFactor = logN }
+}
+
+// withDial replaces the ssh client for remote locations (tests only).
+func withDial(d dialFunc) Option {
+	return func(o *options) { o.dial = d }
 }
 
 func buildOptions(opts []Option) options {
@@ -102,48 +109,77 @@ type formatMarker struct {
 	Format int `json:"format"`
 }
 
-// Exists reports whether dir contains a vault: a wrapped key or legacy
+// Exists reports whether location holds a vault: a wrapped key or legacy
 // sentinel, an in-progress migration, a format marker, or any secret file.
-// A directory for which Exists is true must be opened, never created over.
-// A missing dir is not an error. Any other error (e.g. permission denied on
-// dir or a group directory) is returned, because "cannot tell" must not be
-// treated as "no vault" and lead to creating one over existing secrets.
-func Exists(dir string) (bool, error) {
+// A location for which Exists is true must be opened, never created over.
+// A missing directory is not an error. Any other error (permission denied on
+// the directory or a group directory, a server that cannot be reached) is
+// returned, because "cannot tell" must not be treated as "no vault" and lead
+// to creating one over existing secrets.
+func Exists(ctx context.Context, location string, opts ...Option) (bool, error) {
+	fsys, _, err := openLocation(ctx, location, buildOptions(opts))
+	if err != nil {
+		return false, fmt.Errorf("store.Exists: %w", err)
+	}
+	defer func() { _ = fsys.Close() }()
+	exists, err := existsIn(fsys)
+	if err != nil {
+		return false, fmt.Errorf("store.Exists: %w", err)
+	}
+	return exists, nil
+}
+
+// existsIn is Exists for open storage.
+func existsIn(fsys vaultFS) (bool, error) {
 	for _, name := range []string{keyFile, migratingFile, formatFile} {
-		_, err := os.Stat(filepath.Join(dir, name))
+		_, err := fsys.Stat(name)
 		if err == nil {
 			return true, nil
 		}
-		if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
-			return false, fmt.Errorf("store.Exists: %w", err)
+		if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+			return false, err
 		}
 	}
-	paths, err := secretFiles(dir)
-	if errors.Is(err, os.ErrNotExist) {
+	paths, err := secretFiles(fsys)
+	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("store.Exists: %w", err)
+		return false, err
 	}
 	return len(paths) > 0, nil
 }
 
-// Create initialises a new vault in dir: it generates a random vault key,
-// stores it encrypted to passphrase in vlt.age, and writes the format marker.
-// It returns ErrVaultExists if dir already holds a vault or secret files.
-func Create(dir, passphrase string, log *slog.Logger, opts ...Option) (*Store, error) {
-	exists, err := Exists(dir)
+// Create initialises a new vault at location: it generates a random vault
+// key, stores it encrypted to passphrase in vlt.age, and writes the format
+// marker. It returns ErrVaultExists if the location already holds a vault or
+// secret files.
+func Create(ctx context.Context, location, passphrase string, log *slog.Logger, opts ...Option) (*Store, error) {
+	o := buildOptions(opts)
+	fsys, loc, err := openLocation(ctx, location, o)
+	if err != nil {
+		return nil, fmt.Errorf("store.Create: %w", err)
+	}
+	s, err := create(fsys, loc, passphrase, log, o)
+	if err != nil {
+		_ = fsys.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func create(fsys vaultFS, loc Location, passphrase string, log *slog.Logger, o options) (*Store, error) {
+	exists, err := existsIn(fsys)
 	if err != nil {
 		return nil, fmt.Errorf("store.Create: %w", err)
 	}
 	if exists {
-		return nil, fmt.Errorf("store.Create %q: %w", dir, ErrVaultExists)
+		return nil, fmt.Errorf("store.Create %q: %w", loc, ErrVaultExists)
 	}
-	if err := mkdirAllSynced(dir); err != nil {
+	if err := fsys.MkdirAll("."); err != nil {
 		return nil, fmt.Errorf("store.Create: %w", err)
 	}
 
-	o := buildOptions(opts)
 	id, err := crypto.GenerateIdentity()
 	if err != nil {
 		return nil, fmt.Errorf("store.Create: %w", err)
@@ -154,13 +190,13 @@ func Create(dir, passphrase string, log *slog.Logger, opts ...Option) (*Store, e
 		return nil, fmt.Errorf("store.Create: %w", err)
 	}
 
-	s := newStore(id, dir, log, o)
+	s := newStore(id, fsys, loc, log, o)
 	// Exclusive: another instance creating a vault here at the same moment
 	// must not have its vlt.age replaced.
-	err = writeFileExclusive(filepath.Join(dir, keyFile), wrapped)
-	if errors.Is(err, os.ErrExist) {
+	err = fsys.WriteFileExclusive(keyFile, wrapped)
+	if errors.Is(err, fs.ErrExist) {
 		id.Zero()
-		return nil, fmt.Errorf("store.Create %q: %w", dir, ErrVaultExists)
+		return nil, fmt.Errorf("store.Create %q: %w", loc, ErrVaultExists)
 	}
 	if err != nil {
 		id.Zero()
@@ -171,20 +207,33 @@ func Create(dir, passphrase string, log *slog.Logger, opts ...Option) (*Store, e
 		return nil, fmt.Errorf("store.Create: %w", err)
 	}
 
-	log.Info("vault created", "dir", dir, "format", FormatVersion)
+	log.Info("vault created", "location", loc.String(), "format", FormatVersion)
 	return s, nil
 }
 
-// Open unlocks the vault in dir with passphrase. A format-2 vault costs
+// Open unlocks the vault at location with passphrase. A format-2 vault costs
 // exactly one scrypt derivation. A legacy format-1 vault is migrated in place
 // first, costing about one scrypt per secret, once; an interrupted migration
 // is resumed. Open returns ErrWrongPassphrase if the passphrase is incorrect,
-// ErrVaultNotFound if dir holds no vault, ErrKeyMissing if a format-2 vault
-// has lost vlt.age, and ErrUnsupportedFormat for a newer format.
-func Open(ctx context.Context, dir, passphrase string, log *slog.Logger, opts ...Option) (*Store, error) {
+// ErrVaultNotFound if the location holds no vault, ErrKeyMissing if a
+// format-2 vault has lost vlt.age, and ErrUnsupportedFormat for a newer
+// format. For a vault on a server it keeps the connection open until Close.
+func Open(ctx context.Context, location, passphrase string, log *slog.Logger, opts ...Option) (*Store, error) {
 	o := buildOptions(opts)
+	fsys, loc, err := openLocation(ctx, location, o)
+	if err != nil {
+		return nil, fmt.Errorf("store.Open: %w", err)
+	}
+	s, err := open(ctx, fsys, loc, passphrase, log, o)
+	if err != nil {
+		_ = fsys.Close()
+		return nil, err
+	}
+	return s, nil
+}
 
-	format, err := readFormat(dir)
+func open(ctx context.Context, fsys vaultFS, loc Location, passphrase string, log *slog.Logger, o options) (*Store, error) {
+	format, err := readFormat(fsys)
 	if err != nil {
 		return nil, fmt.Errorf("store.Open: %w", err)
 	}
@@ -192,15 +241,15 @@ func Open(ctx context.Context, dir, passphrase string, log *slog.Logger, opts ..
 		return nil, fmt.Errorf("store.Open: format %d: %w", format, ErrUnsupportedFormat)
 	}
 
-	if wrapped, err := os.ReadFile(filepath.Join(dir, migratingFile)); err == nil {
-		return resumeMigration(ctx, dir, passphrase, wrapped, log, o)
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if wrapped, err := fsys.ReadFile(migratingFile); err == nil {
+		return resumeMigration(ctx, fsys, loc, passphrase, wrapped, log, o)
+	} else if !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("store.Open: %w", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, keyFile))
-	if errors.Is(err, os.ErrNotExist) {
-		return openWithoutKeyFile(ctx, dir, passphrase, format, log, o)
+	data, err := fsys.ReadFile(keyFile)
+	if errors.Is(err, fs.ErrNotExist) {
+		return openWithoutKeyFile(ctx, fsys, loc, passphrase, format, log, o)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("store.Open: %w", err)
@@ -217,7 +266,7 @@ func Open(ctx context.Context, dir, passphrase string, log *slog.Logger, opts ..
 		if err != nil {
 			return nil, fmt.Errorf("store.Open: %w", err)
 		}
-		s := newStore(id, dir, log, o)
+		s := newStore(id, fsys, loc, log, o)
 		if format != FormatVersion {
 			// vlt.json is missing or stale (lost, or not copied); restore it.
 			if err := s.writeFormatMarker(); err != nil {
@@ -229,7 +278,7 @@ func Open(ctx context.Context, dir, passphrase string, log *slog.Logger, opts ..
 
 	case string(plaintext) == legacySentinel:
 		crypto.Wipe(plaintext)
-		return beginMigration(ctx, dir, passphrase, log, o)
+		return beginMigration(ctx, fsys, loc, passphrase, log, o)
 
 	default:
 		crypto.Wipe(plaintext)
@@ -240,16 +289,16 @@ func Open(ctx context.Context, dir, passphrase string, log *slog.Logger, opts ..
 // openWithoutKeyFile handles a directory that has no vlt.age. Format-1 vaults
 // copied by early versions of vlt lost their sentinel; if any secret decrypts
 // with passphrase, the passphrase is proven and the vault is migrated.
-func openWithoutKeyFile(ctx context.Context, dir, passphrase string, format int, log *slog.Logger, o options) (*Store, error) {
+func openWithoutKeyFile(ctx context.Context, fsys vaultFS, loc Location, passphrase string, format int, log *slog.Logger, o options) (*Store, error) {
 	if format == FormatVersion {
-		return nil, fmt.Errorf("store.Open %q: %w", dir, ErrKeyMissing)
+		return nil, fmt.Errorf("store.Open %q: %w", loc, ErrKeyMissing)
 	}
-	paths, err := secretFiles(dir)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	paths, err := secretFiles(fsys)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("store.Open: %w", err)
 	}
 	if len(paths) == 0 {
-		return nil, fmt.Errorf("store.Open %q: %w", dir, ErrVaultNotFound)
+		return nil, fmt.Errorf("store.Open %q: %w", loc, ErrVaultNotFound)
 	}
 
 	passphraseFiles := 0
@@ -257,7 +306,7 @@ func openWithoutKeyFile(ctx context.Context, dir, passphrase string, format int,
 		if i == legacyProbeLimit {
 			break
 		}
-		data, err := os.ReadFile(path)
+		data, err := fsys.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("store.Open: %w", err)
 		}
@@ -274,13 +323,13 @@ func openWithoutKeyFile(ctx context.Context, dir, passphrase string, format int,
 		if !isSecret {
 			continue // another vault's sentinel or key proves nothing about this folder
 		}
-		log.Info("format-1 vault without vlt.age; passphrase verified against a secret", "dir", dir)
-		return beginMigration(ctx, dir, passphrase, log, o)
+		log.Info("format-1 vault without vlt.age; passphrase verified against a secret", "location", loc.String())
+		return beginMigration(ctx, fsys, loc, passphrase, log, o)
 	}
 	if passphraseFiles == 0 {
 		// Only vault-key secrets: a format-2 vault that lost both vlt.age
 		// and vlt.json. No passphrase can open it, so don't call it wrong.
-		return nil, fmt.Errorf("store.Open %q: %w", dir, ErrKeyMissing)
+		return nil, fmt.Errorf("store.Open %q: %w", loc, ErrKeyMissing)
 	}
 	return nil, fmt.Errorf("store.Open: %w", ErrWrongPassphrase)
 }
@@ -298,7 +347,7 @@ func encryptedToPassphrase(data []byte) bool {
 // passphrase working. It returns ErrWrongPassphrase if oldPass is incorrect.
 // ctx is checked before the final write.
 func (s *Store) ChangePassphrase(ctx context.Context, oldPass, newPass string) error {
-	data, err := os.ReadFile(filepath.Join(s.dir, keyFile))
+	data, err := s.fs.ReadFile(keyFile)
 	if err != nil {
 		return fmt.Errorf("store.ChangePassphrase: %w", err)
 	}
@@ -324,16 +373,40 @@ func (s *Store) ChangePassphrase(ctx context.Context, oldPass, newPass string) e
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("store.ChangePassphrase: %w", err)
 	}
-	if err := writeFileAtomic(filepath.Join(s.dir, keyFile), wrapped); err != nil {
+	if err := s.fs.WriteFileAtomic(keyFile, wrapped); err != nil {
 		return fmt.Errorf("store.ChangePassphrase: %w", err)
 	}
-	s.log.Info("passphrase changed", "dir", s.dir)
+	s.log.Info("passphrase changed", "location", s.loc.String())
 	return nil
 }
 
-// Close zeroes the vault key. The Store must not be used afterwards.
+// Close zeroes the vault key at once, then releases the vault's lock file
+// (if this Store holds it) and, for a vault on a server, ends the
+// connection. For a local vault that cleanup is done before Close returns;
+// for a remote one it runs in the background, so a dead network cannot hold
+// up locking. Closed reports when it has finished. The Store must not be
+// used after Close; calling Close again does nothing.
 func (s *Store) Close() {
 	s.id.Zero()
+	s.closeOnce.Do(func() {
+		cleanup := func() {
+			s.releaseLock()
+			if err := s.fs.Close(); err != nil {
+				s.log.Warn("closing the vault's connection", "err", err)
+			}
+			close(s.closed)
+		}
+		if s.fs.Local() {
+			cleanup()
+			return
+		}
+		go cleanup()
+	})
+}
+
+// Closed is closed once Close has released the lock and the connection.
+func (s *Store) Closed() <-chan struct{} {
+	return s.closed
 }
 
 // SkippedFiles lists legacy secret files, relative to the vault directory,
@@ -356,10 +429,10 @@ func sameKey(a, b *crypto.Identity) (bool, error) {
 	return ra.String() == rb.String(), nil
 }
 
-// readFormat returns the format recorded in dir/vlt.json, or 0 if absent.
-func readFormat(dir string) (int, error) {
-	data, err := os.ReadFile(filepath.Join(dir, formatFile))
-	if errors.Is(err, os.ErrNotExist) {
+// readFormat returns the format recorded in vlt.json, or 0 if absent.
+func readFormat(fsys vaultFS) (int, error) {
+	data, err := fsys.ReadFile(formatFile)
+	if errors.Is(err, fs.ErrNotExist) {
 		return 0, nil
 	}
 	if err != nil {
@@ -374,7 +447,7 @@ func readFormat(dir string) (int, error) {
 
 // hasFormatMarker reports whether vlt.json records the current format.
 func (s *Store) hasFormatMarker() bool {
-	f, err := readFormat(s.dir)
+	f, err := readFormat(s.fs)
 	return err == nil && f == FormatVersion
 }
 
@@ -384,7 +457,7 @@ func (s *Store) writeFormatMarker() error {
 	if err != nil {
 		return fmt.Errorf("marshal format marker: %w", err)
 	}
-	if err := writeFileAtomic(filepath.Join(s.dir, formatFile), append(data, '\n')); err != nil {
+	if err := s.fs.WriteFileAtomic(formatFile, append(data, '\n')); err != nil {
 		return fmt.Errorf("write format marker: %w", err)
 	}
 	return nil

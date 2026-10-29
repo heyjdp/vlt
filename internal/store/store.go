@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
-	"os"
-	"path/filepath"
+	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yourorg/vlt/internal/crypto"
@@ -21,12 +22,13 @@ var ErrSecretNotFound = errors.New("secret not found")
 // taken, and by Update when it is held by a differently named secret.
 var ErrSecretExists = errors.New("a secret with that name already exists")
 
-// Store manages secrets in an age-encrypted vault directory.
-// Secrets are stored at vault/<group>/<slug>.age, encrypted to the vault key.
-// Use Create or Open to obtain one; New is for callers that already hold the
-// vault key.
+// Store manages secrets in an age-encrypted vault, in a local directory or
+// on an SSH server. Secrets are stored at <group>/<slug>.age, encrypted to
+// the vault key. Use Create or Open to obtain one; New is for callers that
+// already hold the vault key. Its methods may be called concurrently.
 type Store struct {
-	dir string
+	fs  vaultFS
+	loc Location
 	id  *crypto.Identity
 	log *slog.Logger
 
@@ -34,31 +36,46 @@ type Store struct {
 
 	// skipped lists legacy files that could not be migrated (see migrate.go).
 	skipped []string
+
+	// lockMu guards lockToken, the token of the vault's lock file while this
+	// Store holds it (see lock.go).
+	lockMu    sync.Mutex
+	lockToken string
+
+	closeOnce sync.Once
+	closed    chan struct{}
 }
 
-// New creates a Store over dir that encrypts and decrypts with the given
-// vault key. It does not read or write vlt.age.
+// New creates a Store over the local directory dir that encrypts and
+// decrypts with the given vault key. It does not read or write vlt.age.
 func New(id *crypto.Identity, dir string, log *slog.Logger) *Store {
-	return newStore(id, dir, log, options{})
+	return newStore(id, localFS{root: dir}, Location{Path: dir}, log, options{})
 }
 
-func newStore(id *crypto.Identity, dir string, log *slog.Logger, o options) *Store {
+func newStore(id *crypto.Identity, fsys vaultFS, loc Location, log *slog.Logger, o options) *Store {
 	return &Store{
-		dir:  dir,
-		id:   id,
-		log:  log,
-		opts: o,
+		fs:     fsys,
+		loc:    loc,
+		id:     id,
+		log:    log,
+		opts:   o,
+		closed: make(chan struct{}),
 	}
 }
 
-// Dir returns the vault directory path.
+// Dir returns the vault's location, in the form ParseLocation reads.
 func (s *Store) Dir() string {
-	return s.dir
+	return s.loc.String()
+}
+
+// Location returns where the vault lives.
+func (s *Store) Location() Location {
+	return s.loc
 }
 
 // Init creates the vault directory with secure permissions.
 func (s *Store) Init() error {
-	if err := mkdirAllSynced(s.dir); err != nil {
+	if err := s.fs.MkdirAll("."); err != nil {
 		return fmt.Errorf("store.Init: %w", err)
 	}
 	return nil
@@ -78,18 +95,18 @@ func (s *Store) Create(ctx context.Context, secret *Secret) error {
 		return fmt.Errorf("store.Create: %w", err)
 	}
 	secret.Name = sn.String()
-	path := s.path(secret.Name, secret.Group)
+	name := s.path(secret.Name, secret.Group)
 
 	data, err := s.seal(secret)
 	if err != nil {
 		return fmt.Errorf("store.Create: %w", err)
 	}
-	if err := mkdirAllSynced(filepath.Dir(path)); err != nil {
+	if err := s.fs.MkdirAll(path.Dir(name)); err != nil {
 		return fmt.Errorf("store.Create: mkdir: %w", err)
 	}
 
-	err = writeFileExclusive(path, data)
-	if errors.Is(err, os.ErrExist) {
+	err = s.fs.WriteFileExclusive(name, data)
+	if errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("store.Create %q in %q: %w", secret.Name, secret.Group, ErrSecretExists)
 	}
 	if err != nil {
@@ -129,7 +146,7 @@ func (s *Store) Update(ctx context.Context, secret *Secret) error {
 	if err != nil {
 		return fmt.Errorf("store.Update: %w", err)
 	}
-	if err := writeFileAtomic(s.path(name, secret.Group), data); err != nil {
+	if err := s.fs.WriteFileAtomic(s.path(name, secret.Group), data); err != nil {
 		return fmt.Errorf("store.Update: write: %w", err)
 	}
 
@@ -176,9 +193,10 @@ func lookupName(name string) (string, error) {
 	return name, nil
 }
 
-// path returns vault/<group>/<slug>.age for a (trimmed) name.
+// path returns <group>/<slug>.age, relative to the vault, for a (trimmed)
+// name. Slugs only hold [a-z0-9-], so the path cannot leave the vault.
 func (s *Store) path(name, group string) string {
-	return filepath.Join(s.dir, NormalizeGroup(group), Slugify(name)+".age")
+	return path.Join(NormalizeGroup(group), Slugify(name)+".age")
 }
 
 // Get decrypts and returns a secret by name and group.
@@ -190,11 +208,9 @@ func (s *Store) Get(ctx context.Context, name, group string) (*Secret, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store.Get: %w", err)
 	}
-	path := s.path(name, group)
-
-	ciphertext, err := os.ReadFile(path)
+	ciphertext, err := s.fs.ReadFile(s.path(name, group))
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("store.Get %q: %w", name, ErrSecretNotFound)
 		}
 		return nil, fmt.Errorf("store.Get %q: %w", name, err)
@@ -224,10 +240,8 @@ func (s *Store) Delete(ctx context.Context, name, group string) error {
 	if err != nil {
 		return fmt.Errorf("store.Delete: %w", err)
 	}
-	path := s.path(name, group)
-
-	if err := os.Remove(path); err != nil {
-		if os.IsNotExist(err) {
+	if err := s.fs.Remove(s.path(name, group)); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("store.Delete %q: %w", name, ErrSecretNotFound)
 		}
 		return fmt.Errorf("store.Delete %q: %w", name, err)
@@ -237,143 +251,191 @@ func (s *Store) Delete(ctx context.Context, name, group string) error {
 	return nil
 }
 
-// List returns all secrets in the vault by walking every group subdirectory.
-// Files that cannot be read, decrypted or parsed are logged and skipped. It checks
-// ctx before each file and returns ctx's error once it is cancelled.
-func (s *Store) List(ctx context.Context) ([]*Secret, error) {
-	var secrets []*Secret
+// listWorkers bounds how many secret files List reads at once. Reading in
+// parallel hides the round trip to a server; locally it changes little.
+const listWorkers = 8
 
-	groups, err := os.ReadDir(s.dir)
+// List returns all secrets in the vault by walking every group subdirectory,
+// in directory order. Files that cannot be read, decrypted or parsed are
+// logged and skipped. It checks ctx before each file and returns ctx's error
+// once it is cancelled.
+func (s *Store) List(ctx context.Context) ([]*Secret, error) {
+	groups, err := s.fs.ReadDir(".")
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("store.List: %w", err)
 	}
 
+	var names []string
 	for _, groupEntry := range groups {
-		if !groupEntry.IsDir() {
+		if !isGroupDir(groupEntry) {
 			continue
 		}
-
-		groupDir := filepath.Join(s.dir, groupEntry.Name())
-		entries, err := os.ReadDir(groupDir)
+		entries, err := s.fs.ReadDir(groupEntry.Name())
 		if err != nil {
 			s.log.Warn("failed to read group directory", "group", groupEntry.Name(), "err", err)
 			continue
 		}
-
 		for _, entry := range entries {
-			if entry.IsDir() || filepath.Ext(entry.Name()) != ".age" {
-				continue
+			if !entry.IsDir() && path.Ext(entry.Name()) == ".age" {
+				names = append(names, path.Join(groupEntry.Name(), entry.Name()))
 			}
-			if err := ctx.Err(); err != nil {
-				return nil, fmt.Errorf("store.List: %w", err)
-			}
-
-			path := filepath.Join(groupDir, entry.Name())
-			ciphertext, err := os.ReadFile(path)
-			if err != nil {
-				s.log.Warn("failed to read secret file", "path", path, "err", err)
-				continue
-			}
-
-			plaintext, err := crypto.Decrypt(s.id, ciphertext)
-			if err != nil {
-				s.log.Warn("failed to decrypt secret", "path", path, "err", err)
-				continue
-			}
-
-			var secret Secret
-			err = json.Unmarshal(plaintext, &secret)
-			crypto.Wipe(plaintext)
-			if err != nil {
-				s.log.Warn("failed to unmarshal secret", "path", path, "err", err)
-				continue
-			}
-
-			secrets = append(secrets, &secret)
 		}
 	}
 
+	// Each worker fills its own slots, so the result keeps directory order.
+	found := make([]*Secret, len(names))
+	failed := make([]error, len(names))
+	next := make(chan int)
+	var wg sync.WaitGroup
+	for range min(listWorkers, len(names)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				found[i], failed[i] = s.readSecret(names[i])
+			}
+		}()
+	}
+	var cancelled error
+	for i := range names {
+		if cancelled = ctx.Err(); cancelled != nil {
+			break
+		}
+		next <- i
+	}
+	close(next)
+	wg.Wait()
+	if cancelled != nil {
+		return nil, fmt.Errorf("store.List: %w", cancelled)
+	}
+	// A lost connection would otherwise leave secrets silently missing from
+	// the list; fail instead, so the user sees why.
+	for _, err := range failed {
+		if errors.Is(err, ErrConnectionLost) || errors.Is(err, ErrUnreachable) {
+			return nil, fmt.Errorf("store.List: %w", err)
+		}
+	}
+
+	var secrets []*Secret
+	for _, secret := range found {
+		if secret != nil {
+			secrets = append(secrets, secret)
+		}
+	}
 	return secrets, nil
 }
 
+// readSecret reads and decrypts one secret file for List. A file that
+// cannot be read, decrypted or parsed is logged and skipped (nil, nil); a
+// lost connection is returned, so List can fail rather than show a partial
+// list.
+func (s *Store) readSecret(name string) (*Secret, error) {
+	ciphertext, err := s.fs.ReadFile(name)
+	if err != nil {
+		if errors.Is(err, ErrConnectionLost) || errors.Is(err, ErrUnreachable) {
+			return nil, err
+		}
+		s.log.Warn("failed to read secret file", "path", name, "err", err)
+		return nil, nil
+	}
+	plaintext, err := crypto.Decrypt(s.id, ciphertext)
+	if err != nil {
+		s.log.Warn("failed to decrypt secret", "path", name, "err", err)
+		return nil, nil
+	}
+	var secret Secret
+	err = json.Unmarshal(plaintext, &secret)
+	crypto.Wipe(plaintext)
+	if err != nil {
+		s.log.Warn("failed to unmarshal secret", "path", name, "err", err)
+		return nil, nil
+	}
+	return &secret, nil
+}
+
 // CopyTo copies the wrapped vault key, the format marker, and every .age
-// file from this store's directory into destDir, preserving the group
-// subdirectory structure. It refuses (ErrVaultExists) to copy into a
-// directory that already holds a vault or secret files, since overwriting
+// file into the vault location dest (local, or on a server), preserving the
+// group subdirectory structure. It refuses (ErrVaultExists) to copy into a
+// location that already holds a vault or secret files, since overwriting
 // another vault's vlt.age would make its secrets unrecoverable. An open
-// Store never has a migration in progress, so vlt.migrating.age is not copied.
-func (s *Store) CopyTo(ctx context.Context, destDir string) error {
-	exists, err := Exists(destDir)
+// Store never has a migration in progress, so vlt.migrating.age is not
+// copied, and the lock file belongs to this location, so it is not either.
+func (s *Store) CopyTo(ctx context.Context, dest string) error {
+	dst, loc, err := openLocation(ctx, dest, s.opts)
+	if err != nil {
+		return fmt.Errorf("store.CopyTo: %w", err)
+	}
+	defer func() { _ = dst.Close() }()
+
+	exists, err := existsIn(dst)
 	if err != nil {
 		return fmt.Errorf("store.CopyTo: %w", err)
 	}
 	if exists {
-		return fmt.Errorf("store.CopyTo %q: %w", destDir, ErrVaultExists)
+		return fmt.Errorf("store.CopyTo %q: %w", loc, ErrVaultExists)
 	}
-	if err := mkdirAllSynced(destDir); err != nil {
-		return fmt.Errorf("store.CopyTo: mkdir %q: %w", destDir, err)
+	if err := dst.MkdirAll("."); err != nil {
+		return fmt.Errorf("store.CopyTo: mkdir %q: %w", loc, err)
 	}
 
 	// Copy the vault-level files that exist
 	for _, name := range []string{keyFile, formatFile} {
-		data, err := os.ReadFile(filepath.Join(s.dir, name))
-		if errors.Is(err, os.ErrNotExist) {
+		data, err := s.fs.ReadFile(name)
+		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return fmt.Errorf("store.CopyTo: read %s: %w", name, err)
 		}
-		if err := writeFileAtomic(filepath.Join(destDir, name), data); err != nil {
+		if err := dst.WriteFileAtomic(name, data); err != nil {
 			return fmt.Errorf("store.CopyTo: write %s: %w", name, err)
 		}
 	}
 
 	// Copy group subdirectories
-	groups, err := os.ReadDir(s.dir)
+	groups, err := s.fs.ReadDir(".")
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
-		return fmt.Errorf("store.CopyTo: read %q: %w", s.dir, err)
+		return fmt.Errorf("store.CopyTo: read %q: %w", s.loc, err)
 	}
 
 	for _, groupEntry := range groups {
-		if !groupEntry.IsDir() {
+		if !isGroupDir(groupEntry) {
 			continue
 		}
-
-		srcDir := filepath.Join(s.dir, groupEntry.Name())
-		dstDir := filepath.Join(destDir, groupEntry.Name())
-
-		if err := mkdirAllSynced(dstDir); err != nil {
-			return fmt.Errorf("store.CopyTo: mkdir %q: %w", dstDir, err)
+		group := groupEntry.Name()
+		if err := dst.MkdirAll(group); err != nil {
+			return fmt.Errorf("store.CopyTo: mkdir %q: %w", group, err)
 		}
 
-		entries, err := os.ReadDir(srcDir)
+		entries, err := s.fs.ReadDir(group)
 		if err != nil {
-			return fmt.Errorf("store.CopyTo: read %q: %w", srcDir, err)
+			return fmt.Errorf("store.CopyTo: read %q: %w", group, err)
 		}
 
 		for _, entry := range entries {
-			if entry.IsDir() || filepath.Ext(entry.Name()) != ".age" {
+			if entry.IsDir() || path.Ext(entry.Name()) != ".age" {
 				continue
 			}
 			if err := ctx.Err(); err != nil {
 				return fmt.Errorf("store.CopyTo: %w", err)
 			}
-			data, err := os.ReadFile(filepath.Join(srcDir, entry.Name()))
+			name := path.Join(group, entry.Name())
+			data, err := s.fs.ReadFile(name)
 			if err != nil {
 				return fmt.Errorf("store.CopyTo: read file %q: %w", entry.Name(), err)
 			}
-			if err := writeFileAtomic(filepath.Join(dstDir, entry.Name()), data); err != nil {
+			if err := dst.WriteFileAtomic(name, data); err != nil {
 				return fmt.Errorf("store.CopyTo: write file %q: %w", entry.Name(), err)
 			}
 		}
 	}
 
-	s.log.Info("vault copied", "from", s.dir, "to", destDir)
+	s.log.Info("vault copied", "from", s.loc.String(), "to", loc.String())
 	return nil
 }
