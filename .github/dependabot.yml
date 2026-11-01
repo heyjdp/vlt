@@ -1,0 +1,42 @@
+# Dependabot opens pull requests for dependency updates; CI checks each one
+# (lint, tests with the race detector, govulncheck, builds) before it is
+# merged. See README.md, "Dependency updates".
+version: 2
+updates:
+  # Go modules (go.mod, go.sum). Minor and patch updates arrive as one
+  # weekly pull request; a major update gets its own.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    # A release must be a week old before it is proposed, so a compromised
+    # or broken release is usually caught and pulled first. Security
+    # updates are not delayed.
+    cooldown:
+      default-days: 7
+    groups:
+      go-modules:
+        update-types: [minor, patch]
+    open-pull-requests-limit: 5
+    # build(deps): … — a conventional-commit type, as CLAUDE.md asks.
+    commit-message:
+      prefix: build
+      include: scope
+
+  # The actions in .github/workflows, pinned to commit SHAs; Dependabot
+  # updates the SHA and its version comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+      include: scope
