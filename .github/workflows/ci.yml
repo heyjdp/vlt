@@ -34,6 +34,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The tags, so the release-notes test checks every release's notes.
+          fetch-depth: 0
 
       # go-version-file honours go.mod's toolchain directive (a patched Go).
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -54,6 +56,17 @@ jobs:
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
+
+      - name: Test the release-notes script
+        run: packaging/release-notes-test.sh
+
+      # On a release tag, fail before anything is packaged if CHANGELOG.md
+      # has no dated section for it (the release notes come from there).
+      - name: Check the release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: packaging/release-notes.sh "$TAG" > /dev/null
 
   test:
     runs-on: ubuntu-latest
@@ -234,6 +247,15 @@ jobs:
     permissions:
       contents: write # create the release and upload its files
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Write the release notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: packaging/release-notes.sh "$TAG" > "$RUNNER_TEMP/notes.md"
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
@@ -243,10 +265,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        # A re-run replaces the files of a release that already exists.
+        # The notes are the tag's CHANGELOG.md section. A re-run replaces the
+        # files and notes of a release that already exists.
         run: |
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/notes.md"
           else
-            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "vlt $TAG" --generate-notes
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "vlt $TAG" --notes-file "$RUNNER_TEMP/notes.md"
           fi

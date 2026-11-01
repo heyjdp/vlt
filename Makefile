@@ -1,4 +1,4 @@
-.PHONY: build run lint fmt vet test test-race test-cover bench vuln clean package-mac package-linux check screenshots
+.PHONY: build run lint fmt vet test test-race test-cover bench vuln clean package-mac package-linux check screenshots release-notes test-release-notes
 
 BINARY   := vlt
 CMD      := ./cmd/vlt
@@ -78,6 +78,14 @@ package-mac: build
 # supported Ubuntu, see .github/workflows/ci.yml). Needs curl and sha256sum.
 package-linux: build
 	packaging/linux/build-appimage.sh $(BINARY) $(PKG_VERSION) dist
+
+# The GitHub release notes for TAG (vX.Y.Z), from CHANGELOG.md, as CI will
+# publish them: make release-notes TAG=v0.2.0
+release-notes:
+	@packaging/release-notes.sh $(TAG)
+
+test-release-notes:  ## Test packaging/release-notes.sh (CI runs this in lint)
+	packaging/release-notes-test.sh
 
 screenshots:  ## Render the README screenshots into docs/screenshots (no display needed)
 	VLT_SCREENSHOTS=$(CURDIR)/docs/screenshots go test ./internal/ui -run '^TestScreenshots$$' -count=1
