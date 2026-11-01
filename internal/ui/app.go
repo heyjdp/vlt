@@ -22,6 +22,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/heyjdp/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/update"
 )
 
 // App is the main application controller managing lock/unlock state.
@@ -32,11 +33,25 @@ type App struct {
 	// version is the build's version (main.version), shown in About.
 	version string
 	// open opens a link in the browser (fyneApp.OpenURL; tests replace it).
-	open      func(*url.URL) error
-	config    Config
-	log       *slog.Logger
-	store     *store.Store
-	lockTimer stoppableTimer
+	open func(*url.URL) error
+	// latest fetches the newest release; NewApp sets the real checker, and
+	// other constructors leave one that never reaches the network.
+	latest latestRelease
+	// lockGen counts locks (guarded by mu); an update check started before
+	// a lock drops its result.
+	lockGen int
+	// checkingUpdates is true while a check the user asked for runs;
+	// checkedManually records that one has run since start-up, so the
+	// start-up check announces nothing more; pendingRelease is a release the
+	// start-up check found, held until the vault is unlocked. All three are
+	// used on the main goroutine only.
+	checkingUpdates bool
+	checkedManually bool
+	pendingRelease  *update.Release
+	config          Config
+	log             *slog.Logger
+	store           *store.Store
+	lockTimer       stoppableTimer
 	// warnTimer fires lockWarningLead before lockTimer.
 	warnTimer stoppableTimer
 	// timerGen identifies the current pair of auto-lock timers; callbacks
@@ -78,7 +93,9 @@ type App struct {
 // NewApp creates the main application controller. version is the build's
 // version, shown in the About dialog.
 func NewApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logger, version string) *App {
-	return newVersionedApp(version, fyneApp, window, config, log, goroutineRunner(), realTimers)
+	app := newVersionedApp(version, fyneApp, window, config, log, goroutineRunner(), realTimers)
+	app.startUpdateChecks(update.NewChecker().Latest)
+	return app
 }
 
 // newApp creates the controller with an explicit runner, timer factory and
@@ -94,6 +111,7 @@ func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, confi
 	app := &App{
 		version:   version,
 		open:      fyneApp.OpenURL,
+		latest:    noUpdateCheck,
 		fyneApp:   fyneApp,
 		window:    window,
 		config:    config,
@@ -117,6 +135,7 @@ func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, confi
 		fyne.NewMenu("File", quitItem),
 		fyne.NewMenu("Help",
 			fyne.NewMenuItem("About", app.showAbout),
+			fyne.NewMenuItem("Check for Updates…", app.checkForUpdates),
 			fyne.NewMenuItem("Report a Bug…", func() { app.openURL(issueURL(app.aboutDetails().String())) }),
 		),
 	))
@@ -551,6 +570,8 @@ func (a *App) unlocked(s *store.Store) {
 		a.statusBar.SetText("Unlocked · vault on " + loc.Server())
 	}
 
+	a.announceRelease()
+
 	if skipped := s.SkippedFiles(); len(skipped) > 0 {
 		dialog.ShowInformation("Some secrets were not migrated",
 			fmt.Sprintf("%d file(s) could not be decrypted with this passphrase and were left untouched:\n%s",
@@ -655,6 +676,7 @@ func (a *App) Lock() {
 	a.stopLockTimers()
 
 	a.store = nil
+	a.lockGen++
 	a.mu.Unlock()
 	a.log.Info("vault locked")
 
@@ -676,6 +698,7 @@ func (a *App) openSettings(s *store.Store, session runner) *SettingsScreen {
 	settings := NewSettingsScreen(a.window, &a.config, s, a.statusBar, a.log, session, a.Lock)
 	settings.activity = a.resetLockTimer
 	settings.save = a.saveSetting
+	settings.checkUpdates = a.checkForUpdates
 	a.detailView.ShowContent(settings.Content())
 	return settings
 }
@@ -688,6 +711,8 @@ func (a *App) saveSetting(setting string) {
 		SaveLockTimeout(prefs, a.config.LockTimeoutMs)
 	case prefClipboardTTL:
 		SaveClipboardTTL(prefs, a.config.ClipboardTTLs)
+	case prefCheckUpdates:
+		prefs.SetBool(prefCheckUpdates, a.config.CheckUpdates)
 	}
 }
 

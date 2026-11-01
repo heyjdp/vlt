@@ -143,7 +143,7 @@ func TestAbout_IsInTheMainViewAndTheHelpMenu(t *testing.T) {
 		}
 	}
 	// "About" exactly: Fyne moves only that label into the macOS app menu.
-	if strings.Join(items, ",") != "About,Report a Bug…" {
+	if strings.Join(items, ",") != "About,Check for Updates…,Report a Bug…" {
 		t.Fatalf("Help menu = %v", items)
 	}
 }

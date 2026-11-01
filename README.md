@@ -36,6 +36,7 @@ vlt follows the system's light or dark mode. `make screenshots` re-renders the m
 - **Vaults on a server** — keep the vault in a folder on an SSH server (`me@nas.example:/home/me/vault`), reached with your own ssh setup. Encryption stays on your computer: secrets and the vault key are encrypted before they are sent. See [Vaults on a Server](#vaults-on-a-server)
 - **Open-elsewhere warning** — a lock file (`vlt.lock`) records who has the vault open; opening a vault that another copy of vlt has open asks first, because if both save the same secret the last save wins
 - **About and bug reports** — *About* in the status bar (on every screen, locked or not) and the *About* menu item (*vlt → About vlt* on macOS, *Help → About* elsewhere) show the version, commit, platform and Go and Fyne versions, with *Copy Details* and *Report a Bug…*, which opens a new GitHub issue with those details filled in. The details never include secrets, paths or names
+- **Update check (opt-in)** — *Help → Check for Updates…*, or Settings' *Check Now*, asks GitHub for the latest release and, if it is newer, shows its notes and a link to its page. Settings can also check when vlt starts (off by default) and then, once the vault is unlocked, tells you once about each new release. Nothing is downloaded or installed; see [Updating vlt](#updating-vlt)
 - **Cross-platform** — Linux, macOS, Windows, OpenBSD
 
 ## Vault Structure
@@ -82,8 +83,10 @@ Override with the `VLT_VAULT_DIR` environment variable, or move or switch the va
 By default vlt keeps its data in your user folder, never inside the app, so removing or replacing the app doesn't touch your secrets.
 
 - **Vault** (secrets and the vault key): see [Default Vault Location](#default-vault-location), or wherever you put it with Settings or `VLT_VAULT_DIR`.
-- **Settings file**: macOS `~/Library/Preferences/fyne/io.github.heyjdp.vlt/preferences.json`; Linux and OpenBSD `$XDG_CONFIG_HOME/fyne/io.github.heyjdp.vlt/preferences.json` (default `~/.config/fyne/io.github.heyjdp.vlt/preferences.json`); Windows `%APPDATA%\fyne\io.github.heyjdp.vlt\preferences.json`. It holds the vault location, the auto-lock timeout, the clipboard TTL, the last folder used in a file dialog, and a marker (`migratedFrom010`) recording that 0.1.0's settings were checked. No secret, passphrase or key is ever stored there. vlt 0.1.0 kept it under `…/fyne/io.yourorg.vlt/`; later versions carry its vault location, auto-lock timeout and clipboard TTL over on their first start, and leave the old file in place.
+- **Settings file**: macOS `~/Library/Preferences/fyne/io.github.heyjdp.vlt/preferences.json`; Linux and OpenBSD `$XDG_CONFIG_HOME/fyne/io.github.heyjdp.vlt/preferences.json` (default `~/.config/fyne/io.github.heyjdp.vlt/preferences.json`); Windows `%APPDATA%\fyne\io.github.heyjdp.vlt\preferences.json`. It holds the vault location, the auto-lock timeout, the clipboard TTL, whether to check for updates at start-up and the latest release that check announced (`checkUpdates`, `updateNotified`), the last folder used in a file dialog, and a marker (`migratedFrom010`) recording that 0.1.0's settings were checked. No secret, passphrase or key is ever stored there. vlt 0.1.0 kept it under `…/fyne/io.yourorg.vlt/`; later versions carry its vault location, auto-lock timeout and clipboard TTL over on their first start, and leave the old file in place.
 - **Exported files** are decrypted copies saved wherever you chose. They are not part of the vault; delete them when you no longer need them.
+
+**Network.** vlt connects to nothing on its own. It reaches the network only for a vault on a server (over your ssh) and for the update check: *Check for Updates…* and *Check Now* when you choose them, and at start-up only if you turn that on in Settings. The check is one HTTPS request to `api.github.com` for the latest release's version and notes; it sends nothing about you or your vault beyond what any web request carries (your IP address, and a `User-Agent` of `vlt-update-check`).
 
 **Uninstalling.** Deleting `vlt.app`, the AppImage or the binary leaves the vault and the settings file in place. Uninstaller tools such as AppCleaner often offer to delete `~/Library/Application Support/vlt` as well: that deletes the vault itself, so untick it unless you mean to. For a complete removal, delete the vault folder and the settings folder (`…/fyne/io.github.heyjdp.vlt/`). A vault on a server stays on the server.
 
@@ -96,6 +99,14 @@ By default vlt keeps its data in your user folder, never inside the app, so remo
 **Changing the passphrase** rewrites only `vlt.age`; the vault key stays the same. A backup's `vlt.age` still opens with the old passphrase, and that key decrypts your current secrets too. If you change the passphrase because it may have leaked, destroy backups made before the change.
 
 **Forgetting the passphrase.** There is no recovery: the vault key is encrypted only to your passphrase, and no one can reset it. Keep a copy of it somewhere safe and offline.
+
+## Updating vlt
+
+vlt never updates itself. To update, download the new package from the [releases page](https://github.com/heyjdp/vlt/releases) (*Help → Check for Updates…* says whether there is one and links to it), quit vlt, and replace the old copy: drag the new `vlt.app` over the old one in Applications, or swap the AppImage (the new one has a new file name; `chmod +x` it again). Your vault and settings live outside the app (see [Your Data](#your-data)), so they are kept. On macOS each new download is blocked once, as on first install (see [Packages](#packages)).
+
+- **Vault formats.** `vlt.json` records the vault's format. A newer vlt upgrades an older vault on its first unlock (crash-safe, see [Format versions and migration](#format-versions-and-migration)). An older vlt refuses to open a vault in a newer format and changes nothing, so going back to an older version never damages a vault; it just can't open it. Don't keep an older copy open while a newer one upgrades the vault: the older copy only checks the format when it opens it.
+- **Checksums.** Each package on the release page has a `.sha256` file. Download both, then, in that folder, run `shasum -a 256 -c vlt-v0.1.1-macos-arm64.zip.sha256` (macOS) or `sha256sum -c vlt-v0.1.1-x86_64.AppImage.sha256` (Linux). Safari may unzip the download and delete the `.zip`; turn off *Open "safe" files after downloading* in Safari's settings, or use another browser, to keep it.
+- **Why no self-update.** A secret manager that downloads and runs new code is a target, and vlt's packages are ad-hoc signed rather than signed with a key an updater could check, so the update check only ever shows a link to vlt's own release page.
 
 ## Vaults on a Server
 
@@ -251,8 +262,10 @@ The test suite covers:
   - *Lock file*: recorded on unlock and removed on close, another computer's lock reported and taken over on request, a crashed local copy's lock taken over, someone else's lock never removed
   - *Server safety*: listings come back sorted by name with names that aren't a single path element dropped, temp files live in a private `.vlt-tmp` (tightened to 0700 if loosened) that is never a group or copied, listing fails as a whole when the connection drops, and a remote close releases the lock
   - *Real server* (optional): `VLT_TEST_SSH_LOCATION=me@host:/tmp/vlt-test go test ./internal/store -run RealServer` runs the backend against a real OpenSSH server (fsync, modes, 20 secrets, the lock), in a folder that must be empty or absent; it leaves its test vault there, so delete the folder before running it again
+- **update** — comparing `git describe` versions with release tags (later commits, `-dirty`, pre-releases, development builds), and fetching the latest release from a local test server: the request's headers, rate limits (and other 403s) and other errors, odd or path-like tags refused, the release page built from the tag rather than taken from the answer, redirects only to `api.github.com` over HTTPS, control characters dropped from the notes and long notes shortened, at most 1 MiB read, cancellation
 - **ui** — headless [`fyne/test`](https://pkg.go.dev/fyne.io/fyne/v2/test), with inline or queued runners for background work, hand-fired fake timers, and real vaults created with a cheap scrypt work factor:
   - *Screens*: create (passphrase confirmation and validation; opening an existing vault in another folder, refusing a folder without one or pointing to the vault below it, ignoring a stale result, and hiding the option under `VLT_VAULT_DIR`; the server-location dialog), unlock (wrong passphrase; naming the vault), and the error screen for an unreadable vault directory or an unreachable server (with a fake `ssh`), including the way back to the local vault
+  - *Updates*: a newer release is offered with its notes and opens its own release page; an up-to-date or development build is told so; failures are reported without internal prefixes; a second request while one runs is ignored and a result after a lock is dropped; answering counts as activity; the start-up check is off by default, silent when up to date, offline or a development build, waits for the unlock, announces each release once (not an older one after a withdrawn release), and says nothing after a manual check; the Settings choice is shown and saved; test apps never reach the network
   - *About*: reachable from the unlock screen and the main view; shows the version, platform and vault state but never the vault's path; *Copy Details* copies it; the menu items are labelled so macOS puts About in the app menu; the issue link carries the details
   - *Lock file*: unlocking takes it, and locking or quitting releases it; a vault open elsewhere asks first, *Open Anyway* takes over, *Cancel* closes the waiting vault and leaves the other lock alone, and an unanswered question closes it after the auto-lock timeout
   - *Background work*: unlock and create run off the UI thread with progress; stale results after a vault switch or lock are dropped; lock cancels the initial list load
@@ -309,7 +322,7 @@ Every action is pinned to a commit SHA, checkout does not persist credentials, a
 | `VLT_LOCK_TIMEOUT_MS`   | `300000`  | 30000–1800000, or 0 (off) | Auto-lock after N ms of inactivity   |
 | `VLT_CLIPBOARD_TTL_S`   | `30`      | 5–120                     | Clear clipboard after N seconds      |
 
-All settings can also be changed from the Settings screen, including turning auto-lock off. Changes take effect immediately and are saved in Fyne's per-app preferences (see [Your Data](#your-data) for the file's location), so the auto-lock timeout and clipboard TTL survive a restart. The vault location is saved whenever a vault is unlocked or created there, unless `VLT_VAULT_DIR` sets it. A new location (Move or Switch in Settings, or *Open Existing Vault…* on the create screen) therefore sticks only once a vault opens there, so a mistyped path is never remembered. The default location is remembered too, because on Linux it depends on `XDG_DATA_HOME`, which can differ between a terminal and the desktop's app menu.
+All settings can also be changed from the Settings screen, including turning auto-lock off. Changes take effect immediately and are saved in Fyne's per-app preferences (see [Your Data](#your-data) for the file's location), so the auto-lock timeout and clipboard TTL survive a restart. The start-up update check (off by default) is set in Settings only; it has no environment variable. The vault location is saved whenever a vault is unlocked or created there, unless `VLT_VAULT_DIR` sets it. A new location (Move or Switch in Settings, or *Open Existing Vault…* on the create screen) therefore sticks only once a vault opens there, so a mistyped path is never remembered. The default location is remembered too, because on Linux it depends on `XDG_DATA_HOME`, which can differ between a terminal and the desktop's app menu.
 
 Each setting is resolved in this order: environment variable, then the saved value, then the default. A setting provided by an environment variable is shown as such and cannot be changed in Settings, and it is never written to the saved preferences. Out-of-range values are clamped and unparsable ones ignored, with a warning in the log.
 
@@ -333,9 +346,12 @@ internal/
 │   ├── vault.go             Create/Open/ChangePassphrase, format marker
 │   ├── migrate.go           Crash-safe format-1 → format-2 migration
 │   └── atomic.go            Atomic file writes
+├── update/
+│   └── update.go            Asks GitHub for the latest release; compares versions
 ├── ui/
 │   ├── app.go               Lock/unlock state machine, header bar, layout
 │   ├── about.go             About dialog: build details, Copy Details, Report a Bug
+│   ├── updates.go           Check for Updates: on request, and at start-up if turned on
 │   ├── unlock.go            Passphrase entry screen (existing vault)
 │   ├── create.go            Create-vault screen (passphrase + confirmation, open existing)
 │   ├── runner.go            Runs vault I/O off the UI thread, results via fyne.Do
@@ -345,7 +361,7 @@ internal/
 │   ├── list.go              Secret browser with search/filter (type icon, name, group)
 │   ├── detail.go            View/edit forms for all secret types, clipboard copy
 │   ├── fileops.go           File import (picker, base64, MIME) and export
-│   ├── settings.go          Change passphrase, vault location, lock timeout, clipboard TTL
+│   ├── settings.go          Change passphrase, vault location, lock timeout, clipboard TTL, update check
 │   ├── style.go             Shared look: cards, headings, empty states, type icons
 │   ├── theme.go             Fyne theme: teal accent, light and dark palettes, text sizes
 │   └── icon.png             App icon (256px), embedded for the window, header bar and unlock/create screens
@@ -367,7 +383,8 @@ Icon.png                     App icon (1024×1024), the source of the 256px copi
 ├─────────────────────────────────┤
 │          Domain Layer           │  internal/store — types, validation
 ├─────────────────────────────────┤
-│       Infrastructure Layer      │  internal/crypto — age, memguard
+│       Infrastructure Layer      │  internal/crypto — age, memguard;
+│                                 │  internal/update — release check
 └─────────────────────────────────┘
 ```
 
