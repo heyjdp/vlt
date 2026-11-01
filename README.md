@@ -105,7 +105,7 @@ By default vlt keeps its data in your user folder, never inside the app, so remo
 vlt never updates itself. To update, download the new package from the [releases page](https://github.com/heyjdp/vlt/releases) (*Help → Check for Updates…* says whether there is one and links to it), quit vlt, and replace the old copy: drag the new `vlt.app` over the old one in Applications, or swap the AppImage (the new one has a new file name; `chmod +x` it again). Your vault and settings live outside the app (see [Your Data](#your-data)), so they are kept. On macOS each new download is blocked once, as on first install (see [Packages](#packages)).
 
 - **Vault formats.** `vlt.json` records the vault's format. A newer vlt upgrades an older vault on its first unlock (crash-safe, see [Format versions and migration](#format-versions-and-migration)). An older vlt refuses to open a vault in a newer format and changes nothing, so going back to an older version never damages a vault; it just can't open it. Don't keep an older copy open while a newer one upgrades the vault: the older copy only checks the format when it opens it.
-- **Checksums.** Each package on the release page has a `.sha256` file. Download both, then, in that folder, run `shasum -a 256 -c vlt-v0.1.1-macos-arm64.zip.sha256` (macOS) or `sha256sum -c vlt-v0.1.1-x86_64.AppImage.sha256` (Linux). Safari may unzip the download and delete the `.zip`; turn off *Open "safe" files after downloading* in Safari's settings, or use another browser, to keep it.
+- **Checksums.** Each package on the release page has a `.sha256` file. Download both, then, in that folder, run `shasum -a 256 -c vlt-v0.2.0-macos-arm64.zip.sha256` (macOS) or `sha256sum -c vlt-v0.2.0-x86_64.AppImage.sha256` (Linux). Safari may unzip the download and delete the `.zip`; turn off *Open "safe" files after downloading* in Safari's settings, or use another browser, to keep it.
 - **Why no self-update.** A secret manager that downloads and runs new code is a target, and vlt's packages are ad-hoc signed rather than signed with a key an updater could check, so the update check only ever shows a link to vlt's own release page.
 
 ## Vaults on a Server
@@ -304,13 +304,13 @@ The linter set (`.golangci.yml`) is golangci-lint's `standard` set plus `bodyclo
 
 ### Continuous integration
 
-`.github/workflows/ci.yml` runs on pushes and pull requests to `main`, and every Monday (so a newly published vulnerability is reported even when nothing changed; GitHub turns the weekly run off after 60 days without activity in the repository, and *Actions → CI → Enable workflow* turns it back on):
-- **lint** — golangci-lint (pinned), which also checks formatting
+`.github/workflows/ci.yml` runs on pushes and pull requests to `main`, on `v*` tags, and every Monday (so a newly published vulnerability is reported even when nothing changed; GitHub turns the weekly run off after 60 days without activity in the repository, and *Actions → CI → Enable workflow* turns it back on):
+- **lint** — golangci-lint (pinned), which also checks formatting, and the tests of `packaging/release-notes.sh`; on a tag, also checks that `CHANGELOG.md` has a dated section for it
 - **test** — `go vet` and `go test -race` on Linux (the UI tests are headless)
 - **vuln** — `govulncheck` (pinned)
 - **build** — native builds on Linux, macOS and Windows with cgo enabled, since Fyne cannot be cross-compiled with `CGO_ENABLED=0`
 - **package-macos**, **package-linux** — on pushes to `main` and tags, once lint, test and vuln pass: `vlt.app` (zipped) and the AppImage, uploaded as workflow artifacts. These jobs don't use the Go cache, so a shipped package is always built from scratch
-- **release** — on `v*` tags: a GitHub release with both packages and their checksums
+- **release** — on `v*` tags: a GitHub release with both packages and their checksums, and the tag's `CHANGELOG.md` section as its notes (on a tag without a dated section, lint fails, so nothing is packaged or published)
 
 Every action is pinned to a commit SHA, checkout does not persist credentials, and the workflow only has read access to the repository, except the release job, which can write releases. `actionlint` and `zizmor` report no findings.
 
@@ -320,11 +320,23 @@ Every action is pinned to a commit SHA, checkout does not persist credentials, a
 - **Go modules** — minor and patch updates together in one pull request (`build(deps): …`), each major update on its own
 - **GitHub Actions** — all together in one pull request (`ci(deps): …`); Dependabot updates each pinned SHA and its version comment
 
-A release must be at least 7 days old before it is proposed (`cooldown`), so a broken or compromised release has usually been caught and withdrawn first. Merge a pull request once CI passes, then tag a patch release if the update matters to users (a security fix, say); see [Releasing](#releasing).
+A release must be at least 7 days old before it is proposed (`cooldown`), so a broken or compromised release has usually been caught and withdrawn first. Merge a pull request once CI passes, then cut a release if the update matters to users (a security fix, say); see [Releasing](#releasing).
 
 Security updates, which Dependabot opens as soon as an advisory affects a dependency, need *Dependabot alerts* and *Dependabot security updates* turned on in the repository's settings (*Settings → Advanced Security*); `dependabot.yml` alone doesn't enable them.
 
 Dependabot doesn't cover the tool versions pinned in `ci.yml` (`GOLANGCI_LINT_VERSION`, `GOVULNCHECK_VERSION`), the Go toolchain in `go.mod`, or the `appimagetool` and runtime versions and checksums in `packaging/linux/build-appimage.sh`; update those by hand.
+
+## Releasing
+
+Releases are cut from `main` by pushing a `vX.Y.Z` tag; CI does the rest. Version numbers follow [Semantic Versioning](https://semver.org/). Before 1.0, a minor release (0.2.0) has new features or changes that break vaults or workflows, and a patch release (0.1.1) only fixes and dependency updates; after 1.0, breaking changes need a major release. Only `vX.Y.Z` tags are released: CI fails on any other `v*` tag, so there are no pre-releases.
+
+1. **Start from a green `main`.** Merge the Dependabot pull requests you want, and check that CI passed on the last commit. Pull, so your `main` is the remote's.
+2. **Date the changelog.** In `CHANGELOG.md`, rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` (today, UTC) and add an empty `## [Unreleased]` above it. Preview the release notes with `make release-notes TAG=vX.Y.Z`: CI publishes exactly that text, and *Check for Updates…* shows it as plain text (Markdown marks visible), cut to 2000 characters. (`packaging/release-notes.sh` prints the section; `make test-release-notes`, which CI runs, tests it.)
+3. **Commit and push**: `git commit -am "chore: release X.Y.Z"`, then `git push origin main`, and wait for CI to pass.
+4. **Tag and push the tag**: `git tag -a vX.Y.Z -m "vlt X.Y.Z"`, then `git push origin vX.Y.Z`. CI checks the changelog section; once lint, test and vuln pass, it builds both packages from scratch (no Go cache) and publishes the release with their `.sha256` files. (The three-OS build job runs too, but doesn't hold the release back.)
+5. **Check the release.** On the [releases page](https://github.com/heyjdp/vlt/releases): both packages and both checksum files are there, and the notes match the changelog. Download a package, check it (see [Updating vlt](#updating-vlt)), open it, and confirm that *About* shows the new version. If the changelog's *Changed* entries affect upgrades, install it over the previous version and check them (for the release after 0.1.0: that the vault location, auto-lock timeout and clipboard TTL carry over). A previous version that has *Help → Check for Updates…* (any after 0.1.0) should offer the release; to try it otherwise, run the commit before the tag (`git checkout vX.Y.Z~1 && make run`), which counts as older.
+
+**If something goes wrong.** If a job failed for a reason outside the code (a network error, say), re-run it: a re-run of the release job replaces the release's files and notes. Otherwise, if CI fails before the release is published, fix the problem on `main`, then delete the tag (`git tag -d vX.Y.Z` and `git push origin :refs/tags/vX.Y.Z`) and tag again. Once a release is published, people may have it: don't move its tag; fix forward with the next patch release.
 
 ## Configuration
 
@@ -381,7 +393,8 @@ internal/
     └── fixtures.go          Shared test helpers and secret builders
 packaging/
 ├── macos/                   vlt.app bundler (Info.plist template, build-app.sh)
-└── linux/                   AppImage: build-appimage.sh, desktop entry, 256px icon
+├── linux/                   AppImage: build-appimage.sh, desktop entry, 256px icon
+└── release-notes.sh         A release's notes from CHANGELOG.md (tested by release-notes-test.sh)
 Icon.png                     App icon (1024×1024), the source of the 256px copies in internal/ui/ and packaging/linux/
 ```
 

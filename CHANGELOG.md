@@ -15,8 +15,9 @@ All notable changes to vlt are documented here. The format follows
 - Builds report their version from the nearest `vX.Y.Z` tag only, so another tag can't make a release build look like a development build.
 
 ### Changed
+- A GitHub release's notes are now its `CHANGELOG.md` section (they were GitHub's generated list of changes), and a release tag without a dated changelog section fails CI before anything is packaged or published. The README has a *Releasing* checklist.
 - The license is now BSD 3-Clause (it was MIT). Like MIT, it disclaims all warranty and liability; it also forbids using the copyright holder's name to endorse derived products. Copies of 0.1.0 remain available under MIT.
-- The module path is `github.com/heyjdp/vlt` and the app ID `io.github.heyjdp.vlt` (they were the placeholders `github.com/yourorg/vlt` and `io.yourorg.vlt`). Fyne keeps settings per app ID, so on its first start vlt carries the vault location, auto-lock timeout and clipboard TTL over from 0.1.0's settings file. On macOS the app's bundle ID changes too, so Gatekeeper asks once more (*Open Anyway*).
+- The module path is `github.com/heyjdp/vlt` and the app ID `io.github.heyjdp.vlt` (they were the placeholders `github.com/yourorg/vlt` and `io.yourorg.vlt`). Fyne keeps settings per app ID, so on its first start vlt carries the vault location, auto-lock timeout and clipboard TTL over from 0.1.0's settings file. On macOS the app's bundle ID changes too. (Gatekeeper asks once more, *Open Anyway*, as it does for every new download.)
 
 ## [0.1.0] - 2026-10-29
 
