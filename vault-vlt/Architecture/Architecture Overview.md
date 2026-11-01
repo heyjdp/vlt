@@ -45,8 +45,9 @@ graph TD
 | `cmd/vlt` | Read env config, set up `slog`, create the Fyne app and window | `main.go` |
 | `internal/crypto` | Generate the X25519 vault key and hold it in memguard; wrap/unwrap it with the passphrase (scrypt); encrypt and decrypt secrets to it | `identity.go`, `vault.go` |
 | `internal/store` | `Secret` JSON envelope, slugs and groups, CRUD, vault create/open/change-passphrase, format-1 migration, atomic writes, copy; storage on local disk or an SSH server; the vault lock | `secret.go`, `store.go`, `vault.go`, `migrate.go`, `atomic.go`, `fs.go`, `location.go`, `sshfs.go`, `lock.go` |
+| `internal/totp` | One-time codes (RFC 6238) from a record's base32 secret or `otpauth://` link; standard library only | `totp.go` |
 | `internal/update` | Ask GitHub for the latest release (one HTTPS GET, read only) and compare it with this build's `git describe` version | `update.go` |
-| `internal/ui` | Lock state machine, screens, background runner, clipboard TTL, file import/export, settings (persisted in Fyne preferences), theme and shared styling | `app.go`, `runner.go`, `activity.go`, `clipboard.go`, `config.go`, `create.go`, `unlock.go`, `detail.go`, `list.go`, `fileops.go`, `settings.go`, `style.go`, `theme.go`, `about.go`, `updates.go`, `icon.png` |
+| `internal/ui` | Lock state machine, screens, background runner, clipboard TTL, file import/export, settings (persisted in Fyne preferences), theme and shared styling | `app.go`, `runner.go`, `activity.go`, `clipboard.go`, `config.go`, `create.go`, `unlock.go`, `detail.go`, `list.go`, `fileops.go`, `settings.go`, `style.go`, `theme.go`, `about.go`, `updates.go`, `totp.go`, `icon.png` |
 | `internal/testutil` | Test identities and secret builders | `fixtures.go` |
 
 ## Lock state machine

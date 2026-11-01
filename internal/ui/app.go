@@ -586,6 +586,7 @@ func (a *App) unlocked(s *store.Store) {
 // work still in flight when the vault locks has its result dropped.
 func (a *App) showMainView(s *store.Store, session runner) {
 	a.detailView = NewDetailView(a.window, s, a.clipboard.Copy, a.statusBar, a.log, session)
+	a.detailView.newTimer = a.newTimer
 	a.secretList = NewSecretList(a.window, s, a.detailView, a.log, session)
 
 	// Every save, delete and import updates the list in place, whether the

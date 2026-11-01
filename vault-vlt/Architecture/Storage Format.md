@@ -72,6 +72,8 @@ Each `.age` file decrypts to an indented JSON document (`internal/store/secret.g
 }
 ```
 
+`totp_secret` holds the base32 secret or the `otpauth://totp/…` link, trimmed, as entered; vlt makes RFC 6238 codes from it ([[F32 TOTP codes]]).
+
 File secrets are base64-encoded inside `value`, so a 10 MiB import becomes about $\tfrac{4}{3}\times 10 \approx 13.3$ MiB of JSON. `List()` decrypts **every** file, including large file secrets, just to show names. An unencrypted-name index or a separate encrypted metadata file would avoid that.
 
 ## Write semantics
