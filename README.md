@@ -163,7 +163,7 @@ Three secret types share this structure:
 
 - **Go 1.26.1+** — [install instructions](https://go.dev/doc/install), or `brew install go` on macOS. `go.mod` also names a patched toolchain (`toolchain go1.27.3`), which the `go` command downloads automatically if yours is older; it fixes standard-library vulnerabilities that `govulncheck` reports
 - **A C compiler** — Fyne's desktop driver uses cgo (Xcode command-line tools on macOS, gcc on Linux, MinGW-w64 on Windows)
-- **OpenGL/Metal** — required by Fyne for rendering (system libraries, no manual install needed on macOS/Windows; on Linux install `libgl1-mesa-dev xorg-dev libxkbcommon-dev`)
+- **OpenGL/Metal** — required by Fyne for rendering (system libraries, no manual install needed on macOS/Windows; on Linux install `libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev`; the last is needed from Fyne 2.8, whose GLFW 3.4 also builds a Wayland backend)
 - **OpenBSD** — install `mesa-dri` via `pkg_add` for OpenGL support
 
 ### Optional Tools
@@ -304,7 +304,7 @@ The linter set (`.golangci.yml`) is golangci-lint's `standard` set plus `bodyclo
 
 ### Continuous integration
 
-`.github/workflows/ci.yml` runs on pushes and pull requests to `main`:
+`.github/workflows/ci.yml` runs on pushes and pull requests to `main`, and every Monday (so a newly published vulnerability is reported even when nothing changed; GitHub turns the weekly run off after 60 days without activity in the repository, and *Actions → CI → Enable workflow* turns it back on):
 - **lint** — golangci-lint (pinned), which also checks formatting
 - **test** — `go vet` and `go test -race` on Linux (the UI tests are headless)
 - **vuln** — `govulncheck` (pinned)
@@ -313,6 +313,18 @@ The linter set (`.golangci.yml`) is golangci-lint's `standard` set plus `bodyclo
 - **release** — on `v*` tags: a GitHub release with both packages and their checksums
 
 Every action is pinned to a commit SHA, checkout does not persist credentials, and the workflow only has read access to the repository, except the release job, which can write releases. `actionlint` and `zizmor` report no findings.
+
+### Dependency updates
+
+`.github/dependabot.yml` has Dependabot propose updates every Monday as pull requests, which CI checks like any other:
+- **Go modules** — minor and patch updates together in one pull request (`build(deps): …`), each major update on its own
+- **GitHub Actions** — all together in one pull request (`ci(deps): …`); Dependabot updates each pinned SHA and its version comment
+
+A release must be at least 7 days old before it is proposed (`cooldown`), so a broken or compromised release has usually been caught and withdrawn first. Merge a pull request once CI passes, then tag a patch release if the update matters to users (a security fix, say); see [Releasing](#releasing).
+
+Security updates, which Dependabot opens as soon as an advisory affects a dependency, need *Dependabot alerts* and *Dependabot security updates* turned on in the repository's settings (*Settings → Advanced Security*); `dependabot.yml` alone doesn't enable them.
+
+Dependabot doesn't cover the tool versions pinned in `ci.yml` (`GOLANGCI_LINT_VERSION`, `GOVULNCHECK_VERSION`), the Go toolchain in `go.mod`, or the `appimagetool` and runtime versions and checksums in `packaging/linux/build-appimage.sh`; update those by hand.
 
 ## Configuration
 

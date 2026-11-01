@@ -8,6 +8,9 @@ All notable changes to vlt are documented here. The format follows
 ### Added
 - **Check for updates.** *Help → Check for Updates…* (and *Check Now* in Settings) asks GitHub for the latest release and, if it is newer than this build, shows its notes with *Open Release Page*. A Settings option, off by default, checks when vlt starts and, once the vault is unlocked, tells you once about each new release. vlt never downloads or installs anything itself. The README has a new *Updating vlt* section.
 
+### Security
+- Dependabot proposes Go module and GitHub Actions updates weekly (each release at least 7 days old), and CI also runs `govulncheck` every Monday, so a newly published vulnerability is reported without a push.
+
 ### Fixed
 - Builds report their version from the nearest `vX.Y.Z` tag only, so another tag can't make a release build look like a development build.
 

@@ -7,12 +7,18 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
+  # Weekly, so govulncheck reports a newly published vulnerability in a
+  # dependency even when nothing has been pushed.
+  schedule:
+    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # The weekly run has its own group, so it can never replace a push run
+  # waiting on main (GitHub keeps one pending run per group).
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   # Superseded pull-request runs are cancelled; runs on main always finish.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -36,10 +42,11 @@ jobs:
           cache: true # zizmor: ignore[cache-poisoning] these jobs only check; nothing they build is shipped
           cache-dependency-path: go.sum
 
+      # libwayland-dev: Fyne 2.8's GLFW 3.4 builds its Wayland backend too.
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev
 
       # Formatting (gofumpt, goimports) is checked here too, as configured in
       # .golangci.yml. golangci-lint releases before v2.14 cannot read the
@@ -64,7 +71,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev
 
       - name: Vet
         run: go vet ./...
@@ -92,7 +99,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev
 
       - name: Install govulncheck
         run: go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
@@ -125,7 +132,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev
 
       - name: Build
         shell: bash
@@ -134,7 +141,8 @@ jobs:
         run: go build -trimpath -ldflags="-s -w -X main.version=$(git describe --tags --match 'v[0-9]*' --always --dirty)" ./cmd/vlt
 
   # Installable packages, built once lint, tests and the vulnerability scan
-  # pass on a push to main or a tag. Pull requests skip them.
+  # pass on a push to main or a tag. Pull requests and the weekly run skip
+  # them.
   package-macos:
     needs: [lint, test, vuln]
     if: github.event_name == 'push'
@@ -195,7 +203,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev desktop-file-utils
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev desktop-file-utils
 
       - name: Validate the desktop entry
         run: desktop-file-validate packaging/linux/vlt.desktop
