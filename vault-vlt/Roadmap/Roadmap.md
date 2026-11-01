@@ -159,3 +159,6 @@ Each fix note's `status` property is one of `todo`, `in-progress`, or `done`. Th
 
 > [!success] Phase 6 is done (2026-10-29)
 > [vlt 0.1.0](https://github.com/heyjdp/vlt/releases/tag/v0.1.0) is released with the macOS app and the AppImage. The `yourorg` placeholders were then renamed in [[F22 Publish to GitHub]].
+
+> [!success] Phase 8 is done (2026-11-01)
+> [[F29 Check for updates]], [[F30 Dependabot]], [[F31 Release checklist]] and [[F32 TOTP codes]] each went through code, documentation and tooling verification before their commits. They were merged into `main` but not yet pushed. The next release is 0.2.0: Unreleased has new features.
