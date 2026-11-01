@@ -6,6 +6,7 @@ All notable changes to vlt are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **One-time codes.** A record with a TOTP secret shows its current code, the seconds until it changes, and *Copy Code*, like an authenticator app. The secret can be the base32 text a site shows or the whole `otpauth://totp/…` link from its QR code (6–8 digits, a period of 1–300 s, SHA-1, SHA-256 or SHA-512); HOTP and Steam Guard links are refused. A new or changed TOTP secret that can't be read is refused when saving. The TOTP secret lives in the vault with the password, so whoever unlocks the vault has both factors.
 - **Check for updates.** *Help → Check for Updates…* (and *Check Now* in Settings) asks GitHub for the latest release and, if it is newer than this build, shows its notes with *Open Release Page*. A Settings option, off by default, checks when vlt starts and, once the vault is unlocked, tells you once about each new release. vlt never downloads or installs anything itself. The README has a new *Updating vlt* section.
 
 ### Security

@@ -24,6 +24,7 @@ vlt follows the system's light or dark mode. `make screenshots` re-renders the m
 - **age encryption** — each secret is an individual `.age` file encrypted to a random X25519 vault key; the vault key is encrypted to your passphrase with scrypt, so unlocking costs one scrypt derivation however many secrets you have
 - **Secure memory (best-effort)** — the vault key's encoded form is held in mlock'd memory via memguard and destroyed on lock; passphrase fields are cleared as soon as they are read, and on lock loaded secrets are emptied and vlt's references to them dropped. Go cannot wipe strings, so the parsed key and secret text live on the heap until garbage-collected
 - **Secret types** — passwords, structured login records (URL/username/password/TOTP; the password and TOTP secret are masked), and encrypted files
+- **One-time codes** — a record with a TOTP secret shows its current code (usually six digits, as an authenticator app shows), the seconds until it changes, and *Copy Code*, which copies it like any secret (cleared after the clipboard TTL and on lock). Paste the secret a site shows when you set up two-factor authentication: the base32 text (spaces, hyphens and lower case are fine) or the whole `otpauth://totp/…` link from its QR code, whose digits (6–8), period (1–300 s) and algorithm (SHA-1, SHA-256, SHA-512) are honoured. Codes follow RFC 6238; counter-based (HOTP) and Steam Guard codes are not supported, and their links are refused. A new or changed secret that can't be read is refused when you save; one saved earlier shows why it can't make codes, and doesn't stop the record's other fields being saved. **Both factors in one place:** the TOTP secret is kept in the vault with the password, so anyone who unlocks the vault, or guesses its passphrase from a copy, has both. For accounts whose second factor must survive that, keep the TOTP secret in a separate authenticator
 - **Groups** — organise secrets into groups (work, personal, etc.) with a dropdown that shows existing groups and accepts new ones
 - **Search** — instant filter across secret names, groups, and tags
 - **Clipboard safety** — copied values are cleared after a configurable TTL (default 30s) with a countdown in the status bar. Each copy gets its own full TTL; the clipboard is cleared only if it still holds the value vlt copied (anything you copied since from another app is left alone); locking the vault or quitting vlt clears it immediately
@@ -156,7 +157,7 @@ Every `.age` file decrypts to a JSON envelope:
 Three secret types share this structure:
 
 - **password** — single-value secrets (API keys, tokens). Uses the `value` field.
-- **record** — structured logins. Uses `username`, `password`, `url`, `totp_secret` fields.
+- **record** — structured logins. Uses `username`, `password`, `url`, `totp_secret` fields. `totp_secret` holds the base32 secret or the `otpauth://totp/…` link, as entered (trimmed).
 - **file** — binary files (SSH keys, certificates). Uses `value` (base64), `original_filename`, `mime_type`, `encoding` fields. 10 MiB size limit.
 
 ## Requirements
@@ -262,9 +263,11 @@ The test suite covers:
   - *Lock file*: recorded on unlock and removed on close, another computer's lock reported and taken over on request, a crashed local copy's lock taken over, someone else's lock never removed
   - *Server safety*: listings come back sorted by name with names that aren't a single path element dropped, temp files live in a private `.vlt-tmp` (tightened to 0700 if loosened) that is never a group or copied, listing fails as a whole when the connection drops, and a remote close releases the lock
   - *Real server* (optional): `VLT_TEST_SSH_LOCATION=me@host:/tmp/vlt-test go test ./internal/store -run RealServer` runs the backend against a real OpenSSH server (fsync, modes, 20 secrets, the lock), in a folder that must be empty or absent; it leaves its test vault there, so delete the folder before running it again
+- **totp** — the RFC 6238 test vectors for SHA-1, SHA-256 and SHA-512; secrets as sites show them (spaces, non-breaking spaces, hyphens, lower case, padding); `otpauth://` links with their digits, period and algorithm, parameter names in any case, and a `%` or `#` in the label; both ends of each range; every refusal (not base32, empty, unreadable parameters, HOTP, other types, Steam's `encoder`, out-of-range digits or period, unknown algorithm); zero padding; the time left in a period, also before 1970 and after 2262; wiping a key
 - **update** — comparing `git describe` versions with release tags (later commits, `-dirty`, pre-releases, development builds), and fetching the latest release from a local test server: the request's headers, rate limits (and other 403s) and other errors, odd or path-like tags refused, the release page built from the tag rather than taken from the answer, redirects only to `api.github.com` over HTTPS, control characters dropped from the notes and long notes shortened, at most 1 MiB read, cancellation
 - **ui** — headless [`fyne/test`](https://pkg.go.dev/fyne.io/fyne/v2/test), with inline or queued runners for background work, hand-fired fake timers, and real vaults created with a cheap scrypt work factor:
   - *Screens*: create (passphrase confirmation and validation; opening an existing vault in another folder, refusing a folder without one or pointing to the vault below it, ignoring a stale result, and hiding the option under `VLT_VAULT_DIR`; the server-location dialog), unlock (wrong passphrase; naming the vault), and the error screen for an unreadable vault directory or an unreachable server (with a fake `ssh`), including the way back to the local vault
+  - *One-time codes*: a record shows its code and countdown (rounded up) and ticks to the next code at whole seconds; *Copy Code* copies the digits and is cleared on lock; the ticking stops when the panel changes or the vault locks, a stale tick does nothing, and locking blanks the code and wipes the key; an unreadable secret is explained; no code for a record without a secret or before it is saved; an invalid new secret is not saved, while an unchanged old one doesn't block saving other fields; saving or removing a secret updates the code at once, a save that leaves it alone keeps the form, and a save finishing after the user moved on doesn't pull the record back
   - *Updates*: a newer release is offered with its notes and opens its own release page; an up-to-date or development build is told so; failures are reported without internal prefixes; a second request while one runs is ignored and a result after a lock is dropped; answering counts as activity; the start-up check is off by default, silent when up to date, offline or a development build, waits for the unlock, announces each release once (not an older one after a withdrawn release), and says nothing after a manual check; the Settings choice is shown and saved; test apps never reach the network
   - *About*: reachable from the unlock screen and the main view; shows the version, platform and vault state but never the vault's path; *Copy Details* copies it; the menu items are labelled so macOS puts About in the app menu; the issue link carries the details
   - *Lock file*: unlocking takes it, and locking or quitting releases it; a vault open elsewhere asks first, *Open Anyway* takes over, *Cancel* closes the waiting vault and leaves the other lock alone, and an unanswered question closes it after the auto-lock timeout
@@ -277,7 +280,7 @@ The test suite covers:
   - *Memory hygiene*: passphrase entries cleared on read; lock empties secrets, blanks forms and wipes a pending export
   - *End-to-end flows through the real dialogs*: delete confirmation (Yes and No), import with group selection and replace (Yes and No), passphrase change then re-unlock, switch vault, export to a file
 
-Crypto and store tests run in parallel (`t.Parallel()`). Most ui tests run serially, because `fyne/test` replaces the process-global current app. Every test uses `t.TempDir()` for filesystem isolation, and CI runs the whole suite under the race detector.
+Crypto, store, totp and update tests run in parallel (`t.Parallel()`). Most ui tests run serially, because `fyne/test` replaces the process-global current app. Every test uses `t.TempDir()` for filesystem isolation, and CI runs the whole suite under the race detector.
 
 ## Linting and Static Analysis
 
@@ -370,12 +373,15 @@ internal/
 │   ├── vault.go             Create/Open/ChangePassphrase, format marker
 │   ├── migrate.go           Crash-safe format-1 → format-2 migration
 │   └── atomic.go            Atomic file writes
+├── totp/
+│   └── totp.go              One-time codes (RFC 6238) from a base32 secret or otpauth:// link
 ├── update/
 │   └── update.go            Asks GitHub for the latest release; compares versions
 ├── ui/
 │   ├── app.go               Lock/unlock state machine, header bar, layout
 │   ├── about.go             About dialog: build details, Copy Details, Report a Bug
 │   ├── updates.go           Check for Updates: on request, and at start-up if turned on
+│   ├── totp.go              A record's one-time code panel (code, countdown, Copy Code)
 │   ├── unlock.go            Passphrase entry screen (existing vault)
 │   ├── create.go            Create-vault screen (passphrase + confirmation, open existing)
 │   ├── runner.go            Runs vault I/O off the UI thread, results via fyne.Do
@@ -409,6 +415,7 @@ Icon.png                     App icon (1024×1024), the source of the 256px copi
 │          Domain Layer           │  internal/store — types, validation
 ├─────────────────────────────────┤
 │       Infrastructure Layer      │  internal/crypto — age, memguard;
+│                                 │  internal/totp — one-time codes;
 │                                 │  internal/update — release check
 └─────────────────────────────────┘
 ```

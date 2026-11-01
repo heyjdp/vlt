@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
@@ -54,6 +55,9 @@ func TestScreenshots(t *testing.T) {
 
 		unlock(app)
 		w.Resize(size)
+		// A fixed clock, so the one-time code (and its countdown) is the same
+		// in every render.
+		app.detailView.now = func() time.Time { return time.Unix(1_800_000_011, 0).UTC() }
 		for i, s := range app.secretList.filtered {
 			if s.Type == store.TypeRecord {
 				app.secretList.list.Select(i)
@@ -77,7 +81,10 @@ func sampleSecrets() []*store.Secret {
 			Version: 1, Type: store.TypeFile, Name: "Deploy Key", Group: "Work",
 			OriginalFilename: "id_ed25519", MIMEType: "application/octet-stream", Value: "c2FtcGxl", Encoding: "base64",
 		},
-		{Version: 1, Type: store.TypeRecord, Name: "Bank", Group: "Personal Finance", URL: "https://bank.example", Username: "me", Password: "sample"},
+		{
+			Version: 1, Type: store.TypeRecord, Name: "Bank", Group: "Personal Finance",
+			URL: "https://bank.example", Username: "me", Password: "sample", TOTPSecret: rfcSecret,
+		},
 	}
 }
 

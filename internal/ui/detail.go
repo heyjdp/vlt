@@ -48,6 +48,16 @@ type DetailView struct {
 	// instrumented widget tree.
 	activity func()
 	fileOps  *FileOps
+
+	// newTimer and now drive the one-time code's countdown (the app passes
+	// its timer factory; tests also fix the clock). totpTimer is the
+	// running tick, totpGen its generation and totpStop wipes the shown
+	// code (see startTOTP).
+	newTimer  timerFactory
+	now       func() time.Time
+	totpTimer stoppableTimer
+	totpGen   int
+	totpStop  func()
 }
 
 // NewDetailView creates a new detail panel. copyValue puts a secret value on
@@ -62,6 +72,8 @@ func NewDetailView(window fyne.Window, s *store.Store, copyValue func(string), s
 		run:       run,
 		groups:    func() []string { return nil },
 		activity:  noActivity,
+		newTimer:  realTimers,
+		now:       func() time.Time { return time.Now().UTC() },
 	}
 
 	dv.content = container.NewVBox(nothingSelected())
@@ -101,8 +113,10 @@ func (dv *DetailView) ShowContent(obj fyne.CanvasObject) {
 	dv.setObjects(obj)
 }
 
-// setObjects replaces the panel's contents and reports the render.
+// setObjects replaces the panel's contents and reports the render. A
+// one-time code shown before stops ticking.
 func (dv *DetailView) setObjects(objs ...fyne.CanvasObject) {
+	dv.stopTOTP()
 	dv.content.Objects = objs
 	dv.content.Refresh()
 	dv.panel.ScrollToTop()
@@ -179,11 +193,13 @@ func (dv *DetailView) groupSelect(current string) *widget.SelectEntry {
 }
 
 // formField is a type-specific field in a secret form: its label, its
-// entry, and how its text is stored on the secret when saving.
+// entry, how its text is stored on the secret when saving, and, optionally,
+// a check the text must pass before the secret is saved.
 type formField struct {
 	label string
 	entry *widget.Entry
 	store func(edited *store.Secret, text string)
+	check func(text string) error
 }
 
 // copyAction is a "Copy …" button that copies one of the secret's values.
@@ -208,34 +224,49 @@ func newEntry(text string, password bool) *widget.Entry {
 func (dv *DetailView) showPasswordDetail(secret *store.Secret, isNew bool) {
 	dv.showForm(secret, isNew,
 		[]formField{
-			{"Password", newEntry(secret.Value, true), func(s *store.Secret, t string) { s.Value = t }},
+			{"Password", newEntry(secret.Value, true), func(s *store.Secret, t string) { s.Value = t }, nil},
 		},
 		[]copyAction{
 			{"Copy Password", func() string { return secret.Value }},
-		})
+		}, nil)
 }
 
-// showRecordDetail renders a record secret form.
+// showRecordDetail renders a record secret form. A saved record with a
+// TOTP secret also shows its current one-time code.
 func (dv *DetailView) showRecordDetail(secret *store.Secret, isNew bool) {
-	totp := newEntry(secret.TOTPSecret, true)
-	totp.SetPlaceHolder("TOTP secret (optional)")
+	totpEntry := newEntry(secret.TOTPSecret, true)
+	totpEntry.SetPlaceHolder("Base32 secret or otpauth:// link (optional)")
+	var codePanel fyne.CanvasObject
+	start := func() {}
+	if !isNew && strings.TrimSpace(secret.TOTPSecret) != "" {
+		codePanel, start = dv.totpPanel(secret.TOTPSecret)
+	}
 	dv.showForm(secret, isNew,
 		[]formField{
-			{"URL", newEntry(secret.URL, false), func(s *store.Secret, t string) { s.URL = t }},
-			{"Username", newEntry(secret.Username, false), func(s *store.Secret, t string) { s.Username = t }},
-			{"Password", newEntry(secret.Password, true), func(s *store.Secret, t string) { s.Password = t }},
-			{"TOTP secret", totp, func(s *store.Secret, t string) { s.TOTPSecret = t }},
+			{"URL", newEntry(secret.URL, false), func(s *store.Secret, t string) { s.URL = t }, nil},
+			{"Username", newEntry(secret.Username, false), func(s *store.Secret, t string) { s.Username = t }, nil},
+			{"Password", newEntry(secret.Password, true), func(s *store.Secret, t string) { s.Password = t }, nil},
+			{"TOTP secret", totpEntry, func(s *store.Secret, t string) { s.TOTPSecret = strings.TrimSpace(t) }, func(t string) error {
+				// Only a changed secret is checked, so a record saved before
+				// codes existed, with other text there, can still be edited.
+				if strings.TrimSpace(t) == strings.TrimSpace(secret.TOTPSecret) {
+					return nil
+				}
+				return checkTOTPSecret(t)
+			}},
 		},
 		[]copyAction{
 			{"Copy Password", func() string { return secret.Password }},
 			{"Copy Username", func() string { return secret.Username }},
-		})
+		}, codePanel)
+	start() // after the render, which stops the previous panel's ticking
 }
 
 // showForm renders a secret form: name and group (read-only for existing
 // secrets), the type-specific fields, tags and notes, Save and copy buttons,
-// Delete and timestamps for existing secrets.
-func (dv *DetailView) showForm(secret *store.Secret, isNew bool, fields []formField, copies []copyAction) {
+// Delete and timestamps for existing secrets. extra, if not nil, is shown
+// above the form (a record's one-time code, which is what people come for).
+func (dv *DetailView) showForm(secret *store.Secret, isNew bool, fields []formField, copies []copyAction, extra fyne.CanvasObject) {
 	nameEntry := newEntry(secret.Name, false)
 	groupEntry := dv.groupSelect(secret.Group)
 	if !isNew {
@@ -257,11 +288,23 @@ func (dv *DetailView) showForm(secret *store.Secret, isNew bool, fields []formFi
 			edited.Group = matchGroup(edited.Group, dv.groups())
 		}
 		for _, f := range fields {
+			if f.check != nil {
+				if err := f.check(f.entry.Text); err != nil {
+					dialog.ShowError(err, dv.window)
+					return
+				}
+			}
 			f.store(&edited, f.entry.Text)
 		}
 		edited.Tags = parseTags(tagsEntry.Text)
 		edited.Notes = notesEntry.Text
-		dv.saveSecret(&edited, isNew, saveBtn, func() { *secret = edited })
+		dv.saveSecret(&edited, isNew, saveBtn, func() {
+			totpChanged := edited.TOTPSecret != secret.TOTPSecret
+			*secret = edited
+			if !isNew && totpChanged && dv.current == secret {
+				dv.ShowSecret(secret) // show, update or remove the one-time code
+			}
+		})
 	})
 	saveBtn.Importance = widget.HighImportance
 
@@ -278,11 +321,11 @@ func (dv *DetailView) showForm(secret *store.Secret, isNew bool, fields []formFi
 	form.Add(fieldLabel("Notes"))
 	form.Add(notesEntry)
 
-	objects := []fyne.CanvasObject{
-		secretHeader(secret, isNew),
-		card(form),
-		dv.formButtons(saveBtn, copies, isNew, secret),
+	objects := []fyne.CanvasObject{secretHeader(secret, isNew)}
+	if extra != nil {
+		objects = append(objects, extra)
 	}
+	objects = append(objects, card(form), dv.formButtons(saveBtn, copies, isNew, secret))
 	if !isNew {
 		objects = append(objects, timestamps(secret))
 	}
@@ -499,6 +542,7 @@ func parseTags(s string) []string {
 // form's entries are blanked first: Fyne's renderer cache can keep the
 // widgets reachable for a while after they leave the window.
 func (dv *DetailView) clear() {
+	dv.stopTOTP()
 	dv.onRender = nil // blanking is not a render the tracker should see
 	for _, obj := range dv.content.Objects {
 		blankEntries(obj)
