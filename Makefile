@@ -5,7 +5,7 @@ CMD      := ./cmd/vlt
 GOFLAGS  := -trimpath
 # The version shown in the window title and logs: the nearest tag, or the
 # commit hash, with -dirty for uncommitted changes.
-VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION  := $(shell git describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 
 build:

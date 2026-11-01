@@ -20,6 +20,9 @@ type Config struct {
 	DefaultVaultDir string
 	LockTimeoutMs   int // auto-lock after this many ms of inactivity; 0 disables it
 	ClipboardTTLs   int // seconds before a copied secret is cleared
+	// CheckUpdates asks GitHub for the latest release when vlt starts. It is
+	// off unless the user turns it on in Settings.
+	CheckUpdates bool
 	// FromEnv records which settings were set by environment variables.
 	// Those are not saved and cannot be changed in Settings, because the
 	// variable would override the change on the next launch anyway.
@@ -51,6 +54,10 @@ const (
 	prefVaultDir     = "vaultDir"
 	prefLockTimeout  = "lockTimeoutMs"
 	prefClipboardTTL = "clipboardTTLs"
+	prefCheckUpdates = "checkUpdates"
+	// prefUpdateNotified is the latest release the startup check has told
+	// the user about, so each one is announced once.
+	prefUpdateNotified = "updateNotified"
 	// prefMigrated records that MigratePreferences has run.
 	prefMigrated = "migratedFrom010"
 )
@@ -65,6 +72,7 @@ func LoadConfig(prefs fyne.Preferences, getenv func(string) string, defaultVault
 		DefaultVaultDir: defaultVaultDir,
 		LockTimeoutMs:   prefs.IntWithFallback(prefLockTimeout, DefaultLockTimeoutMs),
 		ClipboardTTLs:   prefs.IntWithFallback(prefClipboardTTL, DefaultClipboardTTLs),
+		CheckUpdates:    prefs.Bool(prefCheckUpdates),
 	}
 	if dir := getenv(envVaultDir); dir != "" {
 		cfg.VaultDir = dir

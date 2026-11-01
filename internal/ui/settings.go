@@ -33,6 +33,8 @@ type SettingsScreen struct {
 	// the user changes it; it is set by the app. A new vault location is
 	// saved by the app once a vault is opened or created there.
 	save func(setting string)
+	// checkUpdates checks for a newer release now (set by the app).
+	checkUpdates func()
 
 	content *fyne.Container
 }
@@ -57,6 +59,8 @@ func NewSettingsScreen(
 		onRelock:  onRelock,
 		activity:  noActivity,
 		save:      func(string) {},
+
+		checkUpdates: func() {},
 	}
 
 	ss.content = ss.build()
@@ -79,6 +83,7 @@ func (ss *SettingsScreen) build() *fyne.Container {
 		card(subheading("Clipboard"),
 			muted("Clear a copied secret from the clipboard after this long."),
 			ss.buildClipboardTTL()),
+		ss.buildUpdates(),
 	)
 }
 
@@ -378,4 +383,21 @@ func (ss *SettingsScreen) buildClipboardTTL() *fyne.Container {
 		label.SetText(label.Text + " (set by " + envClipboardTTL + ")")
 	}
 	return container.NewVBox(label, slider)
+}
+
+// buildUpdates is the opt-in startup check for a newer release, and a
+// button to check now.
+func (ss *SettingsScreen) buildUpdates() *fyne.Container {
+	atStart := widget.NewCheck("Check for updates when vlt starts", nil)
+	atStart.SetChecked(ss.config.CheckUpdates)
+	atStart.OnChanged = func(on bool) {
+		ss.config.CheckUpdates = on
+		ss.save(prefCheckUpdates)
+	}
+	checkNow := widget.NewButton("Check Now", func() { ss.checkUpdates() })
+	return card(subheading("Updates"),
+		muted("When this is on, vlt asks GitHub for its latest release at start-up and, once the vault is unlocked, tells you once about each new one. "+
+			"Nothing is downloaded or installed; a new version is a link to its release page."),
+		atStart,
+		container.NewHBox(checkNow))
 }

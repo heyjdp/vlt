@@ -131,7 +131,7 @@ jobs:
         shell: bash
         env:
           CGO_ENABLED: "1"
-        run: go build -trimpath -ldflags="-s -w -X main.version=$(git describe --tags --always --dirty)" ./cmd/vlt
+        run: go build -trimpath -ldflags="-s -w -X main.version=$(git describe --tags --match 'v[0-9]*' --always --dirty)" ./cmd/vlt
 
   # Installable packages, built once lint, tests and the vulnerability scan
   # pass on a push to main or a tag. Pull requests skip them.
