@@ -88,6 +88,11 @@ const (
 	// opSecretChange is saving or deleting a secret, which must not
 	// interleave.
 	opSecretChange opKind = "secret change"
+	// opVault is changing the whole vault: changing the passphrase, moving
+	// (copying) it or switching to another. A copy taken while vlt.age is
+	// rewritten, a second copy into the same folder, or a switch (which
+	// locks) in the middle of a copy would leave a half-made vault.
+	opVault opKind = "vault change"
 	// opUpdateCheck is a check for updates the user asked for.
 	opUpdateCheck opKind = "update check"
 )
@@ -121,14 +126,8 @@ type operation struct {
 // are undone before done or failed is called. If the session ends first,
 // the result is dropped and neither is called.
 func start[T any](o *operations, op *operation, work func(context.Context) (T, error), done func(T)) bool {
-	if op.kind != "" {
-		if o.running[op.kind] {
-			if o.status != nil {
-				o.status.SetText(waitMessage)
-			}
-			return false
-		}
-		o.running[op.kind] = true
+	if !o.claim(op.kind) {
+		return false
 	}
 	if op.control != nil {
 		op.control.Disable()
@@ -151,6 +150,35 @@ func start[T any](o *operations, op *operation, work func(context.Context) (T, e
 			showError(o.window, op.doing, err)
 		}
 	})
+	return true
+}
+
+// now runs f at once, on the main goroutine, as an operation of op's kind
+// (only kind is used): like start, it is refused, asking the user to wait,
+// while an operation of that kind runs. It is for actions with nothing to
+// wait for, such as switching vaults, which must still not cut into one.
+func (o *operations) now(op *operation, f func()) bool {
+	if !o.claim(op.kind) {
+		return false
+	}
+	defer delete(o.running, op.kind)
+	f()
+	return true
+}
+
+// claim marks kind as running, or reports false (asking the user to wait)
+// if it already is. Every kind may be claimed when kind is empty.
+func (o *operations) claim(kind opKind) bool {
+	if kind == "" {
+		return true
+	}
+	if o.running[kind] {
+		if o.status != nil {
+			o.status.SetText(waitMessage)
+		}
+		return false
+	}
+	o.running[kind] = true
 	return true
 }
 

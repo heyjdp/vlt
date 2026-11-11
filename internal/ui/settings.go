@@ -129,6 +129,7 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 		// Only vlt.age (the wrapped vault key) is rewritten; secrets are
 		// untouched. Two scrypt derivations, so it runs in the background.
 		start(ss.ops, &operation{
+			kind:     opVault,
 			progress: "Changing passphrase…",
 			control:  changeBtn,
 			failed: func(err error) {
@@ -177,7 +178,8 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 		ss.ops.pickFolder(pathEntry.SetText)
 	})
 
-	moveBtn := widget.NewButton("Move Vault", func() {
+	var moveBtn *widget.Button
+	moveBtn = widget.NewButton("Move Vault", func() {
 		errorLabel.Hide()
 
 		newDir, ok := ss.targetLocation(pathEntry.Text, errorLabel, "Please enter or browse to a new vault directory")
@@ -194,7 +196,7 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 			title: "Move Vault",
 			message: fmt.Sprintf("Copy all secrets from:\n  %s\nto:\n  %s\n\nThe original vault will not be deleted.",
 				ss.config.VaultDir, newDir),
-		}, func() { ss.moveVault(newDir, errorLabel, currentLabel) })
+		}, func() { ss.moveVault(newDir, moveBtn, errorLabel, currentLabel) })
 	})
 	moveBtn.Importance = widget.WarningImportance
 
@@ -214,7 +216,9 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 		ss.ops.confirm(&question{
 			title:   "Switch Vault",
 			message: fmt.Sprintf("Switch to vault at:\n  %s\n\nThe app will lock. If a vault exists there you will unlock it with its passphrase; otherwise you will be asked to create one.", newDir),
-		}, func() { ss.switchVault(newDir, currentLabel) })
+		}, func() {
+			ss.ops.now(&operation{kind: opVault}, func() { ss.switchVault(newDir, currentLabel) })
+		})
 	})
 
 	if ss.config.FromEnv.VaultDir {
@@ -267,9 +271,13 @@ func sameLocation(a, b string) bool {
 	return la == lb
 }
 
-func (ss *SettingsScreen) moveVault(newDir string, errorLabel, currentLabel *widget.Label) {
+// moveVault copies the vault to newDir in the background, with moveBtn
+// disabled meanwhile; while it runs, no other vault-wide change starts.
+func (ss *SettingsScreen) moveVault(newDir string, moveBtn fyne.Disableable, errorLabel, currentLabel *widget.Label) {
 	start(ss.ops, &operation{
+		kind:     opVault,
 		progress: "Copying vault…",
+		control:  moveBtn,
 		failed: func(err error) {
 			errorLabel.SetText(errorMessage("Couldn't move the vault", err))
 			errorLabel.Show()

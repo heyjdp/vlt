@@ -162,6 +162,7 @@ Added 2026-11-11, from an audit with the samber Go skills (security, safety, con
 Added 2026-11-11. Goal: deep modules for the error wording, operations, secret files and settings, from the second architecture review.
 - [[F39 Secret files and keys]]
 - [[F40 Error wording]]
+- [[F41 Operations]]
 
 ## Tracker
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
@@ -192,7 +193,7 @@ func TestSettings_MovedVaultIsRememberedAfterUnlock(t *testing.T) {
 	prefs := app.fyneApp.Preferences()
 	newDir := filepath.Join(t.TempDir(), "moved")
 
-	ss.moveVault(newDir, widget.NewLabel(""), widget.NewLabel(""))
+	ss.moveVault(newDir, widget.NewButton("Move Vault", nil), widget.NewLabel(""), widget.NewLabel(""))
 	unlock(app) // the relock after a move; unlock at the new location
 
 	if got := LoadConfig(prefs, env(nil), "/default", quietLog()).VaultDir; got != newDir {
@@ -396,4 +397,90 @@ func TestMigratePreferences_AnEmptyOldLocationIsNotCopied(t *testing.T) {
 	if got := LoadConfig(a.Preferences(), func(string) string { return "" }, "/default", quietLog()); got.VaultDir != "/default" {
 		t.Fatalf("VaultDir = %q, want the default", got.VaultDir)
 	}
+}
+
+// queuedSettings is an unlocked app whose background work waits in q, with
+// Settings open and its vault location card built.
+func queuedSettings(t *testing.T) (*App, fyne.Window, *queue, fyne.CanvasObject) {
+	t.Helper()
+	a := test.NewTempApp(t)
+	dir := t.TempDir()
+	newVaultWith(t, dir, testutil.PasswordSecret("gh", "x", "work"))
+	w := test.NewTempWindow(t, nil)
+	q := &queue{}
+	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), q.runner(), noTimers, testKDF)
+	q.flush()
+	unlockQueued(t, app, q)
+	q.flush() // the first load of the list
+	ss := app.openSettings(app.session.Store(), app.sessionOps)
+	return app, w, q, ss.buildVaultLocation()
+}
+
+// tapAndConfirm taps the button labelled text in box and, if it asks,
+// answers Yes.
+func tapAndConfirm(t *testing.T, w fyne.Window, box fyne.CanvasObject, text string) {
+	t.Helper()
+	test.Tap(findButton(box, text))
+	if top := w.Canvas().Overlays().Top(); top != nil && findButton(top, "Yes") != nil {
+		test.Tap(findButton(top, "Yes"))
+	}
+}
+
+func TestSettings_MoveVaultIsNotStartedTwice(t *testing.T) {
+	app, w, q, box := queuedSettings(t)
+	entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server").SetText(filepath.Join(t.TempDir(), "moved"))
+
+	tapAndConfirm(t, w, box, "Move Vault")
+	tapAndConfirm(t, w, box, "Move Vault") // again, while the copy runs
+	// Settings opened again shows fresh buttons; the copy still runs.
+	again := app.openSettings(app.session.Store(), app.sessionOps).buildVaultLocation()
+	entryWithPlaceholder(t, again, "Folder, or user@host:/path on an SSH server").SetText(filepath.Join(t.TempDir(), "other"))
+	tapAndConfirm(t, w, again, "Move Vault")
+
+	if len(q.pending) != 1 {
+		t.Fatalf("%d copies started, want 1", len(q.pending))
+	}
+	if !findButton(box, "Move Vault").Disabled() {
+		t.Fatal("Move Vault should be disabled while the vault is copied")
+	}
+	q.flush()
+	app.Lock()
+}
+
+func TestSettings_SwitchVaultWaitsForAMoveToFinish(t *testing.T) {
+	app, w, q, box := queuedSettings(t)
+	dir := app.config.VaultDir
+	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")
+	path.SetText(filepath.Join(t.TempDir(), "moved"))
+	tapAndConfirm(t, w, box, "Move Vault")
+
+	path.SetText(filepath.Join(t.TempDir(), "other"))
+	tapAndConfirm(t, w, box, "Switch Vault (no copy)")
+
+	if app.config.VaultDir != dir || app.session.Store() == nil {
+		t.Fatal("switching while the vault is being copied must wait, not lock and switch")
+	}
+	if app.statusBar.Text != waitMessage {
+		t.Fatalf("status bar says %q, want it to ask the user to wait", app.statusBar.Text)
+	}
+	q.flush()
+	app.Lock()
+}
+
+func TestSettings_PassphraseChangeWaitsForAMoveToFinish(t *testing.T) {
+	app, w, q, box := queuedSettings(t)
+	entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server").SetText(filepath.Join(t.TempDir(), "moved"))
+	tapAndConfirm(t, w, box, "Move Vault")
+
+	card := app.openSettings(app.session.Store(), app.sessionOps).buildChangePassphrase()
+	test.Type(entryWithPlaceholder(t, card, "Current passphrase"), testPassphrase)
+	test.Type(entryWithPlaceholder(t, card, "New passphrase"), "an even better passphrase")
+	test.Type(entryWithPlaceholder(t, card, "Confirm new passphrase"), "an even better passphrase")
+	test.Tap(findButton(card, "Change Passphrase"))
+
+	if len(q.pending) != 1 {
+		t.Fatalf("%d vault-wide operations running, want only the copy", len(q.pending))
+	}
+	q.flush()
+	app.Lock()
 }

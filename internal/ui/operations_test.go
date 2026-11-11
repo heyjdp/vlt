@@ -307,3 +307,24 @@ func TestOperations_PickSave_AfterTheEndAnswersAtOnce(t *testing.T) {
 		t.Fatal("asking after the session ended should answer nil without a dialog")
 	}
 }
+
+func TestOperations_Now_RunsAtOnceUnlessItsKindIsRunning(t *testing.T) {
+	h := newOpsHarness(t)
+	ran := 0
+	act := func() { ran++ }
+
+	if !h.ops.now(&operation{kind: opVault}, act) || ran != 1 {
+		t.Fatal("with nothing running, now should run at once")
+	}
+	if !h.ops.now(&operation{kind: opVault}, act) || ran != 2 {
+		t.Fatal("an operation run by now should not keep its kind busy")
+	}
+	start(h.ops, &operation{kind: opVault}, succeed(none{}), func(none) {})
+	if h.ops.now(&operation{kind: opVault}, act) || ran != 2 || h.status.Text != waitMessage {
+		t.Fatal("while its kind runs, now should refuse and ask the user to wait")
+	}
+	h.q.flush()
+	if !h.ops.now(&operation{kind: opVault}, act) || ran != 3 {
+		t.Fatal("once the running operation ends, now should run again")
+	}
+}
