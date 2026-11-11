@@ -293,12 +293,22 @@ func (ss *SettingsScreen) moveVault(newDir store.Location, moveBtn fyne.Disablea
 		control:      moveBtn,
 		keepUnlocked: true,
 		failed: func(err error) {
-			errorLabel.SetText(errorMessage("Couldn't move the vault", err))
+			errorLabel.SetText(moveFailure(err))
 			errorLabel.Show()
 		},
 	},
 		func(ctx context.Context) (none, error) { return none{}, ss.store.CopyTo(ctx, newDir.String()) },
 		func(none) { ss.vaultMoved(newDir, currentLabel) })
+}
+
+// moveFailure is what a failed move says under the location.
+func moveFailure(err error) string {
+	if errors.Is(err, store.ErrStaleCopy) {
+		// A move cut short, then the vault changed: finishing that copy
+		// would leave it out of date, and what is there is safe to delete.
+		return "Couldn't move the vault: that folder holds an unfinished copy of this vault, made before the vault last changed. Delete that folder, then move the vault again."
+	}
+	return errorMessage("Couldn't move the vault", err)
 }
 
 // vaultMoved proposes newDir after a successful copy and relocks so the

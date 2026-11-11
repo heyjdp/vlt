@@ -472,26 +472,22 @@ func (s *Store) checkCopyTarget(ctx context.Context, dst vaultFS) (done map[stri
 	if err != nil || !exists {
 		return nil, err
 	}
-	done, err = s.resumable(ctx, dst)
-	if err != nil {
-		return nil, err
-	}
-	if done == nil {
-		return nil, ErrVaultExists
-	}
-	return done, nil
+	return s.resumable(ctx, dst)
 }
 
-// resumable reports whether dst holds only an unfinished copy of this
-// vault: no vlt.age and no migration, a format marker (if any) the same as
-// this vault's, and every secret file byte for byte one of this vault's.
-// Finishing such a copy overwrites nothing that isn't already here. For
-// such a copy it returns the files found the same (non-nil, if empty);
-// otherwise nil. It stops when ctx is cancelled, since over a slow
-// connection it reads every file.
+// resumable returns the files of dst already copied if dst holds only an
+// unfinished copy of this vault: no vlt.age and no migration, a format
+// marker (if any) the same as this vault's, and every secret file byte for
+// byte one of this vault's. Finishing such a copy overwrites nothing that
+// isn't already here. A copy whose secret files are all this vault's but
+// not all as they are now (changed or deleted since) is ErrStaleCopy;
+// anything else is ErrVaultExists. It stops when ctx is cancelled, since
+// over a slow connection it reads every file.
 func (s *Store) resumable(ctx context.Context, dst vaultFS) (map[string]bool, error) {
 	for _, name := range []string{keyFile, migratingFile} {
-		if _, err := dst.Stat(name); !errors.Is(err, fs.ErrNotExist) {
+		if _, err := dst.Stat(name); err == nil {
+			return nil, ErrVaultExists
+		} else if !errors.Is(err, fs.ErrNotExist) {
 			return nil, err
 		}
 	}
@@ -500,43 +496,74 @@ func (s *Store) resumable(ctx context.Context, dst vaultFS) (map[string]bool, er
 		return nil, err
 	}
 	done := make(map[string]bool, len(paths)+1)
+	stale := false
 	for _, name := range append(paths, formatFile) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		same, missing, err := s.sameFile(dst, name)
+		state, err := s.compareCopied(dst, name)
 		if err != nil {
 			return nil, err
 		}
-		if missing && name == formatFile {
-			continue
+		switch state {
+		case copiedSame:
+			done[name] = true
+		case copiedOutdated:
+			stale = true
+		case copiedForeign:
+			return nil, ErrVaultExists
+		case copiedMissing: // only the marker can be missing
 		}
-		if !same {
-			return nil, nil
-		}
-		done[name] = true
+	}
+	if stale {
+		return nil, ErrStaleCopy
 	}
 	return done, nil
 }
 
-// sameFile reports whether dst's file name holds the same bytes as this
-// vault's, or is missing from dst.
-func (s *Store) sameFile(dst vaultFS, name string) (same, missing bool, err error) {
+// copiedState is how a file at a copy's destination compares with this
+// vault's.
+type copiedState int
+
+const (
+	// copiedMissing is a file not at the destination.
+	copiedMissing copiedState = iota
+	// copiedSame is a file with the same bytes as this vault's.
+	copiedSame
+	// copiedOutdated is a secret file encrypted to this vault's key whose
+	// bytes this vault no longer has: changed or deleted since.
+	copiedOutdated
+	// copiedForeign is any other file: not this vault's.
+	copiedForeign
+)
+
+// compareCopied compares dst's file name with this vault's.
+func (s *Store) compareCopied(dst vaultFS, name string) (copiedState, error) {
 	theirs, err := dst.ReadFile(name)
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, true, nil
+		return copiedMissing, nil
 	}
 	if err != nil {
-		return false, false, err
+		return 0, err
 	}
 	ours, err := s.fs.ReadFile(name)
-	if errors.Is(err, fs.ErrNotExist) {
-		return false, false, nil
+	switch {
+	case err == nil && bytes.Equal(ours, theirs):
+		return copiedSame, nil
+	case err != nil && !errors.Is(err, fs.ErrNotExist):
+		return 0, err
+	case name == formatFile:
+		return copiedForeign, nil
+	}
+	plaintext, err := crypto.Decrypt(s.id, theirs)
+	if errors.Is(err, crypto.ErrIdentityZeroed) {
+		return 0, err // closed (locked) meanwhile: no answer
 	}
 	if err != nil {
-		return false, false, err
+		return copiedForeign, nil //nolint:nilerr // a file this vault can't decrypt is not its own
 	}
-	return bytes.Equal(ours, theirs), false, nil
+	crypto.Wipe(plaintext)
+	return copiedOutdated, nil
 }
 
 // copyFile copies the vault-level file name to dst, if this vault has it.

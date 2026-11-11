@@ -274,7 +274,7 @@ func (a *App) onUnlock(passphrase string) {
 				// The vault disappeared since the screen was chosen; offer to create one.
 				a.showUnlockScreen()
 			case errors.Is(err, store.ErrKeyMissing):
-				screen.ShowError("This vault's key file (vlt.age) is missing, so its secrets cannot be decrypted. If moving the vault here was interrupted, move it here again; otherwise restore vlt.age from a backup.")
+				screen.ShowError("This vault's key file (vlt.age) is missing, so its secrets cannot be decrypted. If moving the vault here was cut short, switch back to the original vault and move it here again (if that vault changed since, delete this folder first); otherwise restore vlt.age from a backup.")
 			case isServerError(err):
 				screen.ShowError(errorMessage("", err))
 			case err != nil:

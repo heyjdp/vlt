@@ -189,8 +189,9 @@ func TestStore_CopyTo_RefusesAKeylessVaultItDidNotCopy(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if err := s.CopyTo(context.Background(), dest); !errors.Is(err, ErrVaultExists) {
-				t.Fatalf("CopyTo = %v; want ErrVaultExists", err)
+			err := s.CopyTo(context.Background(), dest)
+			if !errors.Is(err, ErrVaultExists) || errors.Is(err, ErrStaleCopy) {
+				t.Fatalf("CopyTo = %v; want ErrVaultExists, not ErrStaleCopy", err)
 			}
 			if got, err := os.ReadFile(planted); err != nil || string(got) != "not this vault's" {
 				t.Fatalf("the destination's file was overwritten: %q, %v", got, err)
@@ -416,5 +417,42 @@ func TestStore_CopyTo_RefusesACopyWithAnotherFormatMarker(t *testing.T) {
 	}
 	if got, err := os.ReadFile(marker); err != nil || string(got) != `{"version":99}` {
 		t.Fatalf("the destination's marker was overwritten: %q, %v", got, err)
+	}
+}
+
+// Moving again after the vault changed since a move was cut short is
+// refused (a file there would be overwritten or left behind), and the error
+// says why: the folder holds an outdated copy of this vault, which can go.
+func TestStore_CopyTo_RefusesAnUnfinishedCopyTheVaultChangedSince(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		change func(ctx context.Context, s *Store) error
+	}{
+		{"a copied secret changed", func(ctx context.Context, s *Store) error {
+			return s.Update(ctx, &Secret{Type: TypePassword, Name: "a", Group: "work", Value: "new pw"})
+		}},
+		{"a copied secret deleted", func(ctx context.Context, s *Store) error {
+			return s.Delete(ctx, "a", "work")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := copySource(t)
+			dest := interruptedCopy(t, s)
+			if err := tt.change(context.Background(), s); err != nil {
+				t.Fatal(err)
+			}
+
+			err := s.CopyTo(context.Background(), dest)
+
+			if !errors.Is(err, ErrStaleCopy) || !errors.Is(err, ErrVaultExists) {
+				t.Fatalf("CopyTo = %v; want ErrStaleCopy, an ErrVaultExists", err)
+			}
+			if _, err := os.Stat(filepath.Join(dest, keyFile)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("a refused copy wrote %s (stat: %v)", keyFile, err)
+			}
+		})
 	}
 }

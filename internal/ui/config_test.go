@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -412,6 +413,39 @@ func TestSettings_BrowseFillsInTheChosenFolder(t *testing.T) {
 
 	if got := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server").Text; got != dir {
 		t.Fatalf("the location entry holds %q, want the chosen folder %q", got, dir)
+	}
+	app.Lock()
+}
+
+// A move to an unfinished copy made before the vault last changed says
+// what is there and what to do, rather than that a vault exists.
+func TestSettings_AMoveToAnOutdatedUnfinishedCopySaysToDeleteIt(t *testing.T) {
+	app, ss := settingsApp(t, noTimers)
+	box := ss.buildVaultLocation()
+	files, err := filepath.Glob(filepath.Join(app.settings.Vault().Path, "work", "*.age"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("the vault's secret file: %v, %v", files, err)
+	}
+	stale := t.TempDir() // an unfinished copy: one secret, no vlt.age
+	if err := os.Mkdir(filepath.Join(stale, "work"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "work", filepath.Base(files[0])), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.session.Store().Update(context.Background(), testutil.PasswordSecret("gh", "changed since", "work")); err != nil {
+		t.Fatal(err)
+	}
+
+	entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server").SetText(stale)
+	tapAndConfirm(t, app.window, box, "Move Vault")
+
+	if !visibleText(box, "unfinished copy of this vault") || !visibleText(box, "Delete that folder, then move the vault again") {
+		t.Fatal("a move to an outdated unfinished copy should say to delete it, then move again")
 	}
 	app.Lock()
 }

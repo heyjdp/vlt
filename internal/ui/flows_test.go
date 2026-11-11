@@ -47,6 +47,25 @@ func TestFlow_WrongPassphraseShowsError(t *testing.T) {
 	}
 }
 
+// A vault without vlt.age may be a move cut short; the unlock screen says
+// how to finish it, and that a vault changed since needs the folder gone.
+func TestFlow_AVaultWithoutItsKeyFileSaysHowToFinishAMove(t *testing.T) {
+	app, _ := newFlowApp(t, testutil.PasswordSecret("gh", "x", "work"))
+	if err := os.Remove(filepath.Join(app.settings.Vault().Path, "vlt.age")); err != nil {
+		t.Fatal(err)
+	}
+
+	test.Type(app.unlockScreen.entry, testPassphrase)
+	test.Tap(app.unlockScreen.unlockBtn)
+
+	text := app.unlockScreen.errorLabel.Text
+	for _, want := range []string{"switch back to the original vault and move it here again", "delete this folder first", "restore vlt.age from a backup"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("the unlock screen says %q; want it to say %q", text, want)
+		}
+	}
+}
+
 func TestFlow_DeleteAsksForConfirmation(t *testing.T) {
 	app, w := newFlowApp(t, testutil.PasswordSecret("gh", "x", "work"))
 	unlock(app)
