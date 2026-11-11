@@ -205,11 +205,11 @@ func TestCheckAtStartup_WaitsForTheUnlockThenTellsAboutEachNewReleaseOnce(t *tes
 func TestCheckAtStartup_AnnouncesAtOnceWhenAlreadyUnlocked(t *testing.T) {
 	app, w, _ := updateApp(t, "v0.1.0", Config{CheckUpdates: true})
 	q := &queue{}
-	app.run = q.runner()
+	setRunner(app, q.runner())
 	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
 
 	app.checkAtStartup()
-	app.run = inlineRunner()
+	setRunner(app, inlineRunner())
 	unlock(app)
 	q.flush() // the check finishes after the unlock (a slow network)
 	if !strings.Contains(releaseDialogText(t, w), "vlt v0.1.1 is available") {
@@ -221,14 +221,14 @@ func TestCheckAtStartup_AnnouncesAtOnceWhenAlreadyUnlocked(t *testing.T) {
 func TestCheckAtStartup_SaysNothingAfterAManualCheck(t *testing.T) {
 	app, w, _ := updateApp(t, "v0.1.0", Config{CheckUpdates: true})
 	q := &queue{}
-	app.run = q.runner()
+	setRunner(app, q.runner())
 	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
 
 	app.checkAtStartup()
 	checkForUpdatesMenu(t, w)
 	q.flush()
 	test.Tap(dialogButton(t, w, "Close")) // the manual check's answer
-	app.run = inlineRunner()
+	setRunner(app, inlineRunner())
 	unlock(app)
 	if w.Canvas().Overlays().Top() != nil {
 		t.Fatal("the start-up check should not repeat what the manual check showed")
@@ -256,7 +256,7 @@ func TestCheckForUpdates_AResultAfterALockIsDropped(t *testing.T) {
 	app, w, _ := updateApp(t, "v0.1.0", Config{})
 	unlock(app)
 	q := &queue{}
-	app.run = q.runner()
+	setRunner(app, q.runner())
 	calls := fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
 
 	checkForUpdatesMenu(t, w)
@@ -366,4 +366,11 @@ func TestSettings_UpdateCheckIsSavedAndCheckNowChecks(t *testing.T) {
 		t.Fatal("turning it off should be saved")
 	}
 	app.Lock()
+}
+
+// setRunner makes the app run its background work, including the update
+// checks its operations start, on r.
+func setRunner(app *App, r runner) {
+	app.run = r
+	app.ops.run = r
 }

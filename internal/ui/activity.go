@@ -73,6 +73,11 @@ func (t *activityTracker) instrument(obj fyne.CanvasObject) {
 	case *container.Scroll:
 		t.instrument(w.Content)
 		return
+	case *widget.Form:
+		for _, item := range w.Items {
+			t.instrument(item.Widget)
+		}
+		return
 	case *widget.Entry:
 		prev := w.OnChanged
 		w.OnChanged = func(s string) {

@@ -179,7 +179,7 @@ func TestFlow_ImportUsesTheExistingGroupSpelling(t *testing.T) {
 func TestFlow_ChangePassphraseThroughSettings(t *testing.T) {
 	app, w := newFlowApp(t, testutil.PasswordSecret("gh", "x", "work"))
 	unlock(app)
-	ss := app.openSettings(app.session.Store(), app.run)
+	ss := app.openSettings(app.session.Store(), app.sessionOps)
 	box := ss.buildChangePassphrase()
 	current := entryWithPlaceholder(t, box, "Current passphrase")
 	newPass := entryWithPlaceholder(t, box, "New passphrase")
@@ -211,7 +211,7 @@ func TestFlow_ChangePassphraseThroughSettings(t *testing.T) {
 func TestFlow_SwitchVaultThroughSettings(t *testing.T) {
 	app, w := newFlowApp(t)
 	unlock(app)
-	ss := app.openSettings(app.session.Store(), app.run)
+	ss := app.openSettings(app.session.Store(), app.sessionOps)
 	box := ss.buildVaultLocation()
 	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")
 	newDir := filepath.Join(t.TempDir(), "other")

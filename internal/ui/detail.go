@@ -10,7 +10,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -27,7 +26,8 @@ type DetailView struct {
 	copyValue func(string)
 	statusBar *widget.Label
 	log       *slog.Logger
-	run       runner
+	// ops runs saves and deletes, and asks before deleting.
+	ops       *operations
 	groups    func() []string
 	onSaved   func(*store.Secret)
 	onDeleted func(*store.Secret)
@@ -38,15 +38,9 @@ type DetailView struct {
 	// current is the existing secret shown in the panel, or nil when the
 	// panel shows a new-secret form, a message, or settings.
 	current *store.Secret
-	// busy is true while a save or delete is in flight; a second one is
-	// refused so they cannot interleave.
-	busy bool
 	// onRender, if set, is called with the panel after each render (the app
 	// uses it to track user activity in newly built forms).
 	onRender func(fyne.CanvasObject)
-	// activity reports user input made in dialogs, which are outside the
-	// instrumented widget tree.
-	activity func()
 	fileOps  *FileOps
 
 	// newTimer and now drive the one-time code's countdown (the app passes
@@ -61,17 +55,17 @@ type DetailView struct {
 }
 
 // NewDetailView creates a new detail panel. copyValue puts a secret value on
-// the clipboard; the app's clipboardClearer clears it after the TTL.
-func NewDetailView(window fyne.Window, s *store.Store, copyValue func(string), statusBar *widget.Label, log *slog.Logger, run runner) *DetailView {
+// the clipboard; the app's clipboardClearer clears it after the TTL. ops
+// runs its saves and deletes (the session's operations).
+func NewDetailView(window fyne.Window, s *store.Store, copyValue func(string), statusBar *widget.Label, log *slog.Logger, ops *operations) *DetailView {
 	dv := &DetailView{
 		window:    window,
 		store:     s,
 		copyValue: copyValue,
 		statusBar: statusBar,
 		log:       log,
-		run:       run,
+		ops:       ops,
 		groups:    func() []string { return nil },
-		activity:  noActivity,
 		newTimer:  realTimers,
 		now:       func() time.Time { return time.Now().UTC() },
 	}
@@ -416,43 +410,24 @@ func (dv *DetailView) showFileDetail(secret *store.Secret) {
 // and commit it to the shared *Secret only then, so a failed save leaves the
 // list's copy unchanged), updates the list, and for a new secret re-renders
 // the form as existing so a second Save updates it. btn is disabled while the
-// save is in flight so a double click cannot submit twice. Creating never
-// overwrites: a name already used in the group, including one that differs
-// only in case or punctuation, is reported.
+// save is in flight so a double click cannot submit twice, and a save or
+// delete already running refuses it. Creating never overwrites: a name
+// already used in the group, including one that differs only in case or
+// punctuation, is reported.
 func (dv *DetailView) saveSecret(secret *store.Secret, isNew bool, btn *widget.Button, commit func()) {
-	if dv.busy {
-		dv.statusBar.SetText("Please wait for the current operation to finish")
-		return
-	}
-	dv.busy = true
-	dv.statusBar.SetText("Saving…")
-	btn.Disable()
-	background(dv.run,
+	start(dv.ops, &operation{
+		kind:     opSecretChange,
+		progress: "Saving…",
+		control:  btn,
+		failed:   func(err error) { dv.saveFailed(secret, isNew, err) },
+	},
 		func(ctx context.Context) (none, error) {
 			if isNew {
 				return none{}, dv.store.Create(ctx, secret)
 			}
 			return none{}, dv.store.Update(ctx, secret)
 		},
-		func(_ none, err error) {
-			dv.busy = false
-			btn.Enable()
-			switch {
-			case errors.Is(err, store.ErrSecretExists) && isNew:
-				dv.statusBar.SetText("")
-				showError(dv.window, "Couldn't save the secret", fmt.Errorf("a secret named %q (or one whose name differs only in case or punctuation) already exists in group %q; choose a different name",
-					secret.Name, secret.Group))
-				return
-			case errors.Is(err, store.ErrSecretExists):
-				dv.statusBar.SetText("")
-				showError(dv.window, "Couldn't save the secret: its file is now held by a different secret", err)
-				return
-			case err != nil:
-				dv.statusBar.SetText("")
-				showError(dv.window, "Couldn't save the secret", err)
-				return
-			}
-
+		func(none) {
 			commit()
 			dv.log.Info("secret saved via UI", "name", secret.Name, "created", isNew)
 			dv.statusBar.SetText("Saved: " + secret.Name)
@@ -465,43 +440,39 @@ func (dv *DetailView) saveSecret(secret *store.Secret, isNew bool, btn *widget.B
 		})
 }
 
+// saveFailed says why secret wasn't saved.
+func (dv *DetailView) saveFailed(secret *store.Secret, isNew bool, err error) {
+	const doing = "Couldn't save the secret"
+	switch {
+	case errors.Is(err, store.ErrSecretExists) && isNew:
+		showError(dv.window, doing, fmt.Errorf("a secret named %q (or one whose name differs only in case or punctuation) already exists in group %q; choose a different name",
+			secret.Name, secret.Group))
+	case errors.Is(err, store.ErrSecretExists):
+		showError(dv.window, doing+": its file is now held by a different secret", err)
+	default:
+		showError(dv.window, doing, err)
+	}
+}
+
 // confirmDelete asks for confirmation, then deletes the secret.
 func (dv *DetailView) confirmDelete(secret *store.Secret) {
-	dialog.ShowConfirm(
-		"Delete Secret",
-		fmt.Sprintf("Are you sure you want to delete %q?", secret.Name),
-		func(confirmed bool) {
-			dv.activity()
-			if !confirmed {
-				return
-			}
-			dv.deleteSecret(secret)
-		},
-		dv.window,
-	)
+	dv.ops.confirm(&question{
+		title:   "Delete Secret",
+		message: fmt.Sprintf("Are you sure you want to delete %q?", secret.Name),
+	}, func() { dv.deleteSecret(secret) })
 }
 
 // deleteSecret deletes secret in the background, then removes it from the
-// list and, if the panel still shows it, clears the panel. Name and group are
-// snapshotted first: the list's *Secret may be rewritten by a save
-// completing meanwhile.
+// list and, if the panel still shows it, clears the panel. A save or delete
+// already running refuses it. Name and group are snapshotted first: the
+// list's *Secret may be rewritten by a save completing meanwhile.
 func (dv *DetailView) deleteSecret(secret *store.Secret) {
-	if dv.busy {
-		dv.statusBar.SetText("Please wait for the current operation to finish")
-		return
-	}
-	dv.busy = true
 	deleted := &store.Secret{Name: secret.Name, Group: secret.Group}
-	background(dv.run,
+	start(dv.ops, &operation{kind: opSecretChange, doing: "Couldn't delete the secret"},
 		func(ctx context.Context) (none, error) {
 			return none{}, dv.store.Delete(ctx, deleted.Name, deleted.Group)
 		},
-		func(_ none, err error) {
-			dv.busy = false
-			if err != nil {
-				showError(dv.window, "Couldn't delete the secret", err)
-				return
-			}
+		func(none) {
 			dv.log.Info("secret deleted via UI", "name", deleted.Name)
 			dv.statusBar.SetText("Deleted: " + deleted.Name)
 			// Only clear the panel if it still shows the deleted secret; the

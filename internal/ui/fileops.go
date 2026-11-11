@@ -29,15 +29,15 @@ import (
 const maxFileSize = 10 * 1024 * 1024
 
 // FileOps handles file import and export operations. Store calls run in the
-// background.
+// background, through the session's operations.
 type FileOps struct {
 	window     fyne.Window
 	vaultStore *store.Store
 	log        *slog.Logger
-	run        runner
+	ops        *operations
 	groups     func() []string
 	onSaved    func(*store.Secret)
-	// activity reports user input in the file and form dialogs, which are
+	// activity reports the user's answer in the file dialogs, which are
 	// outside the instrumented widget tree.
 	activity func()
 	// pending is decoded file content waiting for the user to pick an export
@@ -47,12 +47,12 @@ type FileOps struct {
 
 // NewFileOps creates a file operations handler. groups supplies group
 // suggestions and onSaved is called with each imported secret.
-func NewFileOps(window fyne.Window, s *store.Store, log *slog.Logger, run runner, groups func() []string, onSaved func(*store.Secret)) *FileOps {
+func NewFileOps(window fyne.Window, s *store.Store, log *slog.Logger, ops *operations, groups func() []string, onSaved func(*store.Secret)) *FileOps {
 	return &FileOps{
 		window:     window,
 		vaultStore: s,
 		log:        log,
-		run:        run,
+		ops:        ops,
 		groups:     groups,
 		onSaved:    onSaved,
 		activity:   noActivity,
@@ -142,71 +142,53 @@ func importName(reader fyne.URIReadCloser) string {
 // saves it. A read error or an oversized file is reported and nothing is
 // saved.
 func (fo *FileOps) processImport(reader fyne.URIReadCloser) {
-	background(fo.run,
+	start(fo.ops, &operation{doing: fmt.Sprintf("Couldn't import %q", importName(reader))},
 		func(context.Context) (importedFile, error) { return prepareImport(reader) },
-		func(f importedFile, err error) {
-			if err != nil {
-				showError(fo.window, fmt.Sprintf("Couldn't import %q", importName(reader)), err)
-				return
-			}
-			fo.askGroup(f)
-		})
+		fo.askGroup)
 }
 
 // askGroup asks which group an imported file belongs to, then saves it.
 func (fo *FileOps) askGroup(f importedFile) {
 	groupEntry := widget.NewSelectEntry(fo.groups())
-	groupEntry.OnChanged = func(string) { fo.activity() }
 	groupEntry.SetPlaceHolder("Group (e.g. work, personal)")
 
-	dialog.ShowForm("Import File — Select Group",
-		"Import", "Cancel",
-		[]*widget.FormItem{
-			widget.NewFormItem("Group", groupEntry),
-		},
-		func(confirmed bool) {
-			fo.activity()
-			if !confirmed {
-				return
-			}
-
-			now := time.Now().UTC()
-			secret := &store.Secret{
-				Version:          1,
-				Type:             store.TypeFile,
-				Name:             f.name,
-				Group:            matchGroup(groupEntry.Text, fo.groups()),
-				CreatedAt:        now,
-				ModifiedAt:       now,
-				OriginalFilename: f.name,
-				MIMEType:         f.mime,
-				Encoding:         "base64",
-				Value:            f.encoded,
-			}
-			fo.importSecret(secret, f)
-		},
-		fo.window,
-	)
+	fo.ops.confirm(&question{
+		title:   "Import File — Select Group",
+		content: widget.NewForm(widget.NewFormItem("Group", groupEntry)),
+		confirm: "Import",
+		dismiss: "Cancel",
+	}, func() {
+		now := time.Now().UTC()
+		secret := &store.Secret{
+			Version:          1,
+			Type:             store.TypeFile,
+			Name:             f.name,
+			Group:            matchGroup(groupEntry.Text, fo.groups()),
+			CreatedAt:        now,
+			ModifiedAt:       now,
+			OriginalFilename: f.name,
+			MIMEType:         f.mime,
+			Encoding:         "base64",
+			Value:            f.encoded,
+		}
+		fo.importSecret(secret, f)
+	})
 }
 
 // importSecret creates an imported file secret in the background, asking
 // before replacing an existing one. The store's refusal carries the secret
 // already there, so asking needs no second read of the vault.
 func (fo *FileOps) importSecret(secret *store.Secret, f importedFile) {
-	background(fo.run,
+	start(fo.ops, &operation{failed: func(err error) {
+		var exists *store.ExistsError
+		if errors.As(err, &exists) {
+			fo.askReplace(secret, exists, f)
+			return
+		}
+		showError(fo.window, fmt.Sprintf("Couldn't import %q", secret.Name), err)
+	}},
 		func(ctx context.Context) (none, error) { return none{}, fo.vaultStore.Create(ctx, secret) },
-		func(_ none, err error) {
-			var exists *store.ExistsError
-			if errors.As(err, &exists) {
-				fo.askReplace(secret, exists, f)
-				return
-			}
-			if err != nil {
-				showError(fo.window, fmt.Sprintf("Couldn't import %q", secret.Name), err)
-				return
-			}
-			fo.importDone(secret, f)
-		})
+		func(none) { fo.importDone(secret, f) })
 }
 
 // askReplace asks before overwriting the secret that holds an import's
@@ -225,25 +207,14 @@ func (fo *FileOps) askReplace(secret *store.Secret, exists *store.ExistsError, f
 			fmt.Errorf("its filename is already used by %q in group %q; rename the file and import again", existing.Name, secret.Group))
 		return
 	}
-	dialog.ShowConfirm("Secret already exists",
-		fmt.Sprintf("A %s secret named %q already exists in group %q.\nReplace it with the imported file?", existing.Type, secret.Name, secret.Group),
-		func(replace bool) {
-			fo.activity()
-			if !replace {
-				return
-			}
-			background(fo.run,
-				func(ctx context.Context) (none, error) { return none{}, fo.vaultStore.Update(ctx, secret) },
-				func(_ none, err error) {
-					if err != nil {
-						showError(fo.window, fmt.Sprintf("Couldn't replace %q", secret.Name), err)
-						return
-					}
-					fo.importDone(secret, f)
-				})
-		},
-		fo.window,
-	)
+	fo.ops.confirm(&question{
+		title:   "Secret already exists",
+		message: fmt.Sprintf("A %s secret named %q already exists in group %q.\nReplace it with the imported file?", existing.Type, secret.Name, secret.Group),
+	}, func() {
+		start(fo.ops, &operation{doing: fmt.Sprintf("Couldn't replace %q", secret.Name)},
+			func(ctx context.Context) (none, error) { return none{}, fo.vaultStore.Update(ctx, secret) },
+			func(none) { fo.importDone(secret, f) })
+	})
 }
 
 // importDone logs and reports a successful import, including the file's
@@ -270,7 +241,7 @@ func (fo *FileOps) ExportFile(secret *store.Secret) {
 	// rewritten by a save on the main goroutine meanwhile.
 	encoded, name, filename := secret.Value, secret.Name, secret.OriginalFilename
 
-	background(fo.run,
+	start(fo.ops, &operation{doing: fmt.Sprintf("Couldn't export %q", name)},
 		func(ctx context.Context) ([]byte, error) {
 			data, err := base64.StdEncoding.DecodeString(encoded)
 			if err == nil && ctx.Err() != nil {
@@ -280,13 +251,7 @@ func (fo *FileOps) ExportFile(secret *store.Secret) {
 			}
 			return data, err
 		},
-		func(data []byte, err error) {
-			if err != nil {
-				showError(fo.window, fmt.Sprintf("Couldn't export %q", name), err)
-				return
-			}
-			fo.askExportPath(name, filename, data)
-		})
+		func(data []byte) { fo.askExportPath(name, filename, data) })
 }
 
 // askExportPath shows the save dialog and writes data to the chosen file.
@@ -311,7 +276,7 @@ func (fo *FileOps) askExportPath(name, filename string, data []byte) {
 func (fo *FileOps) saveExport(writer fyne.URIWriteCloser, err error, name, filename string, data []byte) {
 	fo.pending = nil // the dialog completed; data is handled (or wiped) below
 	fo.activity()
-	if fo.run.context().Err() != nil {
+	if fo.ops.run.context().Err() != nil {
 		crypto.Wipe(data)
 		if writer != nil {
 			_ = writer.Close()
@@ -327,7 +292,7 @@ func (fo *FileOps) saveExport(writer fyne.URIWriteCloser, err error, name, filen
 		crypto.Wipe(data)
 		return // user cancelled
 	}
-	background(fo.run,
+	start(fo.ops, &operation{doing: fmt.Sprintf("Couldn't export %q", name)},
 		func(context.Context) (int, error) {
 			n, err := fo.writePrivateExport(writer, data)
 			if err != nil {
@@ -337,11 +302,7 @@ func (fo *FileOps) saveExport(writer fyne.URIWriteCloser, err error, name, filen
 			}
 			return n, err
 		},
-		func(n int, err error) {
-			if err != nil {
-				showError(fo.window, fmt.Sprintf("Couldn't export %q", name), err)
-				return
-			}
+		func(n int) {
 			fo.log.Info("file exported", "name", name, "size", n)
 			dialog.ShowInformation("Export Complete",
 				fmt.Sprintf("Exported %q (%d bytes)", filename, n),

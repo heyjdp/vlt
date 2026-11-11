@@ -24,10 +24,12 @@ type SettingsScreen struct {
 	store     *store.Store
 	log       *slog.Logger
 	statusBar *widget.Label
-	run       runner
-	onRelock  func()
-	// activity reports user input in the folder picker and confirmation
-	// dialogs, which are outside the instrumented widget tree.
+	// ops runs the passphrase change and the vault copy, and asks before
+	// moving or switching.
+	ops      *operations
+	onRelock func()
+	// activity reports the user's answer in the folder picker, which is
+	// outside the instrumented widget tree.
 	activity func()
 	// save persists one setting (prefLockTimeout or prefClipboardTTL) after
 	// the user changes it; it is set by the app. A new vault location is
@@ -46,7 +48,7 @@ func NewSettingsScreen(
 	s *store.Store,
 	statusBar *widget.Label,
 	log *slog.Logger,
-	run runner,
+	ops *operations,
 	onRelock func(),
 ) *SettingsScreen {
 	ss := &SettingsScreen{
@@ -55,7 +57,7 @@ func NewSettingsScreen(
 		store:     s,
 		log:       log,
 		statusBar: statusBar,
-		run:       run,
+		ops:       ops,
 		onRelock:  onRelock,
 		activity:  noActivity,
 		save:      func(string) {},
@@ -130,25 +132,22 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 
 		// Only vlt.age (the wrapped vault key) is rewritten; secrets are
 		// untouched. Two scrypt derivations, so it runs in the background.
-		changeBtn.Disable()
-		ss.statusBar.SetText("Changing passphrase…")
-		background(ss.run,
+		start(ss.ops, &operation{
+			progress: "Changing passphrase…",
+			control:  changeBtn,
+			failed: func(err error) {
+				if errors.Is(err, store.ErrWrongPassphrase) {
+					errorLabel.SetText("Current passphrase is incorrect")
+				} else {
+					errorLabel.SetText(errorMessage("Couldn't change the passphrase", err))
+				}
+				errorLabel.Show()
+			},
+		},
 			func(ctx context.Context) (none, error) {
 				return none{}, ss.store.ChangePassphrase(ctx, current, newPass)
 			},
-			func(_ none, err error) {
-				changeBtn.Enable()
-				if err != nil {
-					ss.statusBar.SetText("")
-					if errors.Is(err, store.ErrWrongPassphrase) {
-						errorLabel.SetText("Current passphrase is incorrect")
-					} else {
-						errorLabel.SetText(errorMessage("Couldn't change the passphrase", err))
-					}
-					errorLabel.Show()
-					return
-				}
-
+			func(none) {
 				ss.statusBar.SetText("Passphrase changed")
 				ss.relockThenInform("Passphrase Changed",
 					"Your vault key is now protected by the new passphrase.\nThe vault has locked; unlock it with the new passphrase.")
@@ -206,18 +205,11 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 			return
 		}
 
-		dialog.ShowConfirm("Move Vault",
-			fmt.Sprintf("Copy all secrets from:\n  %s\nto:\n  %s\n\nThe original vault will not be deleted.",
+		ss.ops.confirm(&question{
+			title: "Move Vault",
+			message: fmt.Sprintf("Copy all secrets from:\n  %s\nto:\n  %s\n\nThe original vault will not be deleted.",
 				ss.config.VaultDir, newDir),
-			func(confirmed bool) {
-				ss.activity()
-				if !confirmed {
-					return
-				}
-				ss.moveVault(newDir, errorLabel, currentLabel)
-			},
-			ss.window,
-		)
+		}, func() { ss.moveVault(newDir, errorLabel, currentLabel) })
 	})
 	moveBtn.Importance = widget.WarningImportance
 
@@ -234,17 +226,10 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 			return
 		}
 
-		dialog.ShowConfirm("Switch Vault",
-			fmt.Sprintf("Switch to vault at:\n  %s\n\nThe app will lock. If a vault exists there you will unlock it with its passphrase; otherwise you will be asked to create one.", newDir),
-			func(confirmed bool) {
-				ss.activity()
-				if !confirmed {
-					return
-				}
-				ss.switchVault(newDir, currentLabel)
-			},
-			ss.window,
-		)
+		ss.ops.confirm(&question{
+			title:   "Switch Vault",
+			message: fmt.Sprintf("Switch to vault at:\n  %s\n\nThe app will lock. If a vault exists there you will unlock it with its passphrase; otherwise you will be asked to create one.", newDir),
+		}, func() { ss.switchVault(newDir, currentLabel) })
 	})
 
 	if ss.config.FromEnv.VaultDir {
@@ -298,18 +283,15 @@ func sameLocation(a, b string) bool {
 }
 
 func (ss *SettingsScreen) moveVault(newDir string, errorLabel, currentLabel *widget.Label) {
-	ss.statusBar.SetText("Copying vault…")
-	background(ss.run,
+	start(ss.ops, &operation{
+		progress: "Copying vault…",
+		failed: func(err error) {
+			errorLabel.SetText(errorMessage("Couldn't move the vault", err))
+			errorLabel.Show()
+		},
+	},
 		func(ctx context.Context) (none, error) { return none{}, ss.store.CopyTo(ctx, newDir) },
-		func(_ none, err error) {
-			if err != nil {
-				ss.statusBar.SetText("")
-				errorLabel.SetText(errorMessage("Couldn't move the vault", err))
-				errorLabel.Show()
-				return
-			}
-			ss.vaultMoved(newDir, currentLabel)
-		})
+		func(none) { ss.vaultMoved(newDir, currentLabel) })
 }
 
 // vaultMoved switches the config to newDir after a successful copy and

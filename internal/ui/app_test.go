@@ -222,7 +222,7 @@ func TestSecretList_SaveDuringFirstLoadSurvivesLoad(t *testing.T) {
 	defer s.Close()
 
 	q := &queue{}
-	dv := NewDetailView(test.NewTempWindow(t, nil), s, nil, widget.NewLabel(""), quietLog(), q.runner())
+	dv := NewDetailView(test.NewTempWindow(t, nil), s, nil, widget.NewLabel(""), quietLog(), testOps(t, q.runner()))
 	sl := NewSecretList(test.NewTempWindow(t, nil), s, dv, quietLog(), q.runner())
 
 	sl.Refresh() // queued: as if the load read the vault before the save below

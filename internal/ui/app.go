@@ -34,12 +34,10 @@ type App struct {
 	// latest fetches the newest release; NewApp sets the real checker, and
 	// other constructors leave one that never reaches the network.
 	latest latestRelease
-	// checkingUpdates is true while a check the user asked for runs;
-	// checkedManually records that one has run since start-up, so the
-	// start-up check announces nothing more; pendingRelease is a release the
-	// start-up check found, held until the vault is unlocked. All three are
-	// used on the main goroutine only.
-	checkingUpdates bool
+	// checkedManually records that a check the user asked for has run since
+	// start-up, so the start-up check announces nothing more;
+	// pendingRelease is a release the start-up check found, held until the
+	// vault is unlocked. Both are used on the main goroutine only.
 	checkedManually bool
 	pendingRelease  *update.Release
 	config          Config
@@ -51,6 +49,10 @@ type App struct {
 	// to lower the scrypt work factor; production passes none.
 	storeOpts []store.Option
 	run       runner
+	// ops runs what is asked of the app itself (update checks) and
+	// sessionOps what is done to the open vault (nil while locked).
+	ops        *operations
+	sessionOps *operations
 	// screenGen identifies the latest showUnlockScreen call; older vault
 	// checks that complete late are ignored.
 	screenGen int
@@ -97,6 +99,7 @@ func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, confi
 		newTimer:  timers,
 		storeOpts: storeOpts,
 	}
+	app.ops = newOperations(window, run, nil, app.resetLockTimer)
 
 	// Quitting is a lock-equivalent for the clipboard: the system clipboard
 	// outlives the process, so a copied secret is cleared first. Closing the
@@ -525,7 +528,9 @@ func (a *App) unlocked(s *store.Store) {
 // auto-lock may clear concurrently. work is bound to the session context:
 // work still in flight when the vault locks has its result dropped.
 func (a *App) showMainView(s *store.Store, work runner) {
-	a.detailView = NewDetailView(a.window, s, a.clipboard.Copy, a.statusBar, a.log, work)
+	a.sessionOps = newOperations(a.window, work, a.statusBar, a.resetLockTimer)
+	ops := a.sessionOps
+	a.detailView = NewDetailView(a.window, s, a.clipboard.Copy, a.statusBar, a.log, ops)
 	a.detailView.newTimer = a.newTimer
 	a.secretList = NewSecretList(a.window, s, a.detailView, a.log, work)
 
@@ -538,7 +543,7 @@ func (a *App) showMainView(s *store.Store, work runner) {
 		a.secretList.Upsert(sec)
 		a.detailView.RefreshIfShowing(sec)
 	}
-	fileOps := NewFileOps(a.window, s, a.log, work, a.secretList.Groups, onImported)
+	fileOps := NewFileOps(a.window, s, a.log, ops, a.secretList.Groups, onImported)
 	a.detailView.SetFileOps(fileOps)
 
 	toolButton := func(label string, icon fyne.Resource, tapped func()) *widget.Button {
@@ -556,7 +561,7 @@ func (a *App) showMainView(s *store.Store, work runner) {
 				toolButton("Add Password", keyIcon, a.detailView.ShowNewPassword),
 				toolButton("Add Record", theme.AccountIcon(), a.detailView.ShowNewRecord),
 				toolButton("Import File", theme.UploadIcon(), fileOps.ImportFile),
-				toolButton("Settings", theme.SettingsIcon(), func() { a.openSettings(s, work) }),
+				toolButton("Settings", theme.SettingsIcon(), func() { a.openSettings(s, ops) }),
 				lockBtn,
 			)), 4),
 		widget.NewSeparator(),
@@ -590,9 +595,9 @@ func (a *App) showMainView(s *store.Store, work runner) {
 			a.tracker.instrument(panel)
 		}
 	}
-	// Dialog buttons and file pickers are not part of the instrumented
-	// tree; components report activity from their callbacks instead.
-	a.detailView.activity = a.resetLockTimer
+	// Dialogs and file pickers are not part of the instrumented tree; the
+	// session's operations report answers to confirmations, and the file
+	// pickers' callbacks report their own.
 	fileOps.activity = a.resetLockTimer
 	a.window.Canvas().SetOnTypedKey(func(*fyne.KeyEvent) { a.resetLockTimer() })
 	a.window.Canvas().SetOnTypedRune(func(rune) { a.resetLockTimer() })
@@ -623,8 +628,8 @@ func (a *App) Lock() {
 
 // openSettings shows the Settings screen in the detail panel, wired to save
 // changes and relock when needed.
-func (a *App) openSettings(s *store.Store, work runner) *SettingsScreen {
-	settings := NewSettingsScreen(a.window, &a.config, s, a.statusBar, a.log, work, a.Lock)
+func (a *App) openSettings(s *store.Store, ops *operations) *SettingsScreen {
+	settings := NewSettingsScreen(a.window, &a.config, s, a.statusBar, a.log, ops, a.Lock)
 	settings.activity = a.resetLockTimer
 	settings.save = a.saveSetting
 	settings.checkUpdates = a.checkForUpdates
@@ -661,7 +666,7 @@ func (a *App) dropSession() {
 	if a.secretList != nil {
 		a.secretList.clear()
 	}
-	a.secretList, a.detailView, a.mainContent, a.tracker = nil, nil, nil, nil
+	a.secretList, a.detailView, a.mainContent, a.tracker, a.sessionOps = nil, nil, nil, nil, nil
 	a.window.Canvas().SetOnTypedKey(nil)
 	a.window.Canvas().SetOnTypedRune(nil)
 }

@@ -125,7 +125,7 @@ func TestSecretList_DeleteDuringFirstLoadSurvivesLoad(t *testing.T) {
 	defer s.Close()
 
 	q := &queue{}
-	dv := NewDetailView(test.NewTempWindow(t, nil), s, nil, widget.NewLabel(""), quietLog(), q.runner())
+	dv := NewDetailView(test.NewTempWindow(t, nil), s, nil, widget.NewLabel(""), quietLog(), testOps(t, q.runner()))
 	sl := NewSecretList(test.NewTempWindow(t, nil), s, dv, quietLog(), q.runner())
 
 	sl.Refresh() // queued: reads the vault while "gone" still exists
@@ -356,7 +356,7 @@ func newQueuedList(t *testing.T, q *queue) *SecretList {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	dv := NewDetailView(test.NewTempWindow(t, nil), s, nil, widget.NewLabel(""), quietLog(), q.runner())
+	dv := NewDetailView(test.NewTempWindow(t, nil), s, nil, widget.NewLabel(""), quietLog(), testOps(t, q.runner()))
 	return NewSecretList(test.NewTempWindow(t, nil), s, dv, quietLog(), q.runner())
 }
 

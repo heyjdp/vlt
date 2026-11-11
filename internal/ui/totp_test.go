@@ -285,7 +285,7 @@ func TestTOTP_ASaveFinishingAfterMovingOnDoesNotPullTheRecordBack(t *testing.T) 
 	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	q := &queue{}
-	app.detailView.run = q.runner()
+	app.sessionOps.run = q.runner()
 	bank := 1 // the list is sorted: aaa, bank
 	app.secretList.list.Select(bank)
 

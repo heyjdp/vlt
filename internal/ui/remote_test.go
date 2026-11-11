@@ -208,7 +208,7 @@ func TestApp_ServerDialogValidatesAndSwitchesTheLocation(t *testing.T) {
 func TestSettings_RefusesABadLocation(t *testing.T) {
 	app, _ := newFlowApp(t)
 	unlock(app)
-	ss := app.openSettings(app.session.Store(), app.run)
+	ss := app.openSettings(app.session.Store(), app.sessionOps)
 	box := ss.buildVaultLocation()
 	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")
 
@@ -298,7 +298,7 @@ func TestSettings_SwitchToTheSameLocationWrittenDifferently(t *testing.T) {
 	app, _ := newFlowApp(t)
 	unlock(app)
 	app.config.VaultDir = "ssh://me@nas:2222/srv/my vault"
-	ss := app.openSettings(app.session.Store(), app.run)
+	ss := app.openSettings(app.session.Store(), app.sessionOps)
 	box := ss.buildVaultLocation()
 	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")
 

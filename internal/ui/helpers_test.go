@@ -39,6 +39,12 @@ func inlineRunner() runner {
 	return runner{spawn: func(f func()) { f() }}
 }
 
+// testOps returns operations on run for a component built without an App:
+// progress goes to a label nobody reads, and answers report no activity.
+func testOps(t *testing.T, run runner) *operations {
+	return newOperations(test.NewTempWindow(t, nil), run, widget.NewLabel(""), noActivity)
+}
+
 // queue is a runner that holds work until flush, so tests can observe the
 // UI while work is "in flight" and prove it is not done on the caller.
 type queue struct{ pending []func() }

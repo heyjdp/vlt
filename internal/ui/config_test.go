@@ -131,7 +131,7 @@ func settingsApp(t *testing.T, cfg Config, clock timerFactory) (*App, *SettingsS
 	newVaultWith(t, cfg.VaultDir, testutil.PasswordSecret("gh", "x", "work"))
 	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), clock, testKDF)
 	unlock(app)
-	ss := app.openSettings(app.session.Store(), inlineRunner())
+	ss := app.openSettings(app.session.Store(), app.sessionOps)
 	return app, ss
 }
 
@@ -147,7 +147,7 @@ func TestSettings_EnvironmentValuesAreNotSavedBySliderChanges(t *testing.T) {
 	newVaultWith(t, cfg.VaultDir)
 	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
-	ss := app.openSettings(app.session.Store(), inlineRunner())
+	ss := app.openSettings(app.session.Store(), app.sessionOps)
 
 	ttl := findType[*widget.Slider](ss.buildClipboardTTL())
 	ttl.SetValue(60)
