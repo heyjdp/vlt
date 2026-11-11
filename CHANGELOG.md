@@ -11,6 +11,7 @@ All notable changes to vlt are documented here. The format follows
 - Exported files are readable only by you on macOS, Linux and OpenBSD (mode 0600). They were created with your default permissions, usually readable by every user of the computer, so an exported SSH or TLS key was exposed (and ssh refuses a key others can read). The export is written to a new file and renamed into place, so nobody who opened the file the save dialog created can read it through that, and a symlink at the path is replaced rather than written through. On Windows the folder's permissions still apply.
 - An exported file's decoded contents are wiped from memory if the vault locks just as decoding finishes; they were left for the garbage collector to reclaim.
 - A secret file is only accepted at the path its own name and group give, and only if it holds a named secret of a known type. Whoever can write the vault's files (a server, a shared folder) could otherwise copy one secret's file over another's, or into another group, and vlt would open it there. Such files, like damaged ones, fail to open and are left out of the list, which now counts them under it; *Details…* names them (before, only the log knew).
+- CI checks its own workflow with actionlint and zizmor, and the packaging scripts with shellcheck, on every push and pull request; before, these ran only by hand or in a local hook. The packages are built only once they pass.
 
 ### Changed
 - Built with Fyne 2.8.2 (was 2.7.3) and age 1.3.2 (was 1.3.1). Building on Linux now also needs `libwayland-dev`.

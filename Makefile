@@ -1,4 +1,4 @@
-.PHONY: build run lint fmt vet test test-race test-cover bench vuln clean package-mac package-linux check screenshots release-notes test-release-notes
+.PHONY: build run lint fmt vet test test-race test-cover bench vuln mod-check workflow-lint clean package-mac package-linux check screenshots release-notes test-release-notes
 
 BINARY   := vlt
 CMD      := ./cmd/vlt
@@ -26,8 +26,8 @@ vet:
 test:
 	go test ./...
 
-test-race:
-	go test -race ./...
+test-race:  ## The tests as CI runs them
+	go test -race -timeout 10m ./...
 
 test-cover:
 	go test -coverprofile=coverage.out ./...
@@ -39,7 +39,20 @@ bench:
 vuln:
 	govulncheck ./...
 
-check: fmt lint vet test-race vuln  ## Format, then run the checks CI runs
+mod-check:  ## go.mod and go.sum are tidy and match the downloaded modules
+	go mod tidy -diff
+	go mod verify
+
+# actionlint also runs shellcheck on the workflow's run: blocks. zizmor runs
+# offline unless GH_TOKEN is set; CI also runs its online audits.
+workflow-lint:  ## actionlint, zizmor and shellcheck, as CI's workflow-lint job
+	actionlint
+	zizmor .
+	shellcheck packaging/*.sh packaging/*/*.sh
+
+# The checks CI runs, without changing any file: lint reports unformatted
+# code rather than rewriting it (make fmt does that).
+check: vet lint mod-check test-release-notes workflow-lint test-race vuln
 
 # Packaging (see packaging/). APP_ID is also set in cmd/vlt/main.go.
 APP_ID      := io.github.heyjdp.vlt

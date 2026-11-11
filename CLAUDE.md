@@ -99,7 +99,7 @@ What are you doing?
 
 | Tool | Purpose | When It Runs |
 |------|---------|--------------|
-| **shellcheck** | Shell script linting | pre-commit |
+| **shellcheck** | Shell script linting | pre-commit, CI |
 | **detect-secrets** | Secret detection in source | pre-commit |
 | **actionlint** | GitHub Actions workflow validation | pre-commit, CI |
 | **zizmor** | Workflow security audit | pre-commit, CI |
@@ -327,7 +327,7 @@ test:
     go test ./...
 
 test-race:
-    go test -race ./...
+    go test -race -timeout 10m ./...
 
 test-cover:
     go test -coverprofile=coverage.out ./...
@@ -339,7 +339,17 @@ bench:
 vuln:
     govulncheck ./...
 
-check: fmt lint vet test-race vuln  ## Run all checks (CI equivalent)
+mod-check:
+    go mod tidy -diff
+    go mod verify
+
+workflow-lint:  ## actionlint (also shellchecks run: blocks), zizmor, shellcheck
+    actionlint
+    zizmor .
+    shellcheck packaging/*.sh packaging/*/*.sh
+
+# CI equivalent; checks only, never rewrites (lint reports formatting).
+check: vet lint mod-check test-release-notes workflow-lint test-race vuln
 
 # Fyne cross-platform packaging (requires fyne CLI: go install fyne.io/fyne/v2/cmd/fyne@latest)
 package-mac:
@@ -397,26 +407,34 @@ issues:
 ### 2.5 lefthook Configuration
 
 ```yaml
-# .lefthook.yml
+# .lefthook.yml — hooks check, never rewrite, staged files
 pre-commit:
   parallel: true
   commands:
-    gofumpt:
+    format:
       glob: "*.go"
-      run: gofumpt -l {staged_files}
+      run: golangci-lint fmt --diff ./...
     golangci-lint:
       glob: "*.go"
-      run: golangci-lint run --fix
+      run: golangci-lint run ./...
     shellcheck:
       glob: "*.sh"
       run: shellcheck {staged_files}
+    actionlint:
+      glob: ".github/workflows/*.{yml,yaml}"
+      run: actionlint {staged_files}
+    zizmor:
+      glob: ".github/{dependabot.yml,workflows/*.yml,workflows/*.yaml}"
+      run: zizmor {staged_files}
     detect-secrets:
       run: detect-secrets-hook {staged_files}
 
 pre-push:
   commands:
+    lint:
+      run: golangci-lint run ./...
     test-race:
-      run: go test -race ./...
+      run: go test -race -timeout 10m ./...
     govulncheck:
       run: govulncheck ./...
 ```
@@ -898,74 +916,16 @@ Or simply: `make check`
 
 ## 5.3 CI Pipeline
 
-```yaml
-# .github/workflows/ci.yml
-name: CI
+The pipeline is `.github/workflows/ci.yml`; README.md's *Continuous integration* section describes it. Every action is pinned to a full commit SHA with a version comment, the workflow has `permissions: contents: read` (only `release` may write), checkout never persists credentials, tool versions are pinned in `env:`, and packaging jobs never use the Go cache. Jobs:
 
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+- **lint** — golangci-lint (pinned; also checks formatting) and `packaging/release-notes-test.sh`
+- **workflow-lint** — actionlint (which shellchecks every `run:` block), zizmor (online audits, annotations only), shellcheck on `packaging/`
+- **test** — `go mod tidy -diff`, `go mod verify`, `go vet`, `go test -race -timeout 10m` on Linux
+- **vuln** — govulncheck (pinned), also weekly
+- **build** — native cgo builds on Linux, macOS and Windows (Fyne cannot cross-compile with `CGO_ENABLED=0`)
+- **package-macos**, **package-linux**, **release** — on pushes to `main` and `v*` tags, after the checks pass
 
-permissions:
-  contents: read
-
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.23"
-          cache: true
-
-      - name: Install tools
-        run: |
-          go install mvdan.cc/gofumpt@latest
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-
-      - name: Format check
-        run: gofumpt -l . | grep . && exit 1 || true
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Lint
-        run: golangci-lint run ./...
-
-      - name: Test (with race detector)
-        run: go test -race -coverprofile=coverage.out ./...
-
-      - name: Vulnerability scan
-        run: govulncheck ./...
-
-  build-matrix:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.23"
-          cache: true
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: go build -trimpath -ldflags="-s -w" ./cmd/vlt
-```
+Locally, `make check` runs the same checks.
 
 ## 5.4 Debugging
 
