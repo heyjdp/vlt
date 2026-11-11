@@ -205,8 +205,10 @@ func (ss *session[S]) Hold(s S, onExpire func()) {
 		return
 	}
 	ss.pendingTimer = ss.newTimer(d, func() {
-		if ss.Take(s) {
-			ss.Discard(s)
+		ss.mu.Lock()
+		expired := ss.takeAndDiscardLocked(s)
+		ss.mu.Unlock()
+		if expired {
 			ss.post(onExpire)
 		}
 	})
@@ -227,12 +229,28 @@ func (ss *session[S]) Discard(s S) {
 func (ss *session[S]) Take(s S) bool {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
+	return ss.takeLocked(s)
+}
+
+// takeLocked is Take with ss.mu held.
+func (ss *session[S]) takeLocked(s S) bool {
 	var none S
 	if s == none || ss.pending != s {
 		return false
 	}
 	ss.pending = none
 	ss.stopPendingTimerLocked()
+	return true
+}
+
+// takeAndDiscardLocked discards s if it is still waiting, and reports
+// whether it was. Taking and letting go under one hold of ss.mu keeps s
+// within reach of Close throughout, so quitting waits for its release.
+func (ss *session[S]) takeAndDiscardLocked(s S) bool {
+	if !ss.takeLocked(s) {
+		return false
+	}
+	ss.letGoLocked(s)
 	return true
 }
 

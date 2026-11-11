@@ -589,3 +589,29 @@ func TestSession_EndingZeroesTheKeyAtOnceAndReleasesTheLockInTheBackground(t *te
 		})
 	}
 }
+
+// A waiting store's time can run out while vlt quits. Whichever goes first,
+// quitting must wait for that store's release: the timer must not take the
+// store (out of the quit's reach) and only then let it go. The window is
+// narrow; the loop finds it reliably under the race detector (go test -race).
+func TestSession_QuitWhileAWaitingStoreTimesOutWaitsForItsRelease(t *testing.T) {
+	t.Parallel()
+	for range 20000 {
+		clock := &fakeClock{}
+		sess := newSession[*slowStore](clock.factory, func(func()) {}, inline,
+			func() time.Duration { return sessionTimeout }, sessionCallbacks{Warn: func() {}, TimedOut: func() {}})
+		st := newSlowStore() // never releases its lock
+		sess.Hold(st, func() {})
+		expire := clock.active(sessionTimeout).f
+		expired := make(chan struct{})
+		go func() {
+			defer close(expired)
+			expire()
+		}()
+		quitWaited := !sess.Close(0)
+		<-expired
+		if !quitWaited {
+			t.Fatal("quitting did not wait for the release of a store whose time ran out meanwhile")
+		}
+	}
+}
