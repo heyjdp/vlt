@@ -216,19 +216,11 @@ func (s *Store) Get(ctx context.Context, name, group string) (*Secret, error) {
 		return nil, fmt.Errorf("store.Get %q: %w", name, err)
 	}
 
-	plaintext, err := crypto.Decrypt(s.id, ciphertext)
+	secret, err := s.openSecret(s.path(name, group), ciphertext)
 	if err != nil {
 		return nil, fmt.Errorf("store.Get %q: %w", name, err)
 	}
-
-	var secret Secret
-	err = json.Unmarshal(plaintext, &secret)
-	crypto.Wipe(plaintext)
-	if err != nil {
-		return nil, fmt.Errorf("store.Get %q: unmarshal: %w", name, err)
-	}
-
-	return &secret, nil
+	return secret, nil
 }
 
 // Delete removes a secret from the vault by name and group.
@@ -341,20 +333,55 @@ func (s *Store) readSecret(name string) (*Secret, error) {
 		s.log.Warn("failed to read secret file", "path", name, "err", err)
 		return nil, nil
 	}
+	secret, err := s.openSecret(name, ciphertext)
+	if err != nil {
+		s.log.Warn("skipping unreadable secret file", "path", name, "err", err)
+		return nil, nil
+	}
+	return secret, nil
+}
+
+// openSecret decrypts and parses the secret file at file (vault-relative).
+// Whoever can write the vault's files (a server, a shared folder) can't
+// forge or alter one, since age authenticates each file, but could swap two
+// or plant another vault's file. So the file must hold a secret, of a known
+// type, whose name and group give back the path it was read from; a secret
+// sharing its slug with another name (see Update) still matches.
+func (s *Store) openSecret(file string, ciphertext []byte) (*Secret, error) {
 	plaintext, err := crypto.Decrypt(s.id, ciphertext)
 	if err != nil {
-		s.log.Warn("failed to decrypt secret", "path", name, "err", err)
-		return nil, nil
+		return nil, err
 	}
 	var secret Secret
 	err = json.Unmarshal(plaintext, &secret)
 	crypto.Wipe(plaintext)
 	if err != nil {
-		s.log.Warn("failed to unmarshal secret", "path", name, "err", err)
-		return nil, nil
+		return nil, fmt.Errorf("unmarshal: %w", err)
+	}
+	switch secret.Type {
+	case TypePassword, TypeRecord, TypeFile:
+	default:
+		return nil, fmt.Errorf("%w: unknown type %q", errInvalidSecret, secret.Type)
+	}
+	if strings.TrimSpace(secret.Name) == "" {
+		return nil, fmt.Errorf("%w: no name", errInvalidSecret)
+	}
+	// Case is ignored: folders and files made by hand, or on a file system
+	// that ignores case, may differ from the slug only in case, and no two
+	// slugs differ only in case.
+	if want := s.path(secret.Name, secret.Group); !strings.EqualFold(want, file) {
+		return nil, fmt.Errorf("%w: it belongs at %s", errMisplaced, want)
 	}
 	return &secret, nil
 }
+
+// errInvalidSecret marks a file that decrypts and parses but holds no
+// usable secret.
+var errInvalidSecret = errors.New("file is not a valid secret")
+
+// errMisplaced marks a secret file that holds a secret stored under another
+// name or group.
+var errMisplaced = errors.New("file holds a secret from another place in the vault")
 
 // CopyTo copies the wrapped vault key, the format marker, and every .age
 // file into the vault location dest (local, or on a server), preserving the

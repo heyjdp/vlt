@@ -7,6 +7,7 @@ All notable changes to vlt are documented here. The format follows
 
 ### Security
 - Built with the go1.27.4 toolchain, which fixes GO-2026-6859 in `net/http` (used by the update check).
+- A secret file is only accepted at the path its own name and group give, and only if it holds a named secret of a known type. Whoever can write the vault's files (a server, a shared folder) could otherwise copy one secret's file over another's, or into another group, and vlt would open it there. Such files, like damaged ones, fail to open and are left out of the list.
 
 ### Changed
 - Built with Fyne 2.8.2 (was 2.7.3) and age 1.3.2 (was 1.3.1). Building on Linux now also needs `libwayland-dev`.
