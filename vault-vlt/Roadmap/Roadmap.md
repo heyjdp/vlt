@@ -168,6 +168,7 @@ Added 2026-11-11. Goal: deep modules for the error wording, operations, secret f
 ### Phase 12: Audit leftovers
 Added 2026-11-12, from the rest of the Go skills audit. Goal: close the remaining security and data-safety findings, then tighten CI.
 - [[F43 Scrypt work factor cap]]
+- [[F44 Auto-lock during long operations]]
 
 ## Tracker
 

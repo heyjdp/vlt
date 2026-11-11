@@ -30,6 +30,7 @@ All notable changes to vlt are documented here. The format follows
 - A vault kept in a folder inside your vault is no longer counted under the list as a secret file that couldn't be read.
 - Importing a file whose name is taken by a secret file that can't be read now says so and suggests renaming the file; it showed a decryption error.
 - *Move Vault* could be started again while the vault was still being copied, and *Switch Vault* or *Change Passphrase* could run in the middle of a copy, leaving a half-copied vault, or a copy with the old passphrase's key. While one of the three runs, the others now wait: the button is disabled and the status bar asks you to wait.
+- A move that stopped part-way (the vault locked, or the connection dropped) left the new folder with the vault key and only some secrets, so switching there opened what looked like the vault with secrets missing, and moving there again said "vault already exists". The vault key is now copied last: an unfinished copy has none, and unlocking it says so. Moving the vault to the same place again finishes the copy.
 
 ## [0.2.0] - 2026-11-02
 

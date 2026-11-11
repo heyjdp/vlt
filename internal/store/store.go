@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -416,14 +417,19 @@ var errInvalidSecret = errors.New("file is not a valid secret")
 // name or group.
 var errMisplaced = errors.New("file holds a secret from another place in the vault")
 
-// CopyTo copies the wrapped vault key, the format marker, and every group
-// folder with its secret files into the vault location dest (local, or on a
-// server). A vault kept inside this one's folder is not one of its groups,
-// so it is left behind. It refuses (ErrVaultExists) to copy into a
-// location that already holds a vault or secret files, since overwriting
-// another vault's vlt.age would make its secrets unrecoverable. An open
-// Store never has a migration in progress, so vlt.migrating.age is not
-// copied, and the lock file belongs to this location, so it is not either.
+// CopyTo copies the format marker, every group folder with its secret
+// files, and last the wrapped vault key into the vault location dest
+// (local, or on a server). A vault kept inside this one's folder is not one
+// of its groups, so it is left behind. An open Store never has a migration
+// in progress, so vlt.migrating.age is not copied, and the lock file belongs
+// to this location, so it is not either.
+//
+// vlt.age goes last so that a copy stopped part-way (cancelled, or a lost
+// connection) never looks like a whole vault: opening it reports
+// ErrKeyMissing rather than showing a vault with secrets missing. Copying
+// to dest again finishes such a copy (see resumable). Any other location
+// holding a vault or secret files is refused (ErrVaultExists), since
+// overwriting another vault's files would make its secrets unrecoverable.
 func (s *Store) CopyTo(ctx context.Context, dest string) error {
 	dst, loc, err := openLocation(ctx, dest, s.opts)
 	if err != nil {
@@ -431,60 +437,132 @@ func (s *Store) CopyTo(ctx context.Context, dest string) error {
 	}
 	defer func() { _ = dst.Close() }()
 
-	exists, err := existsIn(dst)
-	if err != nil {
-		return fmt.Errorf("store.CopyTo: %w", err)
-	}
-	if exists {
-		return fmt.Errorf("store.CopyTo %q: %w", loc, ErrVaultExists)
+	if err := s.checkCopyTarget(dst); err != nil {
+		return fmt.Errorf("store.CopyTo %q: %w", loc, err)
 	}
 	if err := dst.MkdirAll("."); err != nil {
 		return fmt.Errorf("store.CopyTo: mkdir %q: %w", loc, err)
 	}
+	if err := s.copyFile(ctx, dst, formatFile); err != nil {
+		return fmt.Errorf("store.CopyTo: %w", err)
+	}
+	if err := s.copySecrets(ctx, dst); err != nil {
+		return fmt.Errorf("store.CopyTo: %w", err)
+	}
+	if err := s.copyFile(ctx, dst, keyFile); err != nil {
+		return fmt.Errorf("store.CopyTo: %w", err)
+	}
+	s.log.Info("vault copied", "from", s.loc.String(), "to", loc.String())
+	return nil
+}
 
-	// Copy the vault-level files that exist
-	for _, name := range []string{keyFile, formatFile} {
-		data, err := s.fs.ReadFile(name)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("store.CopyTo: read %s: %w", name, err)
-		}
-		if err := dst.WriteFileAtomic(name, data); err != nil {
-			return fmt.Errorf("store.CopyTo: write %s: %w", name, err)
+// checkCopyTarget returns ErrVaultExists if dst holds a vault or secret
+// files, unless it is an unfinished copy of this vault.
+func (s *Store) checkCopyTarget(dst vaultFS) error {
+	exists, err := existsIn(dst)
+	if err != nil || !exists {
+		return err
+	}
+	ok, err := s.resumable(dst)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrVaultExists
+	}
+	return nil
+}
+
+// resumable reports whether dst holds only an unfinished copy of this
+// vault: no vlt.age and no migration, a format marker (if any) the same as
+// this vault's, and every secret file byte for byte one of this vault's.
+// Finishing such a copy overwrites nothing that isn't already here.
+func (s *Store) resumable(dst vaultFS) (bool, error) {
+	for _, name := range []string{keyFile, migratingFile} {
+		if _, err := dst.Stat(name); !errors.Is(err, fs.ErrNotExist) {
+			return false, err
 		}
 	}
-
-	// Copy the group folders and their secret files
-	groups, err := groupFolders(s.fs)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
+	paths, err := secretFiles(dst)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false, err
+	}
+	for _, name := range append(paths, formatFile) {
+		same, err := s.sameFile(dst, name)
+		if err != nil || !same {
+			return false, err
 		}
-		return fmt.Errorf("store.CopyTo: read %q: %w", s.loc, err)
+	}
+	return true, nil
+}
+
+// sameFile reports whether dst's file name is missing (only allowed for the
+// format marker) or holds the same bytes as this vault's.
+func (s *Store) sameFile(dst vaultFS, name string) (bool, error) {
+	theirs, err := dst.ReadFile(name)
+	if errors.Is(err, fs.ErrNotExist) && name == formatFile {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	ours, err := s.fs.ReadFile(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(ours, theirs), nil
+}
+
+// copyFile copies the vault-level file name to dst, if this vault has it.
+func (s *Store) copyFile(ctx context.Context, dst vaultFS, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	data, err := s.fs.ReadFile(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", name, err)
+	}
+	if err := dst.WriteFileAtomic(name, data); err != nil {
+		return fmt.Errorf("write %s: %w", name, err)
+	}
+	return nil
+}
+
+// copySecrets copies the group folders and their secret files to dst,
+// stopping before the next file once ctx is cancelled.
+func (s *Store) copySecrets(ctx context.Context, dst vaultFS) error {
+	groups, err := groupFolders(s.fs)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %q: %w", s.loc, err)
 	}
 	for _, g := range groups {
 		if g.err != nil {
-			return fmt.Errorf("store.CopyTo: read %q: %w", g.name, g.err)
+			return fmt.Errorf("read %q: %w", g.name, g.err)
 		}
 		if err := dst.MkdirAll(g.name); err != nil {
-			return fmt.Errorf("store.CopyTo: mkdir %q: %w", g.name, err)
+			return fmt.Errorf("mkdir %q: %w", g.name, err)
 		}
 		for _, name := range g.files {
 			if err := ctx.Err(); err != nil {
-				return fmt.Errorf("store.CopyTo: %w", err)
+				return err
 			}
 			data, err := s.fs.ReadFile(name)
 			if err != nil {
-				return fmt.Errorf("store.CopyTo: read file %q: %w", name, err)
+				return fmt.Errorf("read file %q: %w", name, err)
 			}
 			if err := dst.WriteFileAtomic(name, data); err != nil {
-				return fmt.Errorf("store.CopyTo: write file %q: %w", name, err)
+				return fmt.Errorf("write file %q: %w", name, err)
 			}
 		}
 	}
-
-	s.log.Info("vault copied", "from", s.loc.String(), "to", loc.String())
 	return nil
 }

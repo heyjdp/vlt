@@ -110,3 +110,91 @@ func TestStore_CopyTo_FailsWhenASecretFileCannotBeWritten(t *testing.T) {
 		t.Fatalf("CopyTo = %v; want permission denied writing the secret", err)
 	}
 }
+
+// interruptedCopy copies s to a new folder, cancelling after the first
+// secret is read (a lock in the middle of a move), and returns the folder.
+// s's storage is left as it was.
+func interruptedCopy(t *testing.T, s *Store) string {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	orig := s.fs
+	s.fs = cancelOnRead{vaultFS: orig, cancel: cancel}
+	defer func() { s.fs = orig }()
+	dest := filepath.Join(t.TempDir(), "dest")
+	if err := s.CopyTo(ctx, dest); !errors.Is(err, context.Canceled) {
+		t.Fatalf("CopyTo = %v; want context.Canceled", err)
+	}
+	return dest
+}
+
+// The key file is copied last, so a copy stopped part-way never looks like
+// a whole vault: unlocking it says the key is missing instead of showing a
+// vault with secrets missing.
+func TestStore_CopyTo_AnInterruptedCopyHasNoKeyFile(t *testing.T) {
+	t.Parallel()
+	dest := interruptedCopy(t, copySource(t))
+
+	if _, err := os.Stat(filepath.Join(dest, keyFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an interrupted copy left %s at the destination (stat: %v)", keyFile, err)
+	}
+	if _, err := Open(context.Background(), dest, internalPass, quiet()); !errors.Is(err, ErrKeyMissing) {
+		t.Fatalf("Open of an interrupted copy = %v; want ErrKeyMissing", err)
+	}
+}
+
+// Moving again to where a move was interrupted finishes the copy.
+func TestStore_CopyTo_FinishesAnInterruptedCopyOfThisVault(t *testing.T) {
+	t.Parallel()
+	s := copySource(t)
+	dest := interruptedCopy(t, s)
+
+	if err := s.CopyTo(context.Background(), dest); err != nil {
+		t.Fatalf("moving again to an interrupted copy: %v", err)
+	}
+	moved, err := Open(context.Background(), dest, internalPass, quiet())
+	if err != nil {
+		t.Fatalf("Open the finished copy: %v", err)
+	}
+	defer moved.Close()
+	for _, name := range []string{"a", "b"} {
+		if _, err := moved.Get(context.Background(), name, "work"); err != nil {
+			t.Fatalf("Get %q from the finished copy: %v", name, err)
+		}
+	}
+}
+
+// A folder without vlt.age whose files this vault did not write (another
+// vault's interrupted copy, or a vault that lost its key) is not copied
+// over: its secrets could be recovered with a backup of its key.
+func TestStore_CopyTo_RefusesAKeylessVaultItDidNotCopy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		secret string // a file planted beside the interrupted copy's
+	}{
+		{"a secret this vault lacks", "work/other.age"},
+		{"a secret this vault holds, with other contents", "work/a.age"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := copySource(t)
+			dest := interruptedCopy(t, s)
+			planted := filepath.Join(dest, filepath.FromSlash(tt.secret))
+			if err := os.WriteFile(planted, []byte("not this vault's"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := s.CopyTo(context.Background(), dest); !errors.Is(err, ErrVaultExists) {
+				t.Fatalf("CopyTo = %v; want ErrVaultExists", err)
+			}
+			if got, err := os.ReadFile(planted); err != nil || string(got) != "not this vault's" {
+				t.Fatalf("the destination's file was overwritten: %q, %v", got, err)
+			}
+			if _, err := os.Stat(filepath.Join(dest, keyFile)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("a refused copy wrote %s (stat: %v)", keyFile, err)
+			}
+		})
+	}
+}
