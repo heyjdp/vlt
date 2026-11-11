@@ -174,3 +174,6 @@ Each fix note's `status` property is one of `todo`, `in-progress`, or `done`. Th
 
 > [!success] Phase 8 is done (2026-11-01)
 > [[F29 Check for updates]], [[F30 Dependabot]], [[F31 Release checklist]] and [[F32 TOTP codes]] each went through code, documentation and tooling verification before their commits. They were merged into `main` but not yet pushed. The next release is 0.2.0: Unreleased has new features.
+
+> [!success] Phase 10 is done (2026-11-11)
+> [[F34 Tampered vault files]], [[F35 Location round trip]], [[F36 Private exports]], [[F37 Lock read errors]] and [[F38 Secret list errors]] each went through code, documentation and tooling verification before their commits, and were merged into `main` but not yet pushed. Verification turned three of them into production fixes beyond the audit's finding (swapped secret files, four more location round-trip bugs, a Retry that could lose a save).
