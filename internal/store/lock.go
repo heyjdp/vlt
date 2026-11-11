@@ -126,7 +126,7 @@ func (s *Store) tryLock(data []byte, mine *LockInfo) (bool, error) {
 	if lost != nil {
 		return false, fmt.Errorf("store.AcquireLock: %w", lost)
 	}
-	return false, fmt.Errorf("store.AcquireLock: %s keeps appearing and disappearing", lockFile)
+	return false, fmt.Errorf("store.AcquireLock: %w", fmt.Errorf("%s keeps appearing and disappearing", lockFile))
 }
 
 // isStale reports whether a lock was left on this computer by a process

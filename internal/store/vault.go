@@ -282,7 +282,7 @@ func open(ctx context.Context, fsys vaultFS, loc Location, passphrase string, lo
 
 	default:
 		crypto.Wipe(plaintext)
-		return nil, fmt.Errorf("store.Open: %s has unrecognised contents", keyFile)
+		return nil, fmt.Errorf("store.Open: %w", fmt.Errorf("%s has unrecognised contents", keyFile))
 	}
 }
 
@@ -363,7 +363,7 @@ func (s *Store) ChangePassphrase(ctx context.Context, oldPass, newPass string) e
 		return fmt.Errorf("store.ChangePassphrase: %w", err)
 	}
 	if !same {
-		return errors.New("store.ChangePassphrase: vlt.age does not hold this vault's key")
+		return fmt.Errorf("store.ChangePassphrase: %w", errors.New("vlt.age does not hold this vault's key"))
 	}
 
 	wrapped, err := s.opts.wrap(newPass, s.id)

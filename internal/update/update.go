@@ -106,9 +106,9 @@ func (c *Checker) Latest(ctx context.Context) (Release, error) {
 		if resp.Header.Get("X-RateLimit-Remaining") == "0" {
 			return Release{}, fmt.Errorf("update.Latest: %w", ErrRateLimited)
 		}
-		return Release{}, fmt.Errorf("update.Latest: GitHub answered %s", resp.Status)
+		return Release{}, fmt.Errorf("update.Latest: %w", fmt.Errorf("GitHub answered %s", resp.Status))
 	default:
-		return Release{}, fmt.Errorf("update.Latest: GitHub answered %s", resp.Status)
+		return Release{}, fmt.Errorf("update.Latest: %w", fmt.Errorf("GitHub answered %s", resp.Status))
 	}
 
 	var body struct {
@@ -119,7 +119,7 @@ func (c *Checker) Latest(ctx context.Context) (Release, error) {
 		return Release{}, fmt.Errorf("update.Latest: parse the answer: %w", err)
 	}
 	if _, ok := parseRelease(body.TagName); !ok {
-		return Release{}, fmt.Errorf("update.Latest: unexpected release tag %q", body.TagName)
+		return Release{}, fmt.Errorf("update.Latest: %w", fmt.Errorf("unexpected release tag %q", body.TagName))
 	}
 	return Release{Tag: body.TagName, Notes: shorten(printable(body.Body), maxNotes)}, nil
 }

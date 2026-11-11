@@ -23,6 +23,9 @@ var ErrWrongPassphrase = errors.New("wrong passphrase")
 // ErrIdentityZeroed is returned when an Identity is used after Zero.
 var ErrIdentityZeroed = errors.New("identity has been zeroed")
 
+// errEmptyPassphrase is returned for an empty passphrase.
+var errEmptyPassphrase = errors.New("passphrase cannot be empty")
+
 // DefaultWorkFactor is the scrypt work factor (log2 N) used to wrap the vault
 // key: N = 2^18 with r = 8 costs 256 MiB and roughly a second per derivation.
 const DefaultWorkFactor = 18
@@ -96,7 +99,7 @@ func (id *Identity) Zero() {
 // for tests only: decryption accepts any factor up to age's maximum.
 func WrapIdentity(passphrase string, id *Identity, workFactor int) ([]byte, error) {
 	if passphrase == "" {
-		return nil, errors.New("crypto.WrapIdentity: passphrase cannot be empty")
+		return nil, fmt.Errorf("crypto.WrapIdentity: %w", errEmptyPassphrase)
 	}
 	r, err := age.NewScryptRecipient(passphrase)
 	if err != nil {
@@ -128,7 +131,7 @@ func UnwrapIdentity(passphrase string, wrapped []byte) (*Identity, error) {
 	}
 	if !IsSecretKey(plaintext) {
 		Wipe(plaintext)
-		return nil, errors.New("crypto.UnwrapIdentity: wrapped payload is not an age secret key")
+		return nil, fmt.Errorf("crypto.UnwrapIdentity: %w", errors.New("wrapped payload is not an age secret key"))
 	}
 	id, err := ParseIdentity(plaintext)
 	if err != nil {
@@ -150,7 +153,7 @@ func IsSecretKey(plaintext []byte) bool {
 // match.
 func DecryptWithPassphrase(passphrase string, ciphertext []byte) ([]byte, error) {
 	if passphrase == "" {
-		return nil, errors.New("crypto.DecryptWithPassphrase: passphrase cannot be empty")
+		return nil, fmt.Errorf("crypto.DecryptWithPassphrase: %w", errEmptyPassphrase)
 	}
 	sid, err := age.NewScryptIdentity(passphrase)
 	if err != nil {
