@@ -8,7 +8,7 @@ import (
 	"github.com/heyjdp/vlt/internal/testutil"
 )
 
-func TestSecret_ID(t *testing.T) {
+func TestSecret_ID_IsSharedByNamesAndGroupsThatMeanTheSame(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -59,7 +59,7 @@ func TestSecret_ID_SameIDIsTheSameFile(t *testing.T) {
 	}
 }
 
-func TestGroupID_Contains(t *testing.T) {
+func TestGroupID_Contains_MatchesEitherSpellingOrPartOfTheFolderName(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {

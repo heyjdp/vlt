@@ -282,6 +282,31 @@ func TestOperations_PickFolder_GivesThePath(t *testing.T) {
 	}
 }
 
+func TestOperations_PickFolder_ShowsAFailure(t *testing.T) {
+	h := newOpsHarness(t)
+	h.ops.pickFolder(func(string) { t.Fatal("nothing was chosen") })
+	h.pick.answerFolder(t, nil, errors.New("no such folder"))
+	if text := dialogText(t, h.w); !strings.Contains(text, "Couldn't choose a folder: no such folder") {
+		t.Fatalf("error dialog says %q", text)
+	}
+}
+
+func TestOperations_PickFolder_DropsAnAnswerAfterTheSessionEnded(t *testing.T) {
+	h := newOpsHarness(t)
+	folder, err := storage.ListerForURI(storage.NewFileURI(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h.ops.pickFolder(func(string) { t.Fatal("a folder chosen after the lock must not be used") })
+	h.ops.end()
+	h.pick.answerFolder(t, folder, nil)
+
+	if h.activity != 0 || h.w.Canvas().Overlays().Top() != nil {
+		t.Fatalf("activity %d, dialog shown %v; want the late answer dropped", h.activity, h.w.Canvas().Overlays().Top() != nil)
+	}
+}
+
 // saveAnswers records what pickSave passed to use.
 type saveAnswers struct{ got []fyne.URIWriteCloser }
 

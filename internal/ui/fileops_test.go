@@ -329,6 +329,38 @@ func TestFileOps_ExportWipesThePlaintextWhicheverWayItEnds(t *testing.T) {
 	}
 }
 
+func TestFileOps_ExportRefusesASecretThatIsNotAFile(t *testing.T) {
+	app, w, p := exportApp(t)
+
+	app.detailView.fileOps.ExportFile(testutil.PasswordSecret("gh", "x", "work"))
+
+	if text := dialogText(t, w); !strings.Contains(text, `Couldn't export "gh": it is not a file secret`) {
+		t.Fatalf("error dialog says %q", text)
+	}
+	if len(p.saves) != 0 {
+		t.Fatal("a secret that is not a file must not ask where to save")
+	}
+	app.Lock()
+}
+
+// A failure to save an imported file other than the name being taken is
+// shown in words, with no question about replacing.
+func TestFileOps_ImportThatFailsToSaveSaysWhy(t *testing.T) {
+	app, w, _ := exportApp(t)
+	secret := testutil.FileSecret(strings.Repeat("n", 300), "big.txt", "aGVsbG8=", "docs")
+
+	app.detailView.fileOps.importSecret(secret, importedFile{})
+
+	text := dialogText(t, w)
+	if !strings.Contains(text, "Couldn't import") || !strings.Contains(text, "255") {
+		t.Fatalf("error dialog says %q, want why the import failed", text)
+	}
+	if findButton(w.Canvas().Overlays().Top(), "Yes") != nil {
+		t.Fatal("a failed import must not ask to replace anything")
+	}
+	app.Lock()
+}
+
 // writeFailingURIWriter is a fakeURIWriter whose writes fail.
 type writeFailingURIWriter struct{ fakeURIWriter }
 

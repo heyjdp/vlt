@@ -416,6 +416,47 @@ func TestSettings_BrowseFillsInTheChosenFolder(t *testing.T) {
 	app.Lock()
 }
 
+func TestSettings_FailedMoveSaysWhyUnderTheLocation(t *testing.T) {
+	app, ss := settingsApp(t, noTimers)
+	box := ss.buildVaultLocation()
+	taken := t.TempDir()
+	newVaultWith(t, taken) // a vault is already there
+
+	entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server").SetText(taken)
+	tapAndConfirm(t, app.window, box, "Move Vault")
+
+	if !visibleText(box, "Couldn't move the vault: vault already exists") {
+		t.Fatal("a failed move should say why under the location")
+	}
+	if app.session.Store() == nil || app.settings.Vault() == localAt(taken) {
+		t.Fatal("a failed move must neither lock nor change the vault location")
+	}
+	app.Lock()
+}
+
+func TestSettings_MoveOrSwitchWithoutATargetAsksForOne(t *testing.T) {
+	tests := []struct {
+		button, want string
+	}{
+		{"Move Vault", "Please enter or browse to a new vault directory"},
+		{"Switch Vault (no copy)", "Please enter or browse to a vault directory"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.button, func(t *testing.T) {
+			app, ss := settingsApp(t, noTimers)
+			box := ss.buildVaultLocation()
+			entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server").SetText("  ")
+
+			test.Tap(findButton(box, tt.button))
+
+			if !visibleText(box, tt.want) || app.window.Canvas().Overlays().Top() != nil {
+				t.Fatalf("an empty location should show %q and ask nothing", tt.want)
+			}
+			app.Lock()
+		})
+	}
+}
+
 func TestSettings_LockTimeoutSliderIsSaved(t *testing.T) {
 	app, ss := settingsApp(t, noTimers, withLockTimeoutMs(DefaultLockTimeoutMs))
 
