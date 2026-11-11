@@ -244,8 +244,9 @@ type Contents struct {
 	Unreadable []string
 }
 
-// Contents returns all secrets in the vault by walking every group
-// subdirectory (secrets in directory order), and names the files it skipped: those
+// Contents returns all secrets in the vault by walking every group folder
+// (secrets in directory order; a vault kept inside this one is not a group),
+// and names the files it skipped: those
 // it cannot read, decrypt or parse are logged and left out, so one damaged
 // file doesn't hide the rest. A lost connection fails the whole listing
 // rather than leave secrets silently missing. It checks ctx before each file
@@ -260,7 +261,7 @@ func (s *Store) Contents(ctx context.Context) (Contents, error) {
 
 func (s *Store) contents(ctx context.Context) (Contents, error) {
 	var c Contents
-	groups, err := s.fs.ReadDir(".")
+	groups, err := groupFolders(s.fs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return c, nil
@@ -269,24 +270,16 @@ func (s *Store) contents(ctx context.Context) (Contents, error) {
 	}
 
 	var names []string
-	for _, groupEntry := range groups {
-		if !isGroupDir(groupEntry) {
+	for _, g := range groups {
+		if g.err != nil {
+			if errors.Is(g.err, ErrConnectionLost) || errors.Is(g.err, ErrUnreachable) {
+				return c, g.err
+			}
+			s.log.Warn("failed to read group directory", "group", g.name, "err", g.err)
+			c.Unreadable = append(c.Unreadable, g.name+"/")
 			continue
 		}
-		entries, err := s.fs.ReadDir(groupEntry.Name())
-		if err != nil {
-			if errors.Is(err, ErrConnectionLost) || errors.Is(err, ErrUnreachable) {
-				return c, err
-			}
-			s.log.Warn("failed to read group directory", "group", groupEntry.Name(), "err", err)
-			c.Unreadable = append(c.Unreadable, groupEntry.Name()+"/")
-			continue
-		}
-		for _, entry := range entries {
-			if !entry.IsDir() && path.Ext(entry.Name()) == ".age" {
-				names = append(names, path.Join(groupEntry.Name(), entry.Name()))
-			}
-		}
+		names = append(names, g.files...)
 	}
 
 	// Each worker fills its own slots, so the result keeps directory order.
@@ -386,9 +379,10 @@ var errInvalidSecret = errors.New("file is not a valid secret")
 // name or group.
 var errMisplaced = errors.New("file holds a secret from another place in the vault")
 
-// CopyTo copies the wrapped vault key, the format marker, and every .age
-// file into the vault location dest (local, or on a server), preserving the
-// group subdirectory structure. It refuses (ErrVaultExists) to copy into a
+// CopyTo copies the wrapped vault key, the format marker, and every group
+// folder with its secret files into the vault location dest (local, or on a
+// server). A vault kept inside this one's folder is not one of its groups,
+// so it is left behind. It refuses (ErrVaultExists) to copy into a
 // location that already holds a vault or secret files, since overwriting
 // another vault's vlt.age would make its secrets unrecoverable. An open
 // Store never has a migration in progress, so vlt.migrating.age is not
@@ -425,43 +419,31 @@ func (s *Store) CopyTo(ctx context.Context, dest string) error {
 		}
 	}
 
-	// Copy group subdirectories
-	groups, err := s.fs.ReadDir(".")
+	// Copy the group folders and their secret files
+	groups, err := groupFolders(s.fs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 		return fmt.Errorf("store.CopyTo: read %q: %w", s.loc, err)
 	}
-
-	for _, groupEntry := range groups {
-		if !isGroupDir(groupEntry) {
-			continue
+	for _, g := range groups {
+		if g.err != nil {
+			return fmt.Errorf("store.CopyTo: read %q: %w", g.name, g.err)
 		}
-		group := groupEntry.Name()
-		if err := dst.MkdirAll(group); err != nil {
-			return fmt.Errorf("store.CopyTo: mkdir %q: %w", group, err)
+		if err := dst.MkdirAll(g.name); err != nil {
+			return fmt.Errorf("store.CopyTo: mkdir %q: %w", g.name, err)
 		}
-
-		entries, err := s.fs.ReadDir(group)
-		if err != nil {
-			return fmt.Errorf("store.CopyTo: read %q: %w", group, err)
-		}
-
-		for _, entry := range entries {
-			if entry.IsDir() || path.Ext(entry.Name()) != ".age" {
-				continue
-			}
+		for _, name := range g.files {
 			if err := ctx.Err(); err != nil {
 				return fmt.Errorf("store.CopyTo: %w", err)
 			}
-			name := path.Join(group, entry.Name())
 			data, err := s.fs.ReadFile(name)
 			if err != nil {
-				return fmt.Errorf("store.CopyTo: read file %q: %w", entry.Name(), err)
+				return fmt.Errorf("store.CopyTo: read file %q: %w", name, err)
 			}
 			if err := dst.WriteFileAtomic(name, data); err != nil {
-				return fmt.Errorf("store.CopyTo: write file %q: %w", entry.Name(), err)
+				return fmt.Errorf("store.CopyTo: write file %q: %w", name, err)
 			}
 		}
 	}

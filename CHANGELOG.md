@@ -20,6 +20,8 @@ All notable changes to vlt are documented here. The format follows
 - `host:~//vault` and `ssh://host/~//vault` named `/vault` at the server's root instead of `vault` in your home directory. `SSH://` is now read like `ssh://`.
 - A dropped connection or a disk error while reading another copy's `vlt.lock` was reported as "Vault Already Open", and *Open Anyway* then met the same fault. A dropped connection is now retried, and an error that persists is treated like a failure to write the lock: logged, and the vault opens without recording that it is open. A lock file that is damaged, or that you may not read, still counts as open elsewhere.
 - Settings no longer offers to switch to, or move to, the current vault when its location is written another way (an unescaped space in an `ssh://` location saved by an older version, say).
+- Moving a vault that has another vault in a folder inside it (a backup copy, say) copied that vault's key file into the new location without the rest of it, as if it were a secret. The vault inside is now left where it is.
+- A vault kept in a folder inside your vault is no longer counted under the list as a secret file that couldn't be read.
 
 ## [0.2.0] - 2026-11-02
 

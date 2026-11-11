@@ -461,3 +461,63 @@ func TestStore_Contents_StopsWhenContextCancelled(t *testing.T) {
 		t.Fatalf("a cancelled Contents must not return partial results, got %d", len(got.Secrets))
 	}
 }
+
+// nestedVault creates a second vault, holding one secret, in the folder
+// "backup" inside the vault at dir (a backup copy kept there, say). Its
+// vlt.age sits where a secret named "vlt" in a group "backup" would.
+func nestedVault(t *testing.T, dir string) {
+	t.Helper()
+	inner := createVault(t, filepath.Join(dir, "backup"))
+	if err := inner.Create(context.Background(), testutil.PasswordSecret("inner", "pw", "work")); err != nil {
+		t.Fatal(err)
+	}
+	inner.Close()
+}
+
+// A vault kept inside another vault's folder is not one of its groups, so
+// its key file is not counted as a secret file that couldn't be read.
+func TestStore_Contents_SkipsAVaultInsideTheVault(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	s := createVault(t, dir)
+	ctx := context.Background()
+	if err := s.Create(ctx, testutil.PasswordSecret("github", "pw", "work")); err != nil {
+		t.Fatal(err)
+	}
+	nestedVault(t, dir)
+
+	got, err := s.Contents(ctx)
+	if err != nil {
+		t.Fatalf("Contents: %v", err)
+	}
+	if len(got.Secrets) != 1 || len(got.Unreadable) != 0 {
+		t.Fatalf("Contents = %v, unreadable %v; want github only, nothing unreadable", names(got.Secrets), got.Unreadable)
+	}
+}
+
+// Copying a vault leaves a vault kept inside its folder behind, rather than
+// copying its key file without its format marker into the new location.
+func TestStore_CopyTo_LeavesAVaultInsideTheVaultBehind(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	s := createVault(t, dir)
+	ctx := context.Background()
+	if err := s.Create(ctx, testutil.PasswordSecret("github", "pw", "work")); err != nil {
+		t.Fatal(err)
+	}
+	nestedVault(t, dir)
+
+	dest := filepath.Join(t.TempDir(), "moved")
+	if err := s.CopyTo(ctx, dest); err != nil {
+		t.Fatalf("CopyTo: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "backup")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the nested vault's folder was copied (stat err = %v)", err)
+	}
+	got, err := openVault(t, dest, testPass).Contents(ctx)
+	if err != nil || len(got.Secrets) != 1 || len(got.Unreadable) != 0 {
+		t.Fatalf("copy: Contents = %v, unreadable %v, %v; want github only", names(got.Secrets), got.Unreadable, err)
+	}
+}
