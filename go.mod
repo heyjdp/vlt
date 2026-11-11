@@ -2,7 +2,7 @@ module github.com/heyjdp/vlt
 
 go 1.26.1
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	filippo.io/age v1.3.1
