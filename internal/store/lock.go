@@ -34,7 +34,7 @@ type LockInfo struct {
 }
 
 // InUseError reports the lock found by AcquireLock. Lock is zero if the lock
-// file could not be parsed.
+// file could not be parsed, or this user may not read it.
 type InUseError struct {
 	Lock LockInfo
 }
@@ -90,6 +90,7 @@ const lockAttempts = 3
 // lock, false (and no error) if the existing lock is stale and may be
 // replaced, and an *InUseError if someone else holds it.
 func (s *Store) tryLock(data []byte, mine *LockInfo) (bool, error) {
+	var lost error
 	for range lockAttempts {
 		err := s.fs.WriteFileExclusive(lockFile, data)
 		switch {
@@ -103,14 +104,27 @@ func (s *Store) tryLock(data []byte, mine *LockInfo) (bool, error) {
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
 			continue // released since; try to create it again
-		case err != nil:
+		case errors.Is(err, errBadLock), errors.Is(err, fs.ErrPermission):
+			// Someone holds it, but who can't be read: a damaged lock, or
+			// another user's that this one may not read.
 			return false, &InUseError{}
+		case errors.Is(err, ErrConnectionLost):
+			// The next call reconnects; try again for a real answer.
+			lost = err
+			continue
+		case err != nil:
+			// A file system error says nothing about whether the vault is
+			// open elsewhere.
+			return false, fmt.Errorf("store.AcquireLock: %w", err)
 		case isStale(&held, mine):
 			s.log.Info("taking over a stale vault lock", "host", held.Host, "pid", held.PID, "since", held.Since)
 			return false, nil
 		default:
 			return false, &InUseError{Lock: held}
 		}
+	}
+	if lost != nil {
+		return false, fmt.Errorf("store.AcquireLock: %w", lost)
 	}
 	return false, fmt.Errorf("store.AcquireLock: %s keeps appearing and disappearing", lockFile)
 }
@@ -140,10 +154,13 @@ func (s *Store) readLock() (LockInfo, error) {
 	}
 	var info LockInfo
 	if err := json.Unmarshal(data, &info); err != nil {
-		return LockInfo{}, fmt.Errorf("parse %s: %w", lockFile, err)
+		return LockInfo{}, fmt.Errorf("%w: %w", errBadLock, err)
 	}
 	return info, nil
 }
+
+// errBadLock marks a lock file that exists but does not parse.
+var errBadLock = errors.New("parse " + lockFile)
 
 // releaseLock removes vlt.lock if this Store still holds it. A lock taken
 // over by another copy of vlt is left alone. To make "check, then remove"
