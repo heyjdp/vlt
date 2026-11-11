@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -20,45 +21,40 @@ import (
 // SettingsScreen displays vault configuration options.
 type SettingsScreen struct {
 	window    fyne.Window
-	config    *Config
+	settings  *Settings
 	store     *store.Store
 	log       *slog.Logger
 	statusBar *widget.Label
-	run       runner
-	onRelock  func()
-	// activity reports user input in the folder picker and confirmation
-	// dialogs, which are outside the instrumented widget tree.
-	activity func()
-	// save persists one setting (prefLockTimeout or prefClipboardTTL) after
-	// the user changes it; it is set by the app. A new vault location is
-	// saved by the app once a vault is opened or created there.
-	save func(setting string)
+	// ops runs the passphrase change and the vault copy, asks before moving
+	// or switching, and shows the folder picker.
+	ops      *operations
+	onRelock func()
 	// checkUpdates checks for a newer release now (set by the app).
 	checkUpdates func()
 
 	content *fyne.Container
 }
 
-// NewSettingsScreen creates a settings panel.
+// NewSettingsScreen creates a settings panel. Changes go to settings, which
+// saves them; a new vault location is only proposed, and the app commits it
+// once a vault is opened or created there.
 func NewSettingsScreen(
 	window fyne.Window,
-	config *Config,
+	settings *Settings,
 	s *store.Store,
 	statusBar *widget.Label,
 	log *slog.Logger,
-	run runner,
+	ops *operations,
 	onRelock func(),
 ) *SettingsScreen {
 	ss := &SettingsScreen{
 		window:    window,
-		config:    config,
+		settings:  settings,
 		store:     s,
 		log:       log,
 		statusBar: statusBar,
-		run:       run,
+		ops:       ops,
 		onRelock:  onRelock,
-		activity:  noActivity,
-		save:      func(string) {},
 
 		checkUpdates: func() {},
 	}
@@ -130,25 +126,23 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 
 		// Only vlt.age (the wrapped vault key) is rewritten; secrets are
 		// untouched. Two scrypt derivations, so it runs in the background.
-		changeBtn.Disable()
-		ss.statusBar.SetText("Changing passphrase…")
-		background(ss.run,
+		start(ss.ops, &operation{
+			kind:     opVault,
+			progress: "Changing passphrase…",
+			control:  changeBtn,
+			failed: func(err error) {
+				if errors.Is(err, store.ErrWrongPassphrase) {
+					errorLabel.SetText("Current passphrase is incorrect")
+				} else {
+					errorLabel.SetText(errorMessage("Couldn't change the passphrase", err))
+				}
+				errorLabel.Show()
+			},
+		},
 			func(ctx context.Context) (none, error) {
 				return none{}, ss.store.ChangePassphrase(ctx, current, newPass)
 			},
-			func(_ none, err error) {
-				changeBtn.Enable()
-				if err != nil {
-					ss.statusBar.SetText("")
-					if errors.Is(err, store.ErrWrongPassphrase) {
-						errorLabel.SetText("Current passphrase is incorrect")
-					} else {
-						errorLabel.SetText("Passphrase change failed: " + err.Error())
-					}
-					errorLabel.Show()
-					return
-				}
-
+			func(none) {
 				ss.statusBar.SetText("Passphrase changed")
 				ss.relockThenInform("Passphrase Changed",
 					"Your vault key is now protected by the new passphrase.\nThe vault has locked; unlock it with the new passphrase.")
@@ -170,7 +164,7 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 }
 
 func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
-	currentLabel := widget.NewLabel("Current: " + ss.config.VaultDir)
+	currentLabel := widget.NewLabel("Current: " + ss.settings.Vault().String())
 	currentLabel.Wrapping = fyne.TextWrapBreak
 
 	pathEntry := widget.NewEntry()
@@ -179,45 +173,28 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 	errorLabel := errorText()
 
 	browseBtn := widget.NewButtonWithIcon("Browse…", theme.FolderOpenIcon(), func() {
-		fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
-			ss.activity()
-			if err != nil {
-				dialog.ShowError(err, ss.window)
-				return
-			}
-			if uri == nil {
-				return
-			}
-			pathEntry.SetText(uri.Path())
-		}, ss.window)
-		fd.Show()
+		ss.ops.pickFolder(pathEntry.SetText)
 	})
 
-	moveBtn := widget.NewButton("Move Vault", func() {
+	var moveBtn *widget.Button
+	moveBtn = widget.NewButton("Move Vault", func() {
 		errorLabel.Hide()
 
 		newDir, ok := ss.targetLocation(pathEntry.Text, errorLabel, "Please enter or browse to a new vault directory")
 		if !ok {
 			return
 		}
-		if sameLocation(newDir, ss.config.VaultDir) {
+		if newDir == ss.settings.Vault() {
 			errorLabel.SetText("New location is the same as current")
 			errorLabel.Show()
 			return
 		}
 
-		dialog.ShowConfirm("Move Vault",
-			fmt.Sprintf("Copy all secrets from:\n  %s\nto:\n  %s\n\nThe original vault will not be deleted.",
-				ss.config.VaultDir, newDir),
-			func(confirmed bool) {
-				ss.activity()
-				if !confirmed {
-					return
-				}
-				ss.moveVault(newDir, errorLabel, currentLabel)
-			},
-			ss.window,
-		)
+		ss.ops.confirm(&question{
+			title: "Move Vault",
+			message: fmt.Sprintf("Copy all secrets from:\n  %s\nto:\n  %s\n\nThe original vault will not be deleted.",
+				ss.settings.Vault(), newDir),
+		}, func() { ss.moveVault(newDir, moveBtn, errorLabel, currentLabel) })
 	})
 	moveBtn.Importance = widget.WarningImportance
 
@@ -228,27 +205,22 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 		if !ok {
 			return
 		}
-		if sameLocation(newDir, ss.config.VaultDir) {
+		if newDir == ss.settings.Vault() {
 			errorLabel.SetText("Already using that vault directory")
 			errorLabel.Show()
 			return
 		}
 
-		dialog.ShowConfirm("Switch Vault",
-			fmt.Sprintf("Switch to vault at:\n  %s\n\nThe app will lock. If a vault exists there you will unlock it with its passphrase; otherwise you will be asked to create one.", newDir),
-			func(confirmed bool) {
-				ss.activity()
-				if !confirmed {
-					return
-				}
-				ss.switchVault(newDir, currentLabel)
-			},
-			ss.window,
-		)
+		ss.ops.confirm(&question{
+			title:   "Switch Vault",
+			message: fmt.Sprintf("Switch to vault at:\n  %s\n\nThe app will lock. If a vault exists there you will unlock it with its passphrase; otherwise you will be asked to create one.", newDir),
+		}, func() {
+			ss.ops.now(&operation{kind: opVault}, func() { ss.switchVault(newDir, currentLabel) })
+		})
 	})
 
-	if ss.config.FromEnv.VaultDir {
-		currentLabel.SetText(currentLabel.Text + " (set by " + envVaultDir + ")")
+	if variable, ok := ss.settings.SetByEnv(SettingVault); ok {
+		currentLabel.SetText(currentLabel.Text + " (set by " + variable + ")")
 		pathEntry.Disable()
 		browseBtn.Disable()
 		moveBtn.Disable()
@@ -267,58 +239,46 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 }
 
 // targetLocation reads the location typed for Move or Switch: it must parse
-// (a folder, or a folder on a server), and is returned in its canonical form
-// so the same place is always saved the same way. On a problem it shows the
-// error and returns false; empty shows emptyMsg.
-func (ss *SettingsScreen) targetLocation(text string, errorLabel *widget.Label, emptyMsg string) (string, bool) {
+// (a folder, or a folder on a server). On a problem it shows the error and
+// returns false; empty shows emptyMsg.
+func (ss *SettingsScreen) targetLocation(text string, errorLabel *widget.Label, emptyMsg string) (store.Location, bool) {
 	if strings.TrimSpace(text) == "" {
 		errorLabel.SetText(emptyMsg)
 		errorLabel.Show()
-		return "", false
+		return store.Location{}, false
 	}
 	loc, err := store.ParseLocation(text)
 	if err != nil {
-		errorLabel.SetText(err.Error())
+		errorLabel.SetText(errorMessage("", err))
 		errorLabel.Show()
-		return "", false
+		return store.Location{}, false
 	}
-	return loc.String(), true
+	return loc, true
 }
 
-// sameLocation reports whether two saved locations name the same place.
-// The saved one may be in an older or typed form (ssh:// with spaces left
-// unescaped, say), so they are compared parsed when both parse.
-func sameLocation(a, b string) bool {
-	la, errA := store.ParseLocation(a)
-	lb, errB := store.ParseLocation(b)
-	if errA != nil || errB != nil {
-		return a == b
-	}
-	return la == lb
+// moveVault copies the vault to newDir in the background, with moveBtn
+// disabled meanwhile; while it runs, no other vault-wide change starts.
+func (ss *SettingsScreen) moveVault(newDir store.Location, moveBtn fyne.Disableable, errorLabel, currentLabel *widget.Label) {
+	start(ss.ops, &operation{
+		kind:     opVault,
+		progress: "Copying vault…",
+		control:  moveBtn,
+		failed: func(err error) {
+			errorLabel.SetText(errorMessage("Couldn't move the vault", err))
+			errorLabel.Show()
+		},
+	},
+		func(ctx context.Context) (none, error) { return none{}, ss.store.CopyTo(ctx, newDir.String()) },
+		func(none) { ss.vaultMoved(newDir, currentLabel) })
 }
 
-func (ss *SettingsScreen) moveVault(newDir string, errorLabel, currentLabel *widget.Label) {
-	ss.statusBar.SetText("Copying vault…")
-	background(ss.run,
-		func(ctx context.Context) (none, error) { return none{}, ss.store.CopyTo(ctx, newDir) },
-		func(_ none, err error) {
-			if err != nil {
-				ss.statusBar.SetText("")
-				errorLabel.SetText("Move failed: " + err.Error())
-				errorLabel.Show()
-				return
-			}
-			ss.vaultMoved(newDir, currentLabel)
-		})
-}
-
-// vaultMoved switches the config to newDir after a successful copy and
-// relocks so the user unlocks the vault at its new location.
-func (ss *SettingsScreen) vaultMoved(newDir string, currentLabel *widget.Label) {
-	ss.config.VaultDir = newDir
-	currentLabel.SetText("Current: " + newDir)
-	ss.log.Info("vault moved", "to", newDir)
-	ss.statusBar.SetText("Vault moved to " + newDir)
+// vaultMoved proposes newDir after a successful copy and relocks so the
+// user unlocks the vault at its new location.
+func (ss *SettingsScreen) vaultMoved(newDir store.Location, currentLabel *widget.Label) {
+	ss.settings.ProposeVault(newDir)
+	currentLabel.SetText("Current: " + newDir.String())
+	ss.log.Info("vault moved", "to", newDir.String())
+	ss.statusBar.SetText("Vault moved to " + newDir.String())
 
 	ss.relockThenInform("Vault Moved",
 		fmt.Sprintf("Secrets copied to:\n  %s\n\nThe vault has locked; unlock it at its new location.", newDir))
@@ -333,33 +293,39 @@ func (ss *SettingsScreen) relockThenInform(title, message string) {
 	fyne.Do(func() { dialog.ShowInformation(title, message, window) })
 }
 
-func (ss *SettingsScreen) switchVault(newDir string, currentLabel *widget.Label) {
-	ss.config.VaultDir = newDir
-	currentLabel.SetText("Current: " + newDir)
-	ss.log.Info("vault switched", "to", newDir)
-	ss.statusBar.SetText("Switched to vault at " + newDir)
+// switchVault proposes newDir and relocks, so its unlock or create screen
+// shows.
+func (ss *SettingsScreen) switchVault(newDir store.Location, currentLabel *widget.Label) {
+	ss.settings.ProposeVault(newDir)
+	currentLabel.SetText("Current: " + newDir.String())
+	ss.log.Info("vault switched", "to", newDir.String())
+	ss.statusBar.SetText("Switched to vault at " + newDir.String())
 	ss.onRelock()
 }
 
+// buildLockTimeout is the auto-lock check box and timeout slider. The
+// label follows the slider; the timeout is applied and saved when a drag
+// ends (Fyne also ends a change on a tap or key press).
 func (ss *SettingsScreen) buildLockTimeout() *fyne.Container {
-	label := widget.NewLabel(formatLockTimeout(ss.config.LockTimeoutMs))
+	current := int(ss.settings.LockTimeout().Milliseconds())
+	label := widget.NewLabel(formatLockTimeout(current))
 	slider := widget.NewSlider(MinLockTimeoutMs, MaxLockTimeoutMs)
 	slider.Step = 30000
-	if ss.config.LockTimeoutMs > 0 {
-		slider.SetValue(float64(ss.config.LockTimeoutMs))
+	if current > 0 {
+		slider.SetValue(float64(current))
 	} else {
 		slider.SetValue(DefaultLockTimeoutMs)
 		slider.Disable()
 	}
 	enabled := widget.NewCheck("Auto-lock", nil)
-	enabled.SetChecked(ss.config.LockTimeoutMs > 0)
+	enabled.SetChecked(current > 0)
 
 	apply := func(ms int) {
-		ss.config.LockTimeoutMs = ms
-		label.SetText(formatLockTimeout(ms))
+		ss.settings.SetLockTimeout(time.Duration(ms) * time.Millisecond)
+		label.SetText(formatLockTimeout(int(ss.settings.LockTimeout().Milliseconds())))
 	}
-	slider.OnChanged = func(v float64) { apply(int(v)) }
-	slider.OnChangeEnded = func(float64) { ss.save(prefLockTimeout) }
+	slider.OnChanged = func(v float64) { label.SetText(formatLockTimeout(int(v))) }
+	slider.OnChangeEnded = func(v float64) { apply(int(v)) }
 	enabled.OnChanged = func(on bool) {
 		if on {
 			slider.Enable()
@@ -368,31 +334,34 @@ func (ss *SettingsScreen) buildLockTimeout() *fyne.Container {
 			slider.Disable()
 			apply(0)
 		}
-		ss.save(prefLockTimeout)
 	}
 
-	if ss.config.FromEnv.LockTimeout {
+	if variable, ok := ss.settings.SetByEnv(SettingLockTimeout); ok {
 		slider.Disable()
 		enabled.Disable()
-		label.SetText(label.Text + " (set by " + envLockTimeout + ")")
+		label.SetText(label.Text + " (set by " + variable + ")")
 	}
 	return container.NewVBox(label, enabled, slider)
 }
 
+// buildClipboardTTL is the clipboard TTL slider, applied and saved when a
+// change ends, as for the auto-lock timeout.
 func (ss *SettingsScreen) buildClipboardTTL() *fyne.Container {
-	label := widget.NewLabel(fmt.Sprintf("Clipboard TTL: %d seconds", ss.config.ClipboardTTLs))
+	ttlText := func(secs int) string { return fmt.Sprintf("Clipboard TTL: %d seconds", secs) }
+	current := int(ss.settings.ClipboardTTL() / time.Second)
+	label := widget.NewLabel(ttlText(current))
 	slider := widget.NewSlider(MinClipboardTTLs, MaxClipboardTTLs)
-	slider.SetValue(float64(ss.config.ClipboardTTLs))
+	slider.SetValue(float64(current))
 	slider.Step = 5
-	slider.OnChanged = func(v float64) {
-		ss.config.ClipboardTTLs = int(v)
-		label.SetText(fmt.Sprintf("Clipboard TTL: %d seconds", ss.config.ClipboardTTLs))
+	slider.OnChanged = func(v float64) { label.SetText(ttlText(int(v))) }
+	slider.OnChangeEnded = func(v float64) {
+		ss.settings.SetClipboardTTL(time.Duration(v) * time.Second)
+		label.SetText(ttlText(int(ss.settings.ClipboardTTL() / time.Second)))
 	}
-	slider.OnChangeEnded = func(float64) { ss.save(prefClipboardTTL) }
 
-	if ss.config.FromEnv.ClipboardTTL {
+	if variable, ok := ss.settings.SetByEnv(SettingClipboardTTL); ok {
 		slider.Disable()
-		label.SetText(label.Text + " (set by " + envClipboardTTL + ")")
+		label.SetText(label.Text + " (set by " + variable + ")")
 	}
 	return container.NewVBox(label, slider)
 }
@@ -401,11 +370,8 @@ func (ss *SettingsScreen) buildClipboardTTL() *fyne.Container {
 // button to check now.
 func (ss *SettingsScreen) buildUpdates() *fyne.Container {
 	atStart := widget.NewCheck("Check for updates when vlt starts", nil)
-	atStart.SetChecked(ss.config.CheckUpdates)
-	atStart.OnChanged = func(on bool) {
-		ss.config.CheckUpdates = on
-		ss.save(prefCheckUpdates)
-	}
+	atStart.SetChecked(ss.settings.CheckUpdates())
+	atStart.OnChanged = ss.settings.SetCheckUpdates
 	checkNow := widget.NewButton("Check Now", func() { ss.checkUpdates() })
 	return card(subheading("Updates"),
 		muted("When this is on, vlt asks GitHub for its latest release at start-up and, once the vault is unlocked, tells you once about each new one. "+

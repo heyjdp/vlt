@@ -158,6 +158,13 @@ Added 2026-11-11, from an audit with the samber Go skills (security, safety, con
 - [[F37 Lock read errors]]
 - [[F38 Secret list errors]]
 
+### Phase 11: Deepening, second pass
+Added 2026-11-11. Goal: deep modules for the error wording, operations, secret files and settings, from the second architecture review.
+- [[F39 Secret files and keys]]
+- [[F40 Error wording]]
+- [[F41 Operations]]
+- [[F42 Settings module]]
+
 ## Tracker
 
 ![[Roadmap.base]]
@@ -177,3 +184,7 @@ Each fix note's `status` property is one of `todo`, `in-progress`, or `done`. Th
 
 > [!success] Phase 10 is done (2026-11-11)
 > [[F34 Tampered vault files]], [[F35 Location round trip]], [[F36 Private exports]], [[F37 Lock read errors]] and [[F38 Secret list errors]] each went through code, documentation and tooling verification before their commits, and were merged into `main` but not yet pushed. Verification turned three of them into production fixes beyond the audit's finding (swapped secret files, four more location round-trip bugs, a Retry that could lose a save).
+
+> [!success] Phase 11 is done (2026-11-11)
+> [[F39 Secret files and keys]], [[F40 Error wording]], [[F41 Operations]] and [[F42 Settings module]] were built on the branch `refactor/deepen-ui-store`, each with its tests, documentation and lint passing, then went through independent code, documentation and tooling verification and were merged into `main` but not yet pushed. Besides the deeper modules, they fix a nested vault's key file counted as an unreadable secret and copied by Move, internal prefixes in error messages, *Move Vault* and *Switch Vault* overlapping a copy, a passphrase change during a copy, import over an unreadable file, and a location from `VLT_VAULT_DIR` shown in another form than vlt writes.
+> Verification found, and fixed before the merge: a server vault's error messages without the file's name, a garbled message when a hard link and its fallback both fail, context lost from three messages (`vlt.json`, a temp folder's mode, the secret now holding a file), a prefix that repeats its cause, and an exported file's plaintext left unwiped when the vault locks just as decoding finishes. It also added tests for `CopyTo`'s failure paths, the folder chooser, Settings' Move errors and the file secret guards.

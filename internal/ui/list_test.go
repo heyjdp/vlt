@@ -26,7 +26,7 @@ func TestApp_SelectThenDeleteRemovesRowAndClearsSelection(t *testing.T) {
 		testutil.PasswordSecret("a-gone", "v", "work"),
 		testutil.PasswordSecret("b-kept", "v", "work"),
 	)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	sl, dv := app.secretList, app.detailView
 
@@ -55,7 +55,7 @@ func TestApp_SelectThenEditUpdatesFilteredRow(t *testing.T) {
 		testutil.PasswordSecret("github", "old", "work"),
 		testutil.PasswordSecret("bank", "x", "personal"),
 	)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	sl, dv := app.secretList, app.detailView
 
@@ -80,7 +80,7 @@ func TestApp_NewSecretSavedDuringSearchAppearsIfItMatches(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("github", "x", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	sl := app.secretList
 
@@ -125,7 +125,7 @@ func TestSecretList_DeleteDuringFirstLoadSurvivesLoad(t *testing.T) {
 	defer s.Close()
 
 	q := &queue{}
-	dv := NewDetailView(test.NewTempWindow(t, nil), s, nil, widget.NewLabel(""), quietLog(), q.runner())
+	dv := NewDetailView(test.NewTempWindow(t, nil), s, nil, widget.NewLabel(""), quietLog(), testOps(t, q.runner()))
 	sl := NewSecretList(test.NewTempWindow(t, nil), s, dv, quietLog(), q.runner())
 
 	sl.Refresh() // queued: reads the vault while "gone" still exists
@@ -142,7 +142,7 @@ func TestApp_LateDeleteDoesNotClearAnotherSecretsPanel(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("a-gone", "v", "work"), testutil.PasswordSecret("b-shown", "v", "work"))
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
 	q.flush()
 	unlockQueued(t, app, q)
 	q.flush()
@@ -167,7 +167,7 @@ func TestApp_ImportReplacingOpenSecretRefreshesItsForm(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("token", "old", "keys"))
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	dv := app.detailView
 
@@ -190,7 +190,7 @@ func TestApp_EditThatLeavesSearchClearsHighlight(t *testing.T) {
 	tagged := testutil.PasswordSecret("github", "x", "work")
 	tagged.Tags = []string{"ci"}
 	newVaultWith(t, dir, tagged)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	sl, dv := app.secretList, app.detailView
 
@@ -272,7 +272,7 @@ func TestSecretList_ALoadErrorIsShownWithRetry(t *testing.T) {
 	}
 	app, _ := newFlowApp(t, testutil.PasswordSecret("github", "pw", "work"))
 	unlock(app)
-	dir := app.config.VaultDir
+	dir := app.settings.Vault().Path
 	if err := os.Chmod(dir, 0o300); err != nil { // no read: the folder can't be listed
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestSecretList_ALoadErrorIsShownWithRetry(t *testing.T) {
 // counted under the list, with their paths a click away.
 func TestSecretList_SkippedFilesAreCountedWithDetails(t *testing.T) {
 	app, w := newFlowApp(t, testutil.PasswordSecret("github", "pw", "work"))
-	dir := app.config.VaultDir
+	dir := app.settings.Vault().Path
 	for _, name := range []string{"broken.age", "other.age"} {
 		if err := os.WriteFile(filepath.Join(dir, "work", name), []byte("not age"), 0o600); err != nil {
 			t.Fatal(err)
@@ -356,7 +356,7 @@ func newQueuedList(t *testing.T, q *queue) *SecretList {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	dv := NewDetailView(test.NewTempWindow(t, nil), s, nil, widget.NewLabel(""), quietLog(), q.runner())
+	dv := NewDetailView(test.NewTempWindow(t, nil), s, nil, widget.NewLabel(""), quietLog(), testOps(t, q.runner()))
 	return NewSecretList(test.NewTempWindow(t, nil), s, dv, quietLog(), q.runner())
 }
 

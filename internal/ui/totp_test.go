@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +36,7 @@ func TestCheckTOTPSecret(t *testing.T) {
 			t.Errorf("checkTOTPSecret(%q) = %v", ok, err)
 		}
 	}
-	if err := checkTOTPSecret("not base32!"); err == nil || !strings.HasPrefix(err.Error(), "TOTP secret: ") {
+	if err := checkTOTPSecret("not base32!"); err == nil || !errors.Is(err, totp.ErrNotBase32) {
 		t.Errorf("checkTOTPSecret(bad) = %v", err)
 	}
 }
@@ -61,7 +62,7 @@ func openRecordAt59(t *testing.T, rec *store.Secret) (*App, *fakeClock, *clockAt
 	dir := t.TempDir()
 	newVaultWith(t, dir, rec)
 	timers := &fakeClock{}
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), timers.factory, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), timers.factory, testKDF)
 	unlock(app)
 	clock := &clockAt{t: time.Unix(59, 0).UTC()}
 	app.detailView.now = clock.now
@@ -193,7 +194,7 @@ func TestTOTP_AnInvalidSecretIsNotSaved(t *testing.T) {
 	totpEntry.SetText("not base32!")
 	test.Tap(findButton(app.detailView.Content(), "Save"))
 
-	if top := app.window.Canvas().Overlays().Top(); top == nil || !hasLabel(top, "TOTP secret: the TOTP secret is not valid base32 (letters A–Z and digits 2–7)") {
+	if top := app.window.Canvas().Overlays().Top(); top == nil || !hasLabel(top, "Couldn't save the secret: the TOTP secret is not valid base32 (letters A–Z and digits 2–7)") {
 		t.Fatal("saving an invalid TOTP secret should explain why it was refused")
 	}
 	got, err := app.session.Store().Get(context.Background(), "bank", "work")
@@ -281,10 +282,10 @@ func TestTOTP_ASaveFinishingAfterMovingOnDoesNotPullTheRecordBack(t *testing.T) 
 	dir := t.TempDir()
 	other := testutil.PasswordSecret("aaa", "x", "work")
 	newVaultWith(t, dir, totpRecord(""), other)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	q := &queue{}
-	app.detailView.run = q.runner()
+	app.sessionOps.run = q.runner()
 	bank := 1 // the list is sorted: aaa, bank
 	app.secretList.list.Select(bank)
 

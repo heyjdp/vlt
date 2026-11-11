@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -156,5 +157,23 @@ func TestMkdirAllSynced_CreatesPrivateDirectory(t *testing.T) {
 	}
 	if perm := info.Mode().Perm(); perm&^dirPerm != 0 {
 		t.Fatalf("directory mode %o grants more than %o", perm, dirPerm)
+	}
+}
+
+// When the hard link fails and so does the fallback, the message gives both
+// causes as two clauses, with no text of its own wrapped around either.
+func TestLinkFallbackError_GivesBothCausesAsClauses(t *testing.T) {
+	t.Parallel()
+	link := &os.LinkError{Op: "link", Old: "/v/.tmp-1", New: "/v/x.age", Err: errors.New("operation not supported")}
+	create := &os.PathError{Op: "open", Path: "/v/x.age", Err: os.ErrPermission}
+
+	err := linkFallbackError(link, create)
+
+	want := "writeFileExclusive: link /v/.tmp-1 /v/x.age: operation not supported; creating the file directly also failed: open /v/x.age: permission denied"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err, want)
+	}
+	if !errors.Is(err, os.ErrPermission) || !errors.As(err, new(*os.LinkError)) {
+		t.Fatalf("error %v must wrap both causes", err)
 	}
 }

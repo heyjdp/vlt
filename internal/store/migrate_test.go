@@ -25,12 +25,12 @@ func TestStore_Open_MigratesLegacyVault(t *testing.T) {
 	s := openVault(t, dir, testPass)
 	ctx := context.Background()
 
-	listed, err := s.List(ctx)
+	listed, err := s.Contents(ctx)
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("Contents: %v", err)
 	}
-	if len(listed) != 3 {
-		t.Fatalf("expected 3 secrets after migration, got %d", len(listed))
+	if len(listed.Secrets) != 3 {
+		t.Fatalf("expected 3 secrets after migration, got %d", len(listed.Secrets))
 	}
 	if n, files := countScryptStanzas(t, dir); n != 1 || files[0] != "vlt.age" {
 		t.Fatalf("expected only vlt.age to use scrypt after migration; got %d in %v", n, files)

@@ -64,12 +64,12 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("determine the default vault directory: %w", err)
 	}
-	config := ui.LoadConfig(fyneApp.Preferences(), os.Getenv, defaultDir, logger)
+	settings := ui.LoadSettings(fyneApp.Preferences(), os.Getenv, defaultDir, logger)
 
 	window := fyneApp.NewWindow(fmt.Sprintf("vlt %s", version))
 	window.Resize(fyne.NewSize(900, 600))
 
-	_ = ui.NewApp(fyneApp, window, config, logger, version)
+	_ = ui.NewApp(fyneApp, window, settings, logger, version)
 	window.ShowAndRun()
 	return nil
 }

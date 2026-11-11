@@ -58,7 +58,7 @@ func TestCreateScreen_MismatchShowsErrorAndDoesNotCreate(t *testing.T) {
 	if called {
 		t.Fatal("onCreate called despite mismatched confirmation")
 	}
-	if !s.errorLabel.Visible() || s.errorLabel.Text != errPassphraseMismatch.Error() {
+	if !s.errorLabel.Visible() || s.errorLabel.Text != "Passphrases do not match" {
 		t.Fatalf("expected mismatch error, got visible=%v text=%q", s.errorLabel.Visible(), s.errorLabel.Text)
 	}
 	if s.confirm.Text != "" {
@@ -110,7 +110,7 @@ func TestApp_MissingVaultShowsCreateScreen(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := filepath.Join(t.TempDir(), "vault")
 
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	if app.createScreen == nil || app.unlockScreen != nil {
 		t.Fatal("expected the create-vault screen for a missing vault")
 	}
@@ -132,7 +132,7 @@ func TestApp_ExistingVaultShowsUnlockScreen(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	if app.unlockScreen == nil || app.createScreen != nil {
 		t.Fatal("expected the unlock screen for an existing vault")
 	}
@@ -142,10 +142,10 @@ func TestApp_SwitchToEmptyDirectoryShowsCreateScreen(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 
 	// settings.switchVault sets the directory and relocks.
-	app.config.VaultDir = t.TempDir()
+	app.settings.ProposeVault(localAt(t.TempDir()))
 	app.Lock()
 
 	if app.createScreen == nil {
@@ -157,7 +157,7 @@ func TestApp_VaultRemovedAfterScreenChosenOffersCreate(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := filepath.Join(t.TempDir(), "vault")
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 
 	if err := os.RemoveAll(dir); err != nil {
 		t.Fatal(err)
@@ -176,7 +176,7 @@ func TestApp_LeftoverMarkerWithoutVaultShowsError(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "vlt.json"), []byte(`{"format":1}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	if app.unlockScreen == nil {
 		t.Fatal("a directory with vault files should show the unlock screen")
 	}
@@ -200,17 +200,17 @@ func TestApp_UnreadableDirectoryShowsNeitherScreen(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	if app.createScreen != nil || app.unlockScreen != nil {
 		t.Fatal("an unreadable directory must show an error, not offer to create or unlock")
 	}
 }
 
 // newCreateApp returns an app on the create screen for a missing vault.
-func newCreateApp(t *testing.T, cfg Config) *App {
+func newCreateApp(t *testing.T, opts ...func(*Settings)) *App {
 	t.Helper()
 	a := test.NewTempApp(t)
-	cfg.VaultDir = filepath.Join(t.TempDir(), "vault")
+	cfg := settingsAt(a, filepath.Join(t.TempDir(), "vault"), opts...)
 	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), noTimers, testKDF)
 	if app.createScreen == nil {
 		t.Fatal("expected the create-vault screen for a missing vault")
@@ -219,13 +219,13 @@ func newCreateApp(t *testing.T, cfg Config) *App {
 }
 
 func TestApp_OpenExistingVaultUnlocksAndRemembersIt(t *testing.T) {
-	app := newCreateApp(t, Config{})
+	app := newCreateApp(t)
 	other := t.TempDir()
 	newVaultWith(t, other)
 
 	app.openExistingVault(other)
 
-	if app.unlockScreen == nil || app.config.VaultDir != other {
+	if app.unlockScreen == nil || app.settings.Vault() != localAt(other) {
 		t.Fatal("opening a folder with a vault should show its unlock screen")
 	}
 	prefs := app.fyneApp.Preferences()
@@ -243,13 +243,13 @@ func TestApp_OpenExistingVaultUnlocksAndRemembersIt(t *testing.T) {
 }
 
 func TestApp_OpenFolderWithoutVaultIsRefused(t *testing.T) {
-	app := newCreateApp(t, Config{})
-	screen, dir := app.createScreen, app.config.VaultDir
+	app := newCreateApp(t)
+	screen, dir := app.createScreen, app.settings.Vault()
 	empty := t.TempDir()
 
 	app.openExistingVault(empty)
 
-	if app.createScreen != screen || app.config.VaultDir != dir {
+	if app.createScreen != screen || app.settings.Vault() != dir {
 		t.Fatal("a folder without a vault must leave the create screen and location unchanged")
 	}
 	if !screen.errorLabel.Visible() || !strings.Contains(screen.errorLabel.Text, "No vault was found") {
@@ -261,10 +261,10 @@ func TestApp_OpenFolderWithoutVaultIsRefused(t *testing.T) {
 }
 
 func TestApp_OpenExistingIsNotOfferedWhenTheLocationIsFromTheEnvironment(t *testing.T) {
-	if newCreateApp(t, Config{}).createScreen.openBtn == nil {
+	if newCreateApp(t).createScreen.openBtn == nil {
 		t.Fatal("the create screen should offer to open an existing vault")
 	}
-	fromEnv := newCreateApp(t, Config{FromEnv: EnvSettings{VaultDir: true}})
+	fromEnv := newCreateApp(t, vaultFromEnv)
 	if fromEnv.createScreen.openBtn != nil {
 		t.Fatal("VLT_VAULT_DIR fixes the location, so opening another folder must not be offered")
 	}
@@ -285,14 +285,14 @@ func TestCreateScreen_BusyDisablesOpen(t *testing.T) {
 }
 
 func TestApp_OpenFolderAboveAVaultPointsToIt(t *testing.T) {
-	app := newCreateApp(t, Config{})
+	app := newCreateApp(t)
 	parent := t.TempDir()
 	inner := filepath.Join(parent, "vault")
 	newVaultWith(t, inner)
 
 	app.openExistingVault(parent)
 
-	if app.unlockScreen != nil || app.config.VaultDir == parent {
+	if app.unlockScreen != nil || app.settings.Vault() == localAt(parent) {
 		t.Fatal("the folder above a vault must not be opened as one")
 	}
 	if text := app.createScreen.errorLabel.Text; !strings.Contains(text, inner) {
@@ -304,7 +304,7 @@ func TestApp_OpenUnreadableFolderShowsTheError(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("permission bits do not restrict this user")
 	}
-	app := newCreateApp(t, Config{})
+	app := newCreateApp(t)
 	locked := t.TempDir()
 	if err := os.Chmod(locked, 0o000); err != nil {
 		t.Fatal(err)
@@ -313,7 +313,7 @@ func TestApp_OpenUnreadableFolderShowsTheError(t *testing.T) {
 
 	app.openExistingVault(locked)
 
-	if text := app.createScreen.errorLabel.Text; !strings.Contains(text, "Cannot read") {
+	if text := app.createScreen.errorLabel.Text; !strings.Contains(text, "Couldn't look for a vault in "+locked+": can't look at "+filepath.Join(locked, "vlt.age")+": permission denied") {
 		t.Fatalf("expected a read error, got %q", text)
 	}
 	if app.createScreen.openBtn.Disabled() {
@@ -324,7 +324,7 @@ func TestApp_OpenUnreadableFolderShowsTheError(t *testing.T) {
 func TestApp_OpenCheckDisablesTheScreenUntilItFinishes(t *testing.T) {
 	a := test.NewTempApp(t)
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: filepath.Join(t.TempDir(), "vault")}, quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, filepath.Join(t.TempDir(), "vault")), quietLog(), q.runner(), noTimers, testKDF)
 	q.flush()
 	other := t.TempDir()
 	newVaultWith(t, other)
@@ -343,7 +343,7 @@ func TestApp_StaleOpenResultIsDropped(t *testing.T) {
 	a := test.NewTempApp(t)
 	q := &queue{}
 	dir := filepath.Join(t.TempDir(), "vault")
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
 	q.flush()
 	other := t.TempDir()
 	newVaultWith(t, other)
@@ -352,8 +352,8 @@ func TestApp_StaleOpenResultIsDropped(t *testing.T) {
 	app.showUnlockScreen()       // meanwhile the screen is rebuilt
 	q.flush()
 
-	if app.config.VaultDir != dir || app.unlockScreen != nil {
-		t.Fatalf("a result for a replaced screen must not switch vaults: dir=%q", app.config.VaultDir)
+	if app.settings.Vault() != localAt(dir) || app.unlockScreen != nil {
+		t.Fatalf("a result for a replaced screen must not switch vaults: dir=%q", app.settings.Vault())
 	}
 	if app.createScreen == nil || app.createScreen.openBtn.Disabled() {
 		t.Fatal("the new create screen should be shown and usable")
@@ -361,7 +361,7 @@ func TestApp_StaleOpenResultIsDropped(t *testing.T) {
 }
 
 func TestCreateScreen_OpenButtonShowsAFolderDialog(t *testing.T) {
-	app := newCreateApp(t, Config{})
+	app := newCreateApp(t)
 	if app.window.Canvas().Overlays().Top() != nil {
 		t.Fatal("no dialog expected yet")
 	}

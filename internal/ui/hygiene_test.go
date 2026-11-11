@@ -18,7 +18,7 @@ func TestUnlockScreen_EntryIsClearedAfterSubmit(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
 	q.flush()
 	screen := app.unlockScreen
 
@@ -46,7 +46,7 @@ func TestApp_LockDropsAllReferencesToSecrets(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	list, detail := app.secretList, app.detailView
 	list.list.Select(0) // render a form holding the secret
@@ -65,7 +65,7 @@ func TestApp_LockDropsAllReferencesToSecrets(t *testing.T) {
 }
 
 func TestSettings_PassphraseEntriesAreClearedOnEveryPath(t *testing.T) {
-	app, ss := settingsApp(t, Config{VaultDir: t.TempDir()}, noTimers)
+	app, ss := settingsApp(t, noTimers)
 	box := ss.buildChangePassphrase()
 	current := entryWithPlaceholder(t, box, "Current passphrase")
 	newPass := entryWithPlaceholder(t, box, "New passphrase")
@@ -91,7 +91,7 @@ func TestApp_LockEmptiesSecretsAndBlanksFormsStillReachableElsewhere(t *testing.
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	loaded := app.secretList.secrets[0]
@@ -135,12 +135,13 @@ func TestApp_LockWipesPendingExport(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	pickerOf(app) // its save dialog is never answered
 	unlock(app)
 
 	data := []byte("decoded file content")
-	app.detailView.fileOps.askExportPath("n", "out.txt", data) // save dialog left open
-	app.Lock()                                                 // dismisses it without a callback
+	app.detailView.fileOps.exportDecoded("n", "out.txt", data) // save dialog left open
+	app.Lock()                                                 // dismisses it without an answer
 
 	if !bytes.Equal(data, make([]byte, len(data))) {
 		t.Fatal("decoded export content must be wiped when the lock dismisses its dialog")

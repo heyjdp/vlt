@@ -73,6 +73,11 @@ func (t *activityTracker) instrument(obj fyne.CanvasObject) {
 	case *container.Scroll:
 		t.instrument(w.Content)
 		return
+	case *widget.Form:
+		for _, item := range w.Items {
+			t.instrument(item.Widget)
+		}
+		return
 	case *widget.Entry:
 		prev := w.OnChanged
 		w.OnChanged = func(s string) {
@@ -124,6 +129,3 @@ func (t *activityTracker) instrument(obj fyne.CanvasObject) {
 	}
 	t.seen[obj] = true
 }
-
-// noActivity is the default activity hook (auto-lock disabled or unset).
-func noActivity() {}

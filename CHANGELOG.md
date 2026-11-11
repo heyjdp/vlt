@@ -8,10 +8,14 @@ All notable changes to vlt are documented here. The format follows
 ### Security
 - Built with the go1.27.4 toolchain, which fixes GO-2026-6859 in `net/http` (used by the update check).
 - Exported files are readable only by you on macOS, Linux and OpenBSD (mode 0600). They were created with your default permissions, usually readable by every user of the computer, so an exported SSH or TLS key was exposed (and ssh refuses a key others can read). The export is written to a new file and renamed into place, so nobody who opened the file the save dialog created can read it through that, and a symlink at the path is replaced rather than written through. On Windows the folder's permissions still apply.
+- An exported file's decoded contents are wiped from memory if the vault locks just as decoding finishes; they were left for the garbage collector to reclaim.
 - A secret file is only accepted at the path its own name and group give, and only if it holds a named secret of a known type. Whoever can write the vault's files (a server, a shared folder) could otherwise copy one secret's file over another's, or into another group, and vlt would open it there. Such files, like damaged ones, fail to open and are left out of the list, which now counts them under it; *Details…* names them (before, only the log knew).
 
 ### Changed
 - Built with Fyne 2.8.2 (was 2.7.3) and age 1.3.2 (was 1.3.1). Building on Linux now also needs `libwayland-dev`.
+- Error messages no longer show internal prefixes such as "store.CopyTo" or "store.Update: write:". Each says what couldn't be done and why in plain words ("Couldn't move the vault: can't create the folder /Volumes/usb/vault: permission denied"), keeping the file's path (for a vault on a server too) and what the server said.
+- Saving a secret whose file another copy of vlt has since given to a differently named secret now names that secret.
+- The auto-lock and clipboard sliders in Settings take effect when you let go of them (or on a tap or key press), not while dragging.
 
 ### Fixed
 - When the vault can't be listed (a lost connection, a permission problem), the list now says why and offers *Retry*; it used to look empty.
@@ -20,6 +24,11 @@ All notable changes to vlt are documented here. The format follows
 - `host:~//vault` and `ssh://host/~//vault` named `/vault` at the server's root instead of `vault` in your home directory. `SSH://` is now read like `ssh://`.
 - A dropped connection or a disk error while reading another copy's `vlt.lock` was reported as "Vault Already Open", and *Open Anyway* then met the same fault. A dropped connection is now retried, and an error that persists is treated like a failure to write the lock: logged, and the vault opens without recording that it is open. A lock file that is damaged, or that you may not read, still counts as open elsewhere.
 - Settings no longer offers to switch to, or move to, the current vault when its location is written another way (an unescaped space in an `ssh://` location saved by an older version, say).
+- A vault location set by `VLT_VAULT_DIR`, or saved by an older version, is shown in the form vlt saves (`me@nas:/srv/vault` for `ssh://me@nas/srv/vault`), like one chosen in Settings, and the error screen no longer offers *Use the Vault on This Computer* when the location already is that vault, written another way.
+- Moving a vault that has another vault in a folder inside it (a backup copy, say) copied that vault's key file into the new location without the rest of it, as if it were a secret. The vault inside is now left where it is.
+- A vault kept in a folder inside your vault is no longer counted under the list as a secret file that couldn't be read.
+- Importing a file whose name is taken by a secret file that can't be read now says so and suggests renaming the file; it showed a decryption error.
+- *Move Vault* could be started again while the vault was still being copied, and *Switch Vault* or *Change Passphrase* could run in the middle of a copy, leaving a half-copied vault, or a copy with the old passphrase's key. While one of the three runs, the others now wait: the button is disabled and the status bar asks you to wait.
 
 ## [0.2.0] - 2026-11-02
 

@@ -37,28 +37,6 @@ func newTestStoreAndKey(t *testing.T, dir string) (*store.Store, *crypto.Identit
 	return s, id
 }
 
-func TestStore_Init_CreatesVaultDir(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	vaultDir := filepath.Join(dir, "myvault")
-	id := testutil.NewTestIdentity(t)
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	s := store.New(id, vaultDir, log)
-
-	if err := s.Init(); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-
-	info, err := os.Stat(vaultDir)
-	if err != nil {
-		t.Fatalf("expected vault directory to exist: %v", err)
-	}
-	if !info.IsDir() {
-		t.Fatal("expected vault path to be a directory")
-	}
-}
-
 func TestStore_SaveAndGet_Password(t *testing.T) {
 	t.Parallel()
 
@@ -216,7 +194,7 @@ func TestStore_Delete_ReturnsErrNotFoundForMissing(t *testing.T) {
 	}
 }
 
-func TestStore_List_ReturnsAllSecrets(t *testing.T) {
+func TestStore_Contents_ReturnsAllSecrets(t *testing.T) {
 	t.Parallel()
 
 	s := newTestStore(t)
@@ -234,19 +212,19 @@ func TestStore_List_ReturnsAllSecrets(t *testing.T) {
 		}
 	}
 
-	got, err := s.List(ctx)
+	got, err := s.Contents(ctx)
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("Contents: %v", err)
 	}
 
-	if len(got) != 3 {
-		t.Fatalf("expected 3 secrets, got %d", len(got))
+	if len(got.Secrets) != 3 {
+		t.Fatalf("expected 3 secrets, got %d", len(got.Secrets))
 	}
 }
 
-// TestStore_List_IgnoresLeftoverTempFiles is a regression guard: List filters
+// TestStore_Contents_IgnoresLeftoverTempFiles is a regression guard: Contents filters
 // on the .age extension, which temp files written by writeFileAtomic never have.
-func TestStore_List_IgnoresLeftoverTempFiles(t *testing.T) {
+func TestStore_Contents_IgnoresLeftoverTempFiles(t *testing.T) {
 	t.Parallel()
 
 	s := newTestStore(t)
@@ -261,28 +239,28 @@ func TestStore_List_IgnoresLeftoverTempFiles(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	got, err := s.List(ctx)
+	got, err := s.Contents(ctx)
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("Contents: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("expected 1 secret, got %d", len(got))
+	if len(got.Secrets) != 1 {
+		t.Fatalf("expected 1 secret, got %d", len(got.Secrets))
 	}
 }
 
-func TestStore_List_ReturnsEmptyForNewVault(t *testing.T) {
+func TestStore_Contents_ReturnsEmptyForNewVault(t *testing.T) {
 	t.Parallel()
 
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	got, err := s.List(ctx)
+	got, err := s.Contents(ctx)
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("Contents: %v", err)
 	}
 
-	if len(got) != 0 {
-		t.Fatalf("expected 0 secrets, got %d", len(got))
+	if len(got.Secrets) != 0 {
+		t.Fatalf("expected 0 secrets, got %d", len(got.Secrets))
 	}
 }
 
@@ -388,6 +366,73 @@ func TestStore_Update_RefusesSlugCollision(t *testing.T) {
 	}
 }
 
+// A refused Create says which secret holds the file, so a caller can offer
+// to replace it without reading the vault again.
+func TestStore_Create_ExistsErrorCarriesTheSecretThere(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.Create(ctx, testutil.PasswordSecret("GitHub Key", "original", "work")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.Create(ctx, testutil.FileSecret("github-key", "github-key", "eA==", "Work"))
+	var exists *store.ExistsError
+	if !errors.As(err, &exists) || !errors.Is(err, store.ErrSecretExists) {
+		t.Fatalf("Create = %v; want an *ExistsError that is ErrSecretExists", err)
+	}
+	if exists.Existing == nil || exists.Existing.Name != "GitHub Key" || exists.Existing.Type != store.TypePassword || exists.Existing.Value != "original" {
+		t.Fatalf("Existing = %+v; want the stored GitHub Key", exists.Existing)
+	}
+}
+
+// A file that is taken but can't be read still refuses Create; the error
+// carries no secret, and says why the file couldn't be read.
+func TestStore_Create_ExistsErrorWithoutAReadableSecret(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	ctx := context.Background()
+	taken := filepath.Join(s.Dir(), "work", "key.age")
+	if err := os.MkdirAll(filepath.Dir(taken), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(taken, []byte("damaged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.Create(ctx, testutil.PasswordSecret("key", "new", "work"))
+	var exists *store.ExistsError
+	if !errors.As(err, &exists) || !errors.Is(err, store.ErrSecretExists) {
+		t.Fatalf("Create = %v; want an *ExistsError that is ErrSecretExists", err)
+	}
+	if exists.Existing != nil || exists.ReadErr == nil {
+		t.Fatalf("Existing = %+v, ReadErr = %v; want no secret and the read error", exists.Existing, exists.ReadErr)
+	}
+	if data, _ := os.ReadFile(taken); string(data) != "damaged" {
+		t.Fatal("the file that was there was overwritten")
+	}
+}
+
+// An Update refused because another name holds the file says which secret
+// that is.
+func TestStore_Update_ExistsErrorCarriesTheSecretThere(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.Create(ctx, testutil.PasswordSecret("GitHub Key", "original", "work")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.Update(ctx, testutil.PasswordSecret("github-key", "intruder", "work"))
+	var exists *store.ExistsError
+	if !errors.As(err, &exists) || exists.Existing == nil || exists.Existing.Name != "GitHub Key" {
+		t.Fatalf("Update = %v; want an *ExistsError carrying GitHub Key", err)
+	}
+}
+
 func TestStore_Update_ReturnsErrNotFoundForMissing(t *testing.T) {
 	t.Parallel()
 
@@ -465,7 +510,7 @@ func TestStore_VaultStructure_GroupBasedPaths(t *testing.T) {
 	}
 }
 
-func TestStore_List_StopsWhenContextCancelled(t *testing.T) {
+func TestStore_Contents_StopsWhenContextCancelled(t *testing.T) {
 	t.Parallel()
 
 	s := newTestStore(t)
@@ -475,11 +520,71 @@ func TestStore_List_StopsWhenContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	got, err := s.List(ctx)
+	got, err := s.Contents(ctx)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
-	if got != nil {
-		t.Fatalf("a cancelled List must not return partial results, got %d", len(got))
+	if got.Secrets != nil {
+		t.Fatalf("a cancelled Contents must not return partial results, got %d", len(got.Secrets))
+	}
+}
+
+// nestedVault creates a second vault, holding one secret, in the folder
+// "backup" inside the vault at dir (a backup copy kept there, say). Its
+// vlt.age sits where a secret named "vlt" in a group "backup" would.
+func nestedVault(t *testing.T, dir string) {
+	t.Helper()
+	inner := createVault(t, filepath.Join(dir, "backup"))
+	if err := inner.Create(context.Background(), testutil.PasswordSecret("inner", "pw", "work")); err != nil {
+		t.Fatal(err)
+	}
+	inner.Close()
+}
+
+// A vault kept inside another vault's folder is not one of its groups, so
+// its key file is not counted as a secret file that couldn't be read.
+func TestStore_Contents_SkipsAVaultInsideTheVault(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	s := createVault(t, dir)
+	ctx := context.Background()
+	if err := s.Create(ctx, testutil.PasswordSecret("github", "pw", "work")); err != nil {
+		t.Fatal(err)
+	}
+	nestedVault(t, dir)
+
+	got, err := s.Contents(ctx)
+	if err != nil {
+		t.Fatalf("Contents: %v", err)
+	}
+	if len(got.Secrets) != 1 || len(got.Unreadable) != 0 {
+		t.Fatalf("Contents = %v, unreadable %v; want github only, nothing unreadable", names(got.Secrets), got.Unreadable)
+	}
+}
+
+// Copying a vault leaves a vault kept inside its folder behind, rather than
+// copying its key file without its format marker into the new location.
+func TestStore_CopyTo_LeavesAVaultInsideTheVaultBehind(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	s := createVault(t, dir)
+	ctx := context.Background()
+	if err := s.Create(ctx, testutil.PasswordSecret("github", "pw", "work")); err != nil {
+		t.Fatal(err)
+	}
+	nestedVault(t, dir)
+
+	dest := filepath.Join(t.TempDir(), "moved")
+	if err := s.CopyTo(ctx, dest); err != nil {
+		t.Fatalf("CopyTo: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "backup")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the nested vault's folder was copied (stat err = %v)", err)
+	}
+	got, err := openVault(t, dest, testPass).Contents(ctx)
+	if err != nil || len(got.Secrets) != 1 || len(got.Unreadable) != 0 {
+		t.Fatalf("copy: Contents = %v, unreadable %v, %v; want github only", names(got.Secrets), got.Unreadable, err)
 	}
 }

@@ -20,7 +20,7 @@ func checkTOTPSecret(text string) error {
 		return nil
 	}
 	if _, err := totp.Parse(text); err != nil {
-		return fmt.Errorf("TOTP secret: %w", err)
+		return err
 	}
 	return nil
 }
@@ -42,7 +42,7 @@ func (dv *DetailView) totpPanel(secret string) (fyne.CanvasObject, func()) {
 	key, err := totp.Parse(secret)
 	if err != nil {
 		problem := errorText()
-		problem.SetText("Can't make codes: " + err.Error() + ". Correct the TOTP secret and save.")
+		problem.SetText(errorMessage("Can't make codes", err) + ". Correct the TOTP secret and save.")
 		problem.Show()
 		return card(subheading("One-Time Code"), problem), func() {}
 	}

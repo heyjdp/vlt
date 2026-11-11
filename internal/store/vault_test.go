@@ -107,12 +107,12 @@ func TestStore_Unlock_RunsExactlyOneScrypt(t *testing.T) {
 		t.Fatalf("expected exactly one scrypt stanza, in vlt.age; got %d in %v", n, files)
 	}
 
-	listed, err := openVault(t, dir, testPass).List(context.Background())
+	listed, err := openVault(t, dir, testPass).Contents(context.Background())
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("Contents: %v", err)
 	}
-	if len(listed) != 100 {
-		t.Fatalf("expected 100 secrets, got %d", len(listed))
+	if len(listed.Secrets) != 100 {
+		t.Fatalf("expected 100 secrets, got %d", len(listed.Secrets))
 	}
 }
 

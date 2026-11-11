@@ -29,53 +29,35 @@ import (
 const maxFileSize = 10 * 1024 * 1024
 
 // FileOps handles file import and export operations. Store calls run in the
-// background.
+// background, through the session's operations.
 type FileOps struct {
 	window     fyne.Window
 	vaultStore *store.Store
 	log        *slog.Logger
-	run        runner
+	ops        *operations
 	groups     func() []string
 	onSaved    func(*store.Secret)
-	// activity reports user input in the file and form dialogs, which are
-	// outside the instrumented widget tree.
-	activity func()
-	// pending is decoded file content waiting for the user to pick an export
-	// path; dropPending wipes it if the dialog is dismissed by a lock.
-	pending []byte
 }
 
 // NewFileOps creates a file operations handler. groups supplies group
 // suggestions and onSaved is called with each imported secret.
-func NewFileOps(window fyne.Window, s *store.Store, log *slog.Logger, run runner, groups func() []string, onSaved func(*store.Secret)) *FileOps {
+func NewFileOps(window fyne.Window, s *store.Store, log *slog.Logger, ops *operations, groups func() []string, onSaved func(*store.Secret)) *FileOps {
 	return &FileOps{
 		window:     window,
 		vaultStore: s,
 		log:        log,
-		run:        run,
+		ops:        ops,
 		groups:     groups,
 		onSaved:    onSaved,
-		activity:   noActivity,
 	}
 }
 
 // errFileTooLarge is returned for imports over maxFileSize.
 var errFileTooLarge = errors.New("file exceeds the maximum size of 10 MiB")
 
-// ImportFile opens a file picker and imports the selected file as a file secret.
+// ImportFile asks for a file and imports it as a file secret.
 func (fo *FileOps) ImportFile() {
-	fd := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
-		fo.activity()
-		if err != nil {
-			dialog.ShowError(err, fo.window)
-			return
-		}
-		if reader == nil {
-			return // user cancelled
-		}
-		fo.processImport(reader)
-	}, fo.window)
-	fd.Show()
+	fo.ops.pickFile(fo.processImport)
 }
 
 // importedFile is a file read for import, ready to become a file secret.
@@ -109,15 +91,15 @@ func readImport(r io.Reader) ([]byte, error) {
 // It runs in the background: a 10 MiB read plus encoding must not block the
 // UI.
 func prepareImport(reader fyne.URIReadCloser) (importedFile, error) {
-	name := filepath.Base(reader.URI().Name())
+	name := importName(reader)
 	data, err := readImport(reader)
 	closeErr := reader.Close()
 	if err != nil {
-		return importedFile{}, fmt.Errorf("read %q: %w", name, err)
+		return importedFile{}, err
 	}
 	if closeErr != nil {
 		crypto.Wipe(data)
-		return importedFile{}, fmt.Errorf("close %q: %w", name, closeErr)
+		return importedFile{}, closeErr
 	}
 
 	sum := sha256.Sum256(data)
@@ -132,119 +114,89 @@ func prepareImport(reader fyne.URIReadCloser) (importedFile, error) {
 	return f, nil
 }
 
+// importName is the name of the file behind reader, which an imported file
+// secret is given.
+func importName(reader fyne.URIReadCloser) string {
+	return filepath.Base(reader.URI().Name())
+}
+
 // processImport reads the file in the background, then asks for a group and
 // saves it. A read error or an oversized file is reported and nothing is
 // saved.
 func (fo *FileOps) processImport(reader fyne.URIReadCloser) {
-	background(fo.run,
+	start(fo.ops, &operation{doing: fmt.Sprintf("Couldn't import %q", importName(reader))},
 		func(context.Context) (importedFile, error) { return prepareImport(reader) },
-		func(f importedFile, err error) {
-			if err != nil {
-				dialog.ShowError(fmt.Errorf("import failed: %w", err), fo.window)
-				return
-			}
-			fo.askGroup(f)
-		})
+		fo.askGroup)
 }
 
 // askGroup asks which group an imported file belongs to, then saves it.
 func (fo *FileOps) askGroup(f importedFile) {
 	groupEntry := widget.NewSelectEntry(fo.groups())
-	groupEntry.OnChanged = func(string) { fo.activity() }
 	groupEntry.SetPlaceHolder("Group (e.g. work, personal)")
 
-	dialog.ShowForm("Import File — Select Group",
-		"Import", "Cancel",
-		[]*widget.FormItem{
-			widget.NewFormItem("Group", groupEntry),
-		},
-		func(confirmed bool) {
-			fo.activity()
-			if !confirmed {
-				return
-			}
-
-			now := time.Now().UTC()
-			secret := &store.Secret{
-				Version:          1,
-				Type:             store.TypeFile,
-				Name:             f.name,
-				Group:            matchGroup(groupEntry.Text, fo.groups()),
-				CreatedAt:        now,
-				ModifiedAt:       now,
-				OriginalFilename: f.name,
-				MIMEType:         f.mime,
-				Encoding:         "base64",
-				Value:            f.encoded,
-			}
-			fo.importSecret(secret, f)
-		},
-		fo.window,
-	)
+	fo.ops.confirm(&question{
+		title:   "Import File — Select Group",
+		content: widget.NewForm(widget.NewFormItem("Group", groupEntry)),
+		confirm: "Import",
+		dismiss: "Cancel",
+	}, func() {
+		now := time.Now().UTC()
+		secret := &store.Secret{
+			Version:          1,
+			Type:             store.TypeFile,
+			Name:             f.name,
+			Group:            matchGroup(groupEntry.Text, fo.groups()),
+			CreatedAt:        now,
+			ModifiedAt:       now,
+			OriginalFilename: f.name,
+			MIMEType:         f.mime,
+			Encoding:         "base64",
+			Value:            f.encoded,
+		}
+		fo.importSecret(secret, f)
+	})
 }
 
 // importSecret creates an imported file secret in the background, asking
-// before replacing an existing one.
+// before replacing an existing one. The store's refusal carries the secret
+// already there, so asking needs no second read of the vault.
 func (fo *FileOps) importSecret(secret *store.Secret, f importedFile) {
-	background(fo.run,
+	start(fo.ops, &operation{failed: func(err error) {
+		var exists *store.ExistsError
+		if errors.As(err, &exists) {
+			fo.askReplace(secret, exists, f)
+			return
+		}
+		showError(fo.window, fmt.Sprintf("Couldn't import %q", secret.Name), err)
+	}},
 		func(ctx context.Context) (none, error) { return none{}, fo.vaultStore.Create(ctx, secret) },
-		func(_ none, err error) {
-			if errors.Is(err, store.ErrSecretExists) {
-				fo.confirmReplace(secret, f)
-				return
-			}
-			if err != nil {
-				dialog.ShowError(fmt.Errorf("failed to save file secret: %w", err), fo.window)
-				return
-			}
-			fo.importDone(secret, f)
-		})
+		func(none) { fo.importDone(secret, f) })
 }
 
-// confirmReplace asks before overwriting an existing secret with an import.
-// If the file is held by a differently named secret (same slug), replacing
-// is impossible and the user is told to rename instead.
-func (fo *FileOps) confirmReplace(secret *store.Secret, f importedFile) {
-	background(fo.run,
-		func(ctx context.Context) (*store.Secret, error) {
-			return fo.vaultStore.Get(ctx, secret.Name, secret.Group)
-		},
-		func(existing *store.Secret, err error) {
-			if err != nil {
-				dialog.ShowError(fmt.Errorf("import failed: %w", err), fo.window)
-				return
-			}
-			fo.askReplace(secret, existing, f)
-		})
-}
-
-// askReplace shows the replace confirmation for an import whose name is
-// already taken by existing.
-func (fo *FileOps) askReplace(secret, existing *store.Secret, f importedFile) {
-	if existing.Name != secret.Name {
-		dialog.ShowError(fmt.Errorf("cannot import %q: its filename is already used by %q in group %q; rename the file and import again",
-			secret.Name, existing.Name, secret.Group), fo.window)
+// askReplace asks before overwriting the secret that holds an import's
+// file. If that file can't be read, or is held by a differently named
+// secret (same SecretID), replacing is refused and the user is told why.
+func (fo *FileOps) askReplace(secret *store.Secret, exists *store.ExistsError, f importedFile) {
+	existing := exists.Existing
+	if existing == nil {
+		showError(fo.window,
+			fmt.Sprintf("Couldn't import %q: the file already stored under that name in group %q can't be read", secret.Name, secret.Group),
+			fmt.Errorf("%w. vlt leaves that file alone; rename the file and import again", exists.ReadErr))
 		return
 	}
-	dialog.ShowConfirm("Secret already exists",
-		fmt.Sprintf("A %s secret named %q already exists in group %q.\nReplace it with the imported file?", existing.Type, secret.Name, secret.Group),
-		func(replace bool) {
-			fo.activity()
-			if !replace {
-				return
-			}
-			background(fo.run,
-				func(ctx context.Context) (none, error) { return none{}, fo.vaultStore.Update(ctx, secret) },
-				func(_ none, err error) {
-					if err != nil {
-						dialog.ShowError(fmt.Errorf("replace failed: %w", err), fo.window)
-						return
-					}
-					fo.importDone(secret, f)
-				})
-		},
-		fo.window,
-	)
+	if existing.Name != secret.Name {
+		showError(fo.window, fmt.Sprintf("Couldn't import %q", secret.Name),
+			fmt.Errorf("its filename is already used by %q in group %q; rename the file and import again", existing.Name, secret.Group))
+		return
+	}
+	fo.ops.confirm(&question{
+		title:   "Secret already exists",
+		message: fmt.Sprintf("A %s secret named %q already exists in group %q.\nReplace it with the imported file?", existing.Type, secret.Name, secret.Group),
+	}, func() {
+		start(fo.ops, &operation{doing: fmt.Sprintf("Couldn't replace %q", secret.Name)},
+			func(ctx context.Context) (none, error) { return none{}, fo.vaultStore.Update(ctx, secret) },
+			func(none) { fo.importDone(secret, f) })
+	})
 }
 
 // importDone logs and reports a successful import, including the file's
@@ -261,106 +213,68 @@ func (fo *FileOps) importDone(secret *store.Secret, f importedFile) {
 }
 
 // ExportFile decodes a file secret in the background, then asks where to
-// save it and writes it in the background.
+// save it and writes it there (see exportDecoded).
 func (fo *FileOps) ExportFile(secret *store.Secret) {
 	if secret.Type != store.TypeFile {
-		dialog.ShowError(fmt.Errorf("not a file secret"), fo.window)
+		showError(fo.window, fmt.Sprintf("Couldn't export %q", secret.Name), errors.New("it is not a file secret"))
 		return
 	}
 	// Copy what the background work needs: the list's *Secret may be
 	// rewritten by a save on the main goroutine meanwhile.
 	encoded, name, filename := secret.Value, secret.Name, secret.OriginalFilename
 
-	background(fo.run,
-		func(ctx context.Context) ([]byte, error) {
-			data, err := base64.StdEncoding.DecodeString(encoded)
-			if err == nil && ctx.Err() != nil {
-				// The vault locked meanwhile; the result will be dropped.
-				crypto.Wipe(data)
-				return nil, ctx.Err()
-			}
-			return data, err
-		},
-		func(data []byte, err error) {
-			if err != nil {
-				dialog.ShowError(fmt.Errorf("failed to decode file content: %w", err), fo.window)
-				return
-			}
-			fo.askExportPath(name, filename, data)
-		})
+	// If the vault locks before the decoded file is delivered, it is wiped
+	// there (crypto.Wipe as release); once delivered, exportDecoded owns it.
+	startOwned(fo.ops, &operation{doing: fmt.Sprintf("Couldn't export %q", name)},
+		func(context.Context) ([]byte, error) { return base64.StdEncoding.DecodeString(encoded) },
+		func(data []byte) { fo.exportDecoded(name, filename, data) },
+		crypto.Wipe)
 }
 
-// askExportPath shows the save dialog and writes data to the chosen file.
-func (fo *FileOps) askExportPath(name, filename string, data []byte) {
-	fo.dropPending()
-	fo.pending = data
-	fd := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
-		fo.saveExport(writer, err, name, filename, data)
-	}, fo.window)
-
-	fd.SetFileName(filename)
-	if ext := filepath.Ext(filename); ext != "" {
-		fd.SetFilter(storage.NewExtensionFileFilter([]string{ext}))
-	}
-	fd.Show()
-}
-
-// saveExport handles the save dialog's result: it writes data to writer in
-// the background and reports the outcome. If the vault locked while the
-// dialog was open, nothing is written. A failed write removes the partial
-// file where possible, because the destination was already truncated.
-func (fo *FileOps) saveExport(writer fyne.URIWriteCloser, err error, name, filename string, data []byte) {
-	fo.pending = nil // the dialog completed; data is handled (or wiped) below
-	fo.activity()
-	if fo.run.context().Err() != nil {
-		crypto.Wipe(data)
-		if writer != nil {
-			_ = writer.Close()
+// exportDecoded asks where to save data, the decoded file of the secret
+// name, and writes it there in the background, suggesting filename. It is
+// given data once decoding is delivered (a lock before that wipes it
+// instead, see ExportFile), owns it from then on and wipes it whichever way
+// the export ends: cancelled, the save dialog failing, the vault locking
+// while the dialog is open (nothing is written after a lock), or the write
+// finishing or failing.
+func (fo *FileOps) exportDecoded(name, filename string, data []byte) {
+	doing := fmt.Sprintf("Couldn't export %q", name)
+	fo.ops.pickSave(filename, doing, func(w fyne.URIWriteCloser) {
+		if w == nil {
+			crypto.Wipe(data)
+			return
 		}
-		return // the session ended; never write plaintext after a lock
-	}
+		start(fo.ops, &operation{doing: doing},
+			func(context.Context) (int, error) {
+				defer crypto.Wipe(data)
+				return fo.writeFile(w, data)
+			},
+			func(n int) {
+				fo.log.Info("file exported", "name", name, "size", n)
+				dialog.ShowInformation("Export Complete",
+					fmt.Sprintf("Exported %q (%d bytes)", filename, n),
+					fo.window,
+				)
+			})
+	})
+}
+
+// writeFile writes data to the file w names (see writePrivateExport). A
+// failed write removes the partial file where possible, because the
+// destination was already truncated.
+func (fo *FileOps) writeFile(w fyne.URIWriteCloser, data []byte) (int, error) {
+	n, err := fo.writePrivateExport(w, data)
 	if err != nil {
-		crypto.Wipe(data)
-		dialog.ShowError(err, fo.window)
-		return
+		if delErr := storage.Delete(w.URI()); delErr != nil && !errors.Is(delErr, fs.ErrNotExist) {
+			return 0, fmt.Errorf("%w (the file at %s may be incomplete)", err, w.URI().Path())
+		}
 	}
-	if writer == nil {
-		crypto.Wipe(data)
-		return // user cancelled
-	}
-	background(fo.run,
-		func(context.Context) (int, error) {
-			n, err := fo.writePrivateExport(writer, data)
-			if err != nil {
-				if delErr := storage.Delete(writer.URI()); delErr != nil && !errors.Is(delErr, fs.ErrNotExist) {
-					return 0, fmt.Errorf("%w (the file at %s may be incomplete)", err, writer.URI().Path())
-				}
-			}
-			return n, err
-		},
-		func(n int, err error) {
-			if err != nil {
-				dialog.ShowError(fmt.Errorf("export failed: %w", err), fo.window)
-				return
-			}
-			fo.log.Info("file exported", "name", name, "size", n)
-			dialog.ShowInformation("Export Complete",
-				fmt.Sprintf("Exported %q (%d bytes)", filename, n),
-				fo.window,
-			)
-		})
+	return n, err
 }
 
-// dropPending wipes decoded export content whose save dialog never
-// completed (for example because a lock dismissed it).
-func (fo *FileOps) dropPending() {
-	if fo.pending != nil {
-		crypto.Wipe(fo.pending)
-		fo.pending = nil
-	}
-}
-
-// writePrivateExport writes data to the file w names and wipes data. A
+// writePrivateExport writes data to the file w names; the caller wipes
+// data afterwards. A
 // local file on Unix is written so only the user can read it: the save
 // dialog has already created it with the user's umask (often readable by
 // everyone), and anyone who opened it since could read through that
@@ -386,12 +300,10 @@ func (fo *FileOps) writePrivateExport(w fyne.URIWriteCloser, data []byte) (int, 
 				return writeExport(w, data)
 			}
 		}
-		crypto.Wipe(data)
 		_ = w.Close()
 		return 0, fmt.Errorf("write privately: %w", err)
 	}
 	if err := w.Close(); err != nil {
-		crypto.Wipe(data)
 		_ = tmp.Close()
 		_ = os.Remove(tmp.Name())
 		return 0, fmt.Errorf("close: %w", err)
@@ -433,10 +345,9 @@ func (f syncOnClose) Close() error {
 	return f.File.Close()
 }
 
-// writeExport writes data to w and closes it, then wipes data. A failed
-// close is reported, since it can mean the data never reached the disk.
+// writeExport writes data to w and closes it. A failed close is reported,
+// since it can mean the data never reached the disk.
 func writeExport(w io.WriteCloser, data []byte) (int, error) {
-	defer crypto.Wipe(data)
 	_, writeErr := w.Write(data)
 	closeErr := w.Close()
 	if writeErr != nil {

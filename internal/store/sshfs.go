@@ -438,7 +438,7 @@ func (r *remoteFS) prepareTmp(c *sftpConn) error {
 			// Created by someone else, or loosened since: tighten it, or
 			// refuse to write through it.
 			if err := c.client.Chmod(dir, dirPerm); err != nil {
-				c.tmpErr = fmt.Errorf("%s has mode %v and cannot be made private: %w", dir, info.Mode().Perm(), err)
+				c.tmpErr = fmt.Errorf("%w (%s has mode %v and cannot be made private)", err, dir, info.Mode().Perm())
 				return
 			}
 		}

@@ -108,7 +108,7 @@ func issueURL(details string) string {
 func (a *App) aboutDetails() buildDetails {
 	info, ok := debug.ReadBuildInfo()
 	d := readBuildDetails(a.version, info, ok)
-	if loc, err := store.ParseLocation(a.config.VaultDir); err == nil && a.config.VaultDir != "" {
+	if loc := a.settings.Vault(); loc != (store.Location{}) {
 		d.Vault = "local"
 		if loc.IsRemote() {
 			d.Vault = "on a server"
@@ -167,6 +167,6 @@ func (a *App) openURL(link string) {
 	}
 	if err != nil {
 		a.log.Warn("cannot open link", "url", projectURL, "err", err)
-		dialog.ShowError(fmt.Errorf("cannot open the browser: %w; the project is at %s", err, projectURL), a.window)
+		showError(a.window, "Couldn't open the browser", fmt.Errorf("%w; the project is at %s", err, projectURL))
 	}
 }

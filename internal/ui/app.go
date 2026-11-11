@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -35,15 +34,13 @@ type App struct {
 	// latest fetches the newest release; NewApp sets the real checker, and
 	// other constructors leave one that never reaches the network.
 	latest latestRelease
-	// checkingUpdates is true while a check the user asked for runs;
-	// checkedManually records that one has run since start-up, so the
-	// start-up check announces nothing more; pendingRelease is a release the
-	// start-up check found, held until the vault is unlocked. All three are
-	// used on the main goroutine only.
-	checkingUpdates bool
+	// checkedManually records that a check the user asked for has run since
+	// start-up, so the start-up check announces nothing more;
+	// pendingRelease is a release the start-up check found, held until the
+	// vault is unlocked. Both are used on the main goroutine only.
 	checkedManually bool
 	pendingRelease  *update.Release
-	config          Config
+	settings        *Settings
 	log             *slog.Logger
 	// session holds the open (or waiting) store and runs the auto-lock.
 	session  *session[*store.Store]
@@ -52,6 +49,13 @@ type App struct {
 	// to lower the scrypt work factor; production passes none.
 	storeOpts []store.Option
 	run       runner
+	// pick shows the file and folder choosers (Fyne's dialogs; tests
+	// answer them).
+	pick picker
+	// ops runs what is asked of the app itself (update checks) and
+	// sessionOps what is done to the open vault (nil while locked).
+	ops        *operations
+	sessionOps *operations
 	// screenGen identifies the latest showUnlockScreen call; older vault
 	// checks that complete late are ignored.
 	screenGen int
@@ -70,8 +74,8 @@ type App struct {
 
 // NewApp creates the main application controller. version is the build's
 // version, shown in the About dialog.
-func NewApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logger, version string) *App {
-	app := newVersionedApp(version, fyneApp, window, config, log, goroutineRunner(), realTimers)
+func NewApp(fyneApp fyne.App, window fyne.Window, settings *Settings, log *slog.Logger, version string) *App {
+	app := newVersionedApp(version, fyneApp, window, settings, log, goroutineRunner(), realTimers)
 	app.startUpdateChecks(update.NewChecker().Latest)
 	return app
 }
@@ -79,25 +83,27 @@ func NewApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logge
 // newApp creates the controller with an explicit runner, timer factory and
 // store options (tests run work inline, fire timers by hand, and use a cheap
 // scrypt work factor).
-func newApp(fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logger, run runner, timers timerFactory, storeOpts ...store.Option) *App {
-	return newVersionedApp("", fyneApp, window, config, log, run, timers, storeOpts...)
+func newApp(fyneApp fyne.App, window fyne.Window, settings *Settings, log *slog.Logger, run runner, timers timerFactory, storeOpts ...store.Option) *App {
+	return newVersionedApp("", fyneApp, window, settings, log, run, timers, storeOpts...)
 }
 
 // newVersionedApp is newApp with the build's version, set before the first
 // screen starts any background work.
-func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, config Config, log *slog.Logger, run runner, timers timerFactory, storeOpts ...store.Option) *App {
+func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, settings *Settings, log *slog.Logger, run runner, timers timerFactory, storeOpts ...store.Option) *App {
 	app := &App{
 		version:   version,
 		open:      fyneApp.OpenURL,
 		latest:    noUpdateCheck,
 		fyneApp:   fyneApp,
 		window:    window,
-		config:    config,
+		settings:  settings,
 		log:       log,
 		run:       run,
 		newTimer:  timers,
 		storeOpts: storeOpts,
+		pick:      fynePicker{window: window},
 	}
+	app.ops = newOperations(window, run, nil, app.resetLockTimer, app.pick)
 
 	// Quitting is a lock-equivalent for the clipboard: the system clipboard
 	// outlives the process, so a copied secret is cleared first. Closing the
@@ -118,7 +124,7 @@ func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, confi
 		),
 	))
 
-	app.session = newSession[*store.Store](timers, fyne.Do, app.lockTimeout, sessionCallbacks{
+	app.session = newSession[*store.Store](timers, fyne.Do, settings.LockTimeout, sessionCallbacks{
 		Warn: app.showLockWarning,
 		// The session has already closed the store (zeroing its key);
 		// Lock returns to the unlock screen.
@@ -128,8 +134,7 @@ func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, confi
 		},
 	})
 	app.statusBar = caption("Locked")
-	app.clipboard = newClipboardClearer(fyneApp.Clipboard(), app.statusBar,
-		func() time.Duration { return time.Duration(app.config.ClipboardTTLs) * time.Second }, timers)
+	app.clipboard = newClipboardClearer(fyneApp.Clipboard(), app.statusBar, settings.ClipboardTTL, timers)
 	app.showUnlockScreen()
 
 	return app
@@ -144,9 +149,19 @@ func (a *App) showUnlockScreen() {
 
 	a.screenGen++
 	gen := a.screenGen
-	dir := a.config.VaultDir
+	dir := a.settings.Vault().String()
+	// A location that does not parse is shown as given, with the reason.
+	text, unusable := a.settings.UnusableVault()
+	if unusable != nil {
+		dir = text
+	}
 	background(a.run,
-		func(ctx context.Context) (bool, error) { return store.Exists(ctx, dir, a.storeOpts...) },
+		func(ctx context.Context) (bool, error) {
+			if unusable != nil {
+				return false, unusable
+			}
+			return store.Exists(ctx, dir, a.storeOpts...)
+		},
 		func(exists bool, err error) {
 			if gen != a.screenGen {
 				return // superseded by a later check (vault switch, relock)
@@ -154,13 +169,13 @@ func (a *App) showUnlockScreen() {
 			switch {
 			case err != nil:
 				// Never offer to create a vault over a directory we cannot inspect.
-				a.setScreen(a.vaultErrorContent(err))
+				a.setScreen(a.vaultErrorContent(dir, err))
 			case exists:
 				a.unlockScreen = NewUnlockScreen(a.window, dir, a.onUnlock)
 				a.setScreen(a.unlockScreen.Content())
 			default:
 				var onOpen, onServer func()
-				if !a.config.FromEnv.VaultDir { // VLT_VAULT_DIR fixes the location
+				if _, fixed := a.settings.SetByEnv(SettingVault); !fixed {
 					onOpen, onServer = a.chooseExistingVault, a.chooseServerVault
 				}
 				a.createScreen = NewCreateScreen(dir, a.onCreate, onOpen, onServer)
@@ -184,46 +199,31 @@ func (a *App) statusRow() fyne.CanvasObject {
 			container.New(layout.NewCustomPaddedLayout(0, 0, 6, 6), a.statusBar)))
 }
 
-// vaultErrorContent explains why the vault cannot be used and offers a
-// retry (for example after fixing permissions, or once the server is back),
-// and, for a vault elsewhere, a way back to the default local vault.
-func (a *App) vaultErrorContent(err error) fyne.CanvasObject {
+// vaultErrorContent explains why the vault at dir cannot be used and offers
+// a retry (for example after fixing permissions, or once the server is
+// back), and, for a vault elsewhere, a way back to the default local vault.
+func (a *App) vaultErrorContent(dir string, err error) fyne.CanvasObject {
 	heading := "Cannot read the vault directory"
 	if isServerError(err) {
 		heading = "Cannot reach the vault's server"
 	}
 	title := subheading(heading)
 	title.Alignment = fyne.TextAlignCenter
-	msg := muted(fmt.Sprintf("%s\n\n%s", a.config.VaultDir, userMessage(err)))
+	msg := muted(fmt.Sprintf("%s\n\n%s", dir, errorMessage("", err)))
 	retry := widget.NewButtonWithIcon("Retry", theme.ViewRefreshIcon(), a.showUnlockScreen)
 	retry.Importance = widget.HighImportance
 	icon := container.NewCenter(fixedHeight(fixedWidth(widget.NewIcon(theme.ErrorIcon()), 40), 40))
 	objects := []fyne.CanvasObject{icon, title, msg, retry}
-	if def := a.config.DefaultVaultDir; def != "" && def != a.config.VaultDir && !a.config.FromEnv.VaultDir {
+	if def, ok := a.settings.DefaultVault(); ok {
 		local := widget.NewButtonWithIcon("Use the Vault on This Computer", theme.ComputerIcon(), func() {
-			a.log.Info("switching to the default vault location", "dir", def)
-			a.config.VaultDir = def
+			a.log.Info("switching to the default vault location", "dir", def.String())
+			a.settings.ProposeVault(def)
 			a.showUnlockScreen()
 		})
 		local.Importance = widget.LowImportance
 		objects = append(objects, local)
 	}
 	return centeredCard(createFormWidth, objects...)
-}
-
-// userMessage is err's text without the "store.Func: " prefixes that say
-// where in the code it came from; the rest is written for people.
-func userMessage(err error) string {
-	return storePrefix.ReplaceAllString(err.Error(), "")
-}
-
-// storePrefix matches the store package's error prefixes ("store.Exists: ").
-var storePrefix = regexp.MustCompile(`store\.[A-Za-z]+( "[^"]*")?: `)
-
-// isServerError reports whether err came from reaching a vault's server.
-func isServerError(err error) bool {
-	return errors.Is(err, store.ErrUnreachable) || errors.Is(err, store.ErrConnectionLost) ||
-		errors.Is(err, store.ErrServerUnsupported)
 }
 
 // openResult is the outcome of a background unlock or create.
@@ -242,7 +242,7 @@ type openResult struct {
 func (a *App) onUnlock(passphrase string) {
 	screen := a.unlockScreen
 	screen.SetBusy(true)
-	dir := a.config.VaultDir
+	dir := a.settings.Vault().String()
 	background(a.run,
 		func(ctx context.Context) (openResult, error) {
 			s, err := store.Open(ctx, dir, passphrase, a.log, a.storeOpts...)
@@ -276,9 +276,9 @@ func (a *App) onUnlock(passphrase string) {
 			case errors.Is(err, store.ErrKeyMissing):
 				screen.ShowError("This vault's key file (vlt.age) is missing, so its secrets cannot be decrypted. Restore vlt.age from a backup.")
 			case isServerError(err):
-				screen.ShowError(userMessage(err))
+				screen.ShowError(errorMessage("", err))
 			case err != nil:
-				screen.ShowError("Failed to open vault: " + err.Error())
+				screen.ShowError(errorMessage("Couldn't open the vault", err))
 			default:
 				a.unlockedOrAsk(r, screen.SetBusy, func() bool { return a.unlockScreen == screen })
 			}
@@ -294,7 +294,7 @@ func (a *App) chooseServerVault() {
 	entry.Validator = func(s string) error {
 		loc, err := store.ParseLocation(s)
 		if err != nil {
-			return err
+			return errors.New(errorMessage("", err))
 		}
 		if !loc.IsRemote() {
 			return errors.New("enter host:/path or ssh://host/path")
@@ -318,7 +318,7 @@ func (a *App) chooseServerVault() {
 				return
 			}
 			a.log.Info("using a vault on a server", "location", loc.String())
-			a.config.VaultDir = loc.String()
+			a.settings.ProposeVault(loc)
 			a.showUnlockScreen()
 		}, a.window)
 	form.Resize(fyne.NewSize(520, form.MinSize().Height))
@@ -328,16 +328,7 @@ func (a *App) chooseServerVault() {
 
 // chooseExistingVault asks for a folder that already holds a vault.
 func (a *App) chooseExistingVault() {
-	fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
-		if err != nil {
-			dialog.ShowError(err, a.window)
-			return
-		}
-		if uri != nil {
-			a.openExistingVault(uri.Path())
-		}
-	}, a.window)
-	fd.Show()
+	a.ops.pickFolder(a.openExistingVault)
 }
 
 // openExistingVault switches to the vault in dir and shows its unlock
@@ -360,10 +351,10 @@ func (a *App) openExistingVault(dir string) {
 			screen.SetBusy(false)
 			switch {
 			case err != nil:
-				screen.ShowError(fmt.Sprintf("Cannot read %s: %v", dir, err))
+				screen.ShowError(errorMessage("Couldn't look for a vault in "+dir, err))
 			case found.vault:
 				a.log.Info("opening existing vault", "dir", dir)
-				a.config.VaultDir = dir
+				a.settings.ProposeVault(store.Location{Path: dir})
 				a.showUnlockScreen()
 			case found.inner != "":
 				screen.ShowError(fmt.Sprintf("No vault was found in %s, but %s contains one. Open that folder instead.", dir, found.inner))
@@ -410,7 +401,7 @@ func checkFolder(ctx context.Context, dir string) (folderCheck, error) {
 func (a *App) onCreate(passphrase string) {
 	screen := a.createScreen
 	screen.SetBusy(true)
-	dir := a.config.VaultDir
+	dir := a.settings.Vault().String()
 	background(a.run,
 		func(ctx context.Context) (openResult, error) {
 			s, err := store.Create(ctx, dir, passphrase, a.log, a.storeOpts...)
@@ -428,7 +419,7 @@ func (a *App) onCreate(passphrase string) {
 			}
 			screen.SetBusy(false)
 			if err != nil {
-				screen.ShowError("Failed to create vault: " + err.Error())
+				screen.ShowError(errorMessage("Couldn't create the vault", err))
 				return
 			}
 			a.unlockedOrAsk(r, screen.SetBusy, func() bool { return a.createScreen == screen })
@@ -512,14 +503,8 @@ func (a *App) unlocked(s *store.Store) {
 	// the vault locks.
 	ctx := a.session.Begin(s)
 	a.unlockScreen, a.createScreen = nil, nil
-	a.log.Info("vault unlocked", "dir", a.config.VaultDir)
-	if !a.config.FromEnv.VaultDir {
-		// The location is remembered once a vault has been opened or created
-		// there, so a mistyped path never sticks. The default location is
-		// saved too: it depends on the environment (XDG_DATA_HOME), which
-		// can differ between a terminal and the desktop's app menu.
-		SaveVaultDir(a.fyneApp.Preferences(), a.config.VaultDir)
-	}
+	a.log.Info("vault unlocked", "dir", a.settings.Vault().String())
+	a.settings.CommitVault()
 
 	a.showMainView(s, a.run.withContext(ctx))
 	if loc := s.Location(); loc.IsRemote() {
@@ -541,7 +526,9 @@ func (a *App) unlocked(s *store.Store) {
 // auto-lock may clear concurrently. work is bound to the session context:
 // work still in flight when the vault locks has its result dropped.
 func (a *App) showMainView(s *store.Store, work runner) {
-	a.detailView = NewDetailView(a.window, s, a.clipboard.Copy, a.statusBar, a.log, work)
+	a.sessionOps = newOperations(a.window, work, a.statusBar, a.resetLockTimer, a.pick)
+	ops := a.sessionOps
+	a.detailView = NewDetailView(a.window, s, a.clipboard.Copy, a.statusBar, a.log, ops)
 	a.detailView.newTimer = a.newTimer
 	a.secretList = NewSecretList(a.window, s, a.detailView, a.log, work)
 
@@ -554,7 +541,7 @@ func (a *App) showMainView(s *store.Store, work runner) {
 		a.secretList.Upsert(sec)
 		a.detailView.RefreshIfShowing(sec)
 	}
-	fileOps := NewFileOps(a.window, s, a.log, work, a.secretList.Groups, onImported)
+	fileOps := NewFileOps(a.window, s, a.log, ops, a.secretList.Groups, onImported)
 	a.detailView.SetFileOps(fileOps)
 
 	toolButton := func(label string, icon fyne.Resource, tapped func()) *widget.Button {
@@ -572,7 +559,7 @@ func (a *App) showMainView(s *store.Store, work runner) {
 				toolButton("Add Password", keyIcon, a.detailView.ShowNewPassword),
 				toolButton("Add Record", theme.AccountIcon(), a.detailView.ShowNewRecord),
 				toolButton("Import File", theme.UploadIcon(), fileOps.ImportFile),
-				toolButton("Settings", theme.SettingsIcon(), func() { a.openSettings(s, work) }),
+				toolButton("Settings", theme.SettingsIcon(), func() { a.openSettings(s, ops) }),
 				lockBtn,
 			)), 4),
 		widget.NewSeparator(),
@@ -606,10 +593,8 @@ func (a *App) showMainView(s *store.Store, work runner) {
 			a.tracker.instrument(panel)
 		}
 	}
-	// Dialog buttons and file pickers are not part of the instrumented
-	// tree; components report activity from their callbacks instead.
-	a.detailView.activity = a.resetLockTimer
-	fileOps.activity = a.resetLockTimer
+	// Dialogs and file pickers are not part of the instrumented tree; the
+	// session's operations report the answers to them.
 	a.window.Canvas().SetOnTypedKey(func(*fyne.KeyEvent) { a.resetLockTimer() })
 	a.window.Canvas().SetOnTypedRune(func(rune) { a.resetLockTimer() })
 
@@ -637,28 +622,13 @@ func (a *App) Lock() {
 	})
 }
 
-// openSettings shows the Settings screen in the detail panel, wired to save
-// changes and relock when needed.
-func (a *App) openSettings(s *store.Store, work runner) *SettingsScreen {
-	settings := NewSettingsScreen(a.window, &a.config, s, a.statusBar, a.log, work, a.Lock)
-	settings.activity = a.resetLockTimer
-	settings.save = a.saveSetting
+// openSettings shows the Settings screen in the detail panel, wired to
+// relock when needed.
+func (a *App) openSettings(s *store.Store, ops *operations) *SettingsScreen {
+	settings := NewSettingsScreen(a.window, a.settings, s, a.statusBar, a.log, ops, a.Lock)
 	settings.checkUpdates = a.checkForUpdates
 	a.detailView.ShowContent(settings.Content())
 	return settings
-}
-
-// saveSetting persists one setting the user changed in Settings.
-func (a *App) saveSetting(setting string) {
-	prefs := a.fyneApp.Preferences()
-	switch setting {
-	case prefLockTimeout:
-		SaveLockTimeout(prefs, a.config.LockTimeoutMs)
-	case prefClipboardTTL:
-		SaveClipboardTTL(prefs, a.config.ClipboardTTLs)
-	case prefCheckUpdates:
-		prefs.SetBool(prefCheckUpdates, a.config.CheckUpdates)
-	}
 }
 
 // dropSession releases the references vlt holds to decrypted secrets: it
@@ -671,13 +641,16 @@ func (a *App) saveSetting(setting string) {
 // its own copy until it completes and its result is dropped. It runs on the
 // main goroutine.
 func (a *App) dropSession() {
+	if a.sessionOps != nil {
+		a.sessionOps.end() // wipes an export waiting on its save dialog
+	}
 	if a.detailView != nil {
 		a.detailView.clear()
 	}
 	if a.secretList != nil {
 		a.secretList.clear()
 	}
-	a.secretList, a.detailView, a.mainContent, a.tracker = nil, nil, nil, nil
+	a.secretList, a.detailView, a.mainContent, a.tracker, a.sessionOps = nil, nil, nil, nil, nil
 	a.window.Canvas().SetOnTypedKey(nil)
 	a.window.Canvas().SetOnTypedRune(nil)
 }
@@ -707,14 +680,6 @@ func (a *App) quit() {
 // quitWait bounds how long quitting waits for a vault on a server to
 // release its lock; a dead network must not stop vlt from quitting.
 const quitWait = 3 * time.Second
-
-// lockTimeout returns the configured auto-lock timeout; 0 disables it.
-func (a *App) lockTimeout() time.Duration {
-	if a.config.LockTimeoutMs <= 0 {
-		return 0
-	}
-	return time.Duration(a.config.LockTimeoutMs) * time.Millisecond
-}
 
 // resetLockTimer restarts the inactivity countdown. It is called on every
 // user input (see activityTracker) on the main goroutine, and re-reads the

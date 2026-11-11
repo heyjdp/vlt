@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -40,31 +39,30 @@ func (a *App) startUpdateChecks(latest latestRelease) {
 // and a result that arrives after the vault locked is dropped, so no dialog
 // from the session appears over the unlock screen.
 func (a *App) checkForUpdates() {
-	if a.checkingUpdates {
-		return
-	}
-	a.checkingUpdates = true
-	a.checkedManually = true // the start-up check has nothing left to announce
+	// The start-up check has nothing left to announce (already true if a
+	// check is running, which refuses this one).
+	a.checkedManually = true
 	gen := a.session.Gen()
-
-	progress := dialog.NewCustomWithoutButtons("Checking for Updates",
-		container.NewVBox(muted("Asking GitHub for the latest release…"), widget.NewProgressBarInfinite()), a.window)
-	progress.Show()
-	background(a.run, a.latest, func(rel update.Release, err error) {
-		a.checkingUpdates = false
-		progress.Hide()
-		if !a.session.Current(gen) { // the vault locked meanwhile
-			return
+	// The app's operations are not bound to a session (a check can run
+	// while locked), so a result is dropped here once the session changed.
+	show := func(rel update.Release, err error) {
+		if a.session.Current(gen) {
+			a.showUpdateResult(rel, err)
 		}
-		a.showUpdateResult(rel, err)
-	})
+	}
+	start(a.ops, &operation{
+		kind:     opUpdateCheck,
+		title:    "Checking for Updates",
+		progress: "Asking GitHub for the latest release…",
+		failed:   func(err error) { show(update.Release{}, err) },
+	}, a.latest, func(rel update.Release) { show(rel, nil) })
 }
 
 // showUpdateResult reports the outcome of a check the user asked for.
 func (a *App) showUpdateResult(rel update.Release, err error) {
 	if err != nil {
 		a.log.Warn("update check failed", "err", err)
-		dialog.ShowError(errors.New("cannot check for updates: "+updateErrorText(err)), a.window)
+		showError(a.window, "Couldn't check for updates", err)
 		return
 	}
 	version := a.versionName()
@@ -79,18 +77,6 @@ func (a *App) showUpdateResult(rel update.Release, err error) {
 		a.showRelease(rel, "Latest Release",
 			fmt.Sprintf("This is a development build (%s), so it can't be compared. The latest release is vlt %s.", version, rel.Tag))
 	}
-}
-
-// updateErrorText describes a failed check for people: the update
-// package's own errors as they are, anything else (a network error) without
-// the function prefix.
-func updateErrorText(err error) string {
-	for _, known := range []error{update.ErrNoRelease, update.ErrRateLimited} {
-		if errors.Is(err, known) {
-			return known.Error()
-		}
-	}
-	return strings.TrimPrefix(err.Error(), "update.Latest: ")
 }
 
 // showUpdateAvailable offers a release newer than this build.
@@ -112,15 +98,12 @@ func (a *App) showRelease(rel update.Release, title, intro string) {
 		scroll.SetMinSize(fyne.NewSize(0, 180))
 		objects = append(objects, subheading("Release notes"), card(scroll))
 	}
-	d := dialog.NewCustomConfirm(title, "Open Release Page", "Close",
-		fixedWidth(container.NewVBox(objects...), 440),
-		func(open bool) {
-			a.resetLockTimer() // answering a dialog counts as activity
-			if open {
-				a.openURL(rel.PageURL())
-			}
-		}, a.window)
-	d.Show()
+	a.ops.confirm(&question{
+		title:   title,
+		content: fixedWidth(container.NewVBox(objects...), 440),
+		confirm: "Open Release Page",
+		dismiss: "Close",
+	}, func() { a.openURL(rel.PageURL()) })
 }
 
 // versionName is the build's version, or "dev" when none was set.
@@ -137,7 +120,7 @@ func (a *App) versionName() string {
 // takes the focus from the passphrase entry. A failed check is only logged:
 // it must never get in the way of unlocking.
 func (a *App) checkAtStartup() {
-	if !a.config.CheckUpdates {
+	if !a.settings.CheckUpdates() {
 		return
 	}
 	background(a.run, a.latest, func(rel update.Release, err error) {
@@ -149,7 +132,7 @@ func (a *App) checkAtStartup() {
 			return
 		}
 		// Announce each release once: only one newer than the last announced.
-		if last := a.fyneApp.Preferences().String(prefUpdateNotified); last != "" {
+		if last := a.settings.AnnouncedRelease(); last != "" {
 			if newer, ok := update.IsNewer(last, rel.Tag); ok && !newer {
 				return
 			}
@@ -169,6 +152,6 @@ func (a *App) announceRelease() {
 	}
 	rel := *a.pendingRelease
 	a.pendingRelease = nil
-	a.fyneApp.Preferences().SetString(prefUpdateNotified, rel.Tag)
+	a.settings.SetAnnouncedRelease(rel.Tag)
 	a.showUpdateAvailable(rel)
 }

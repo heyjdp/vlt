@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"path"
-	"strings"
 
 	"github.com/heyjdp/vlt/internal/crypto"
 )
@@ -171,57 +169,4 @@ var errNotASecret = errors.New("file decrypts to something other than a secret (
 func isSecretEnvelope(plaintext []byte) bool {
 	trimmed := bytes.TrimSpace(plaintext)
 	return len(trimmed) > 0 && trimmed[0] == '{' && json.Valid(trimmed)
-}
-
-// secretFiles returns the vault-relative path of every .age file in a group
-// directory, in directory order. A subdirectory holding a format marker or a
-// migration in progress is another vault, not a group, so its files are not
-// counted, probed or migrated. Other nested vaults (format 1, or missing
-// vlt.json) can't be told from a group by layout alone, because a secret
-// named "vlt" is stored in its group as vlt.age; isSecretEnvelope keeps
-// their files from being taken for secrets.
-func secretFiles(fsys vaultFS) ([]string, error) {
-	groups, err := fsys.ReadDir(".")
-	if err != nil {
-		return nil, err
-	}
-	var paths []string
-	for _, g := range groups {
-		if !isGroupDir(g) {
-			continue
-		}
-		entries, err := fsys.ReadDir(g.Name())
-		if err != nil {
-			return nil, err
-		}
-		if hasVaultMarker(entries) {
-			continue
-		}
-		for _, e := range entries {
-			if !e.IsDir() && path.Ext(e.Name()) == ".age" {
-				paths = append(paths, path.Join(g.Name(), e.Name()))
-			}
-		}
-	}
-	return paths, nil
-}
-
-// isGroupDir reports whether a vault directory entry can be a group: a
-// directory whose name does not start with a dot. Group directories are
-// slugs ([a-z0-9-]), so dot-folders are never groups; vlt's own temp folder
-// on a server (.vlt-tmp) and folders such as .git are skipped.
-func isGroupDir(e fs.DirEntry) bool {
-	return e.IsDir() && !strings.HasPrefix(e.Name(), ".")
-}
-
-// hasVaultMarker reports whether a directory with these entries holds a
-// format marker or a migration in progress. Neither name can be a secret's
-// file, so such a directory is a vault, never a group.
-func hasVaultMarker(entries []fs.DirEntry) bool {
-	for _, e := range entries {
-		if e.Name() == formatFile || e.Name() == migratingFile {
-			return true
-		}
-	}
-	return false
 }

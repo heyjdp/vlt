@@ -97,13 +97,20 @@ func writeFileExclusive(path string, data []byte) (err error) {
 		return fmt.Errorf("writeFileExclusive: %w", linkErr)
 	default:
 		if err := createExclusive(path, data); err != nil {
-			return fmt.Errorf("writeFileExclusive: link unsupported (%w); fallback: %w", linkErr, err)
+			return linkFallbackError(linkErr, err)
 		}
 	}
 	if err := syncDir(dir); err != nil {
 		return fmt.Errorf("writeFileExclusive: %w", err)
 	}
 	return nil
+}
+
+// linkFallbackError reports that the hard link failed (linkErr) and so did
+// creating the file directly instead (err). Each cause is a clause of its
+// own, with no text wrapped around it.
+func linkFallbackError(linkErr, err error) error {
+	return fmt.Errorf("writeFileExclusive: %w; creating the file directly also failed: %w", linkErr, err)
 }
 
 // createExclusive creates path with O_EXCL and writes data, removing the file
