@@ -113,13 +113,13 @@ func (o options) kdf() {
 // decryptWithPassphrase runs crypto.DecryptWithPassphrase (one scrypt).
 func (o options) decryptWithPassphrase(passphrase string, data []byte) ([]byte, error) {
 	o.kdf()
-	return crypto.DecryptWithPassphrase(passphrase, data) //nolint:wrapcheck // callers wrap
+	return crypto.DecryptWithPassphrase(passphrase, data) // callers wrap
 }
 
 // wrap runs crypto.WrapIdentity (one scrypt) at the configured work factor.
 func (o options) wrap(passphrase string, id *crypto.Identity) ([]byte, error) {
 	o.kdf()
-	return crypto.WrapIdentity(passphrase, id, o.workFactor) //nolint:wrapcheck // callers wrap
+	return crypto.WrapIdentity(passphrase, id, o.workFactor) // callers wrap
 }
 
 // formatMarker is the JSON schema of vlt.json.

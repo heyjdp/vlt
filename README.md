@@ -307,7 +307,7 @@ make check
 
 Use golangci-lint v2.14 or later: earlier releases cannot read the export data of the Go 1.27 standard library this module's toolchain uses, and fail with "export data version" errors.
 
-The linter set (`.golangci.yml`) is golangci-lint's `standard` set plus `bodyclose`, `dupl`, `errorlint`, `gocritic`, `gosec`, `misspell`, `nilerr`, `revive`, `unconvert` and `unparam`. Two gosec rule groups are excluded for `internal/store`, with the reasons recorded in the config: file paths there are slugified names inside the user's vault directory, and the secret envelope's `password` field exists to be encrypted.
+The linter set (`.golangci.yml`) is golangci-lint's `standard` set plus `bodyclose`, `dupl`, `errorlint`, `gocritic`, `gosec`, `misspell`, `nilerr`, `nolintlint`, `revive`, `unconvert` and `unparam`. A `//nolint` directive must name its linter and give a reason (`//nolint:gosec // why`), and `nolintlint` reports one that no longer suppresses anything, so remove it. It can't see a directive for a linter that isn't enabled, so name only enabled ones. Two gosec rule groups are excluded for `internal/store`, with the reasons recorded in the config: file paths there are slugified names inside the user's vault directory, and the secret envelope's `password` field exists to be encrypted.
 
 ### Continuous integration
 

@@ -70,24 +70,24 @@ type localFS struct{ root string }
 func (l localFS) abs(name string) string { return filepath.Join(l.root, filepath.FromSlash(name)) }
 
 func (l localFS) ReadFile(name string) ([]byte, error) {
-	return os.ReadFile(l.abs(name)) //nolint:wrapcheck // *PathError already names the file
+	return os.ReadFile(l.abs(name)) // *PathError already names the file
 }
 
 func (l localFS) ReadDir(name string) ([]fs.DirEntry, error) {
-	return os.ReadDir(l.abs(name)) //nolint:wrapcheck // *PathError already names the file
+	return os.ReadDir(l.abs(name)) // *PathError already names the file
 }
 
 func (l localFS) Stat(name string) (fs.FileInfo, error) {
-	return os.Stat(l.abs(name)) //nolint:wrapcheck // *PathError already names the file
+	return os.Stat(l.abs(name)) // *PathError already names the file
 }
 
 func (l localFS) Remove(name string) error {
-	return os.Remove(l.abs(name)) //nolint:wrapcheck // *PathError already names the file
+	return os.Remove(l.abs(name)) // *PathError already names the file
 }
 
 func (l localFS) Rename(oldname, newname string) error {
 	if err := os.Rename(l.abs(oldname), l.abs(newname)); err != nil {
-		return err //nolint:wrapcheck // *LinkError already names both files
+		return err // *LinkError already names both files
 	}
 	return syncDir(filepath.Dir(l.abs(newname)))
 }

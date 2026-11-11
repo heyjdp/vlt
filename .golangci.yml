@@ -18,6 +18,7 @@ linters:
     - gosec
     - misspell
     - nilerr
+    - nolintlint
     - revive
     - unconvert
     - unparam
@@ -31,6 +32,14 @@ linters:
       enabled-tags:
         - diagnostic
         - performance
+    nolintlint:
+      # Every //nolint names its linter and says why; one that no longer
+      # suppresses anything is reported, so dead suppressions don't pile up.
+      # It cannot see a directive for a linter that is not enabled (eight
+      # //nolint:wrapcheck lingered that way), so only name enabled ones.
+      require-specific: true
+      require-explanation: true
+      allow-unused: false
     gosec:
       excludes:
         - G115 # integer overflow conversions: accepted in known-safe contexts

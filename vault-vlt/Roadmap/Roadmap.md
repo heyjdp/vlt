@@ -170,6 +170,7 @@ Added 2026-11-12, from the rest of the Go skills audit. Goal: close the remainin
 - [[F43 Scrypt work factor cap]]
 - [[F44 Auto-lock during long operations]]
 - [[F45 Lock without freezing]]
+- [[F48 nolintlint]]
 
 ## Tracker
 

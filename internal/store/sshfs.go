@@ -110,7 +110,7 @@ func (s *sshSession) Close() error {
 		_ = s.cmd.Process.Kill()
 		<-exited
 	}
-	return err //nolint:wrapcheck // closing; nothing more to add
+	return err // closing; nothing more to add
 }
 
 // dialSSH starts ssh and opens an SFTP session over it. If ssh fails to
