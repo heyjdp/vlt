@@ -46,7 +46,7 @@ Both are fixed by `openSecret`. The verifier's mutations (partial plaintext, dam
 
 A second check found nothing vlt ever wrote is hidden (slug rules haven't changed; legacy empty-slug, untrimmed and ungrouped names still open; `Update`'s collision check works), but files named by hand in another case were, so the path comparison now ignores case. Errors for a file that holds no valid secret got their own text.
 
-Still open: the list leaves an unreadable file out with only a log warning; the user isn't told. That belongs with [[F38 Secret list errors]].
+The list then left an unreadable file out with only a log warning; [[F38 Secret list errors]] counts and names such files under the list.
 
 ## Acceptance criteria
 - [x] The new tests pass, and fail when `Decrypt` returns partial plaintext, or `Get` returns a secret for a file it can't decrypt, parse or place

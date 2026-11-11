@@ -8,12 +8,13 @@ All notable changes to vlt are documented here. The format follows
 ### Security
 - Built with the go1.27.4 toolchain, which fixes GO-2026-6859 in `net/http` (used by the update check).
 - Exported files are readable only by you on macOS, Linux and OpenBSD (mode 0600). They were created with your default permissions, usually readable by every user of the computer, so an exported SSH or TLS key was exposed (and ssh refuses a key others can read). The export is written to a new file and renamed into place, so nobody who opened the file the save dialog created can read it through that, and a symlink at the path is replaced rather than written through. On Windows the folder's permissions still apply.
-- A secret file is only accepted at the path its own name and group give, and only if it holds a named secret of a known type. Whoever can write the vault's files (a server, a shared folder) could otherwise copy one secret's file over another's, or into another group, and vlt would open it there. Such files, like damaged ones, fail to open and are left out of the list.
+- A secret file is only accepted at the path its own name and group give, and only if it holds a named secret of a known type. Whoever can write the vault's files (a server, a shared folder) could otherwise copy one secret's file over another's, or into another group, and vlt would open it there. Such files, like damaged ones, fail to open and are left out of the list, which now counts them under it; *Details…* names them (before, only the log knew).
 
 ### Changed
 - Built with Fyne 2.8.2 (was 2.7.3) and age 1.3.2 (was 1.3.1). Building on Linux now also needs `libwayland-dev`.
 
 ### Fixed
+- When the vault can't be listed (a lost connection, a permission problem), the list now says why and offers *Retry*; it used to look empty.
 - A server vault whose folder has `#`, `?` or `%` in its name, given as an `ssh://` location (with a port or a one-letter host), was saved unescaped, so vlt could not open it again. Locations are now saved in a form that reads back as themselves, including folders with leading or trailing spaces, `@[` in the path, or a folder named `~` at the server's root.
 - A host that isn't an IPv6 address but holds a colon (`[:]:vault`), or a stray `]` in a host name, was accepted; both are now refused, as is a server folder name with a control character (a NUL would make the server use another folder).
 - `host:~//vault` and `ssh://host/~//vault` named `/vault` at the server's root instead of `vault` in your home directory. `SSH://` is now read like `ssh://`.

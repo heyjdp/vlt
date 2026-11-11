@@ -24,7 +24,7 @@ created: 2026-10-27
 | Update check | Network observer, GitHub | Off unless asked for or turned on; one HTTPS GET; nothing downloaded or run; the link is built from a tag that must be `vX.Y.Z`; redirects only to `api.github.com` ([[F29 Check for updates]]) | GitHub and the network learn the user's IP address and that they run vlt |
 | Two copies editing one vault | Lost edit | `vlt.lock` warns before a second unlock ([[F26 Vault lock file]]); creates never overwrite | Same-secret edits are last-writer-wins; two computers with the same host name count as one; a lock that can't be read (a connection that stays down, a disk error) is skipped, and the vault opens without a warning ([[F37 Lock read errors]]) |
 | Vault integrity | Crash mid-write, partial re-encrypt | Per-file atomic writes ([[F02 Atomic file writes]]); passphrase change rewrites one file and migration is resumable ([[F01 Scrypt-wrapped identity]]) | Concurrent writers other than migration are not coordinated |
-| Tampered or swapped file | Hostile server, shared folder, bad disk | age authenticates each file; a secret must be stored at the path its name and group give, and must have a name and a known type ([[F34 Tampered vault files]]) | The list leaves such a file out with only a log warning; the user isn't told |
+| Tampered or swapped file | Hostile server, shared folder, bad disk | age authenticates each file; a secret must be stored at the path its name and group give, and must have a name and a known type ([[F34 Tampered vault files]]) | The list leaves such a file out, and counts it under the list with its path in *Details…* ([[F38 Secret list errors]]) |
 
 ## Where key material lives (after F01)
 

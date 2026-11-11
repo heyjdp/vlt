@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -186,6 +187,57 @@ func findType[T fyne.CanvasObject](obj fyne.CanvasObject) T {
 		return zero
 	}
 	return found.(T)
+}
+
+// findShown is findDeep over what is on screen: hidden objects, and
+// everything inside them, are skipped.
+func findShown(obj fyne.CanvasObject, match func(fyne.CanvasObject) bool) fyne.CanvasObject {
+	if obj == nil || !obj.Visible() {
+		return nil
+	}
+	if match(obj) {
+		return obj
+	}
+	var children []fyne.CanvasObject
+	switch w := obj.(type) {
+	case *fyne.Container:
+		children = w.Objects
+	case fyne.Widget:
+		children = test.WidgetRenderer(w).Objects()
+	}
+	for _, child := range children {
+		if found := findShown(child, match); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+// visibleText reports whether a label on screen in obj contains text.
+func visibleText(obj fyne.CanvasObject, text string) bool {
+	return findShown(obj, func(o fyne.CanvasObject) bool {
+		l, ok := o.(*widget.Label)
+		return ok && strings.Contains(l.Text, text)
+	}) != nil
+}
+
+// shownButton returns the button labelled text on screen in obj, or nil.
+func shownButton(obj fyne.CanvasObject, text string) *widget.Button {
+	b, _ := findShown(obj, func(o fyne.CanvasObject) bool {
+		b, ok := o.(*widget.Button)
+		return ok && b.Text == text
+	}).(*widget.Button)
+	return b
+}
+
+// visibleButton returns the button labelled text on screen in obj.
+func visibleButton(t *testing.T, obj fyne.CanvasObject, text string) *widget.Button {
+	t.Helper()
+	b := shownButton(obj, text)
+	if b == nil {
+		t.Fatalf("no visible %q button", text)
+	}
+	return b
 }
 
 // findButton returns the button labelled text in obj's tree, or nil.

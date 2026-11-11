@@ -2,7 +2,11 @@ package ui
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
 	"fyne.io/fyne/v2/test"
@@ -257,5 +261,133 @@ func TestSecretList_SearchMatchesGroupBySpellingOrDirectory(t *testing.T) {
 		if len(sl.filtered) != 2 {
 			t.Errorf("search %q found %d secrets, want both spellings of the group", query, len(sl.filtered))
 		}
+	}
+}
+
+// A vault that can't be listed says why, rather than looking empty, and
+// Retry loads it once the problem is gone.
+func TestSecretList_ALoadErrorIsShownWithRetry(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs Unix folder permissions that apply to this user")
+	}
+	app, _ := newFlowApp(t, testutil.PasswordSecret("github", "pw", "work"))
+	unlock(app)
+	dir := app.config.VaultDir
+	if err := os.Chmod(dir, 0o300); err != nil { // no read: the folder can't be listed
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	app.secretList.Refresh()
+	panel := app.secretList.Content()
+	if !visibleText(panel, "Couldn't load the vault") || !visibleText(panel, "permission denied") {
+		t.Fatal("a failed load should say so, and why")
+	}
+
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	test.Tap(visibleButton(t, panel, "Retry"))
+	if len(app.secretList.secrets) != 1 || visibleText(panel, "Couldn't load the vault") {
+		t.Fatal("Retry should load the vault and clear the message")
+	}
+	app.Lock()
+}
+
+// Secret files the list skips (damaged, from another vault, misplaced) are
+// counted under the list, with their paths a click away.
+func TestSecretList_SkippedFilesAreCountedWithDetails(t *testing.T) {
+	app, w := newFlowApp(t, testutil.PasswordSecret("github", "pw", "work"))
+	dir := app.config.VaultDir
+	for _, name := range []string{"broken.age", "other.age"} {
+		if err := os.WriteFile(filepath.Join(dir, "work", name), []byte("not age"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unlock(app)
+
+	panel := app.secretList.Content()
+	if len(app.secretList.secrets) != 1 || !visibleText(panel, "2 secret files couldn't be read") {
+		t.Fatal("skipped files should be counted under the list")
+	}
+	if shownButton(panel, "Retry") != nil {
+		t.Fatal("Retry belongs to a failed load, not to skipped files")
+	}
+	test.Tap(visibleButton(t, panel, "Details…"))
+	if text := dialogText(t, w); !strings.Contains(text, "work/broken.age") || !strings.Contains(text, "work/other.age") {
+		t.Fatalf("details should list the skipped files, got %q", text)
+	}
+	app.Lock()
+}
+
+func TestSecretList_NoNoticeWhenEverythingLoads(t *testing.T) {
+	app, _ := newFlowApp(t, testutil.PasswordSecret("github", "pw", "work"))
+	unlock(app)
+	panel := app.secretList.Content()
+	if shownButton(panel, "Retry") != nil || shownButton(panel, "Details…") != nil || visibleText(panel, "couldn't") {
+		t.Fatal("no notice should show when the vault loads cleanly")
+	}
+	app.Lock()
+}
+
+func TestUnreadableText(t *testing.T) {
+	t.Parallel()
+	for paths, want := range map[string]string{
+		"work/a.age":            "1 secret file couldn't be read.",
+		"work/a.age work/b.age": "2 secret files couldn't be read.",
+		"work/":                 "1 secret file or folder couldn't be read.",
+		"home/ work/a.age":      "2 secret files or folders couldn't be read.",
+	} {
+		if got := unreadableText(strings.Fields(paths)); got != want {
+			t.Errorf("unreadableText(%s) = %q, want %q", paths, got, want)
+		}
+	}
+}
+
+// newQueuedList returns a list over a vault holding one secret, whose loads
+// wait in q until flushed.
+func newQueuedList(t *testing.T, q *queue) *SecretList {
+	t.Helper()
+	test.NewTempApp(t)
+	dir := t.TempDir()
+	newVaultWith(t, dir, testutil.PasswordSecret("on-disk", "v", "work"))
+	s, err := store.Open(context.Background(), dir, "correct horse battery", quietLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	dv := NewDetailView(test.NewTempWindow(t, nil), s, nil, widget.NewLabel(""), quietLog(), q.runner())
+	return NewSecretList(test.NewTempWindow(t, nil), s, dv, quietLog(), q.runner())
+}
+
+// Nothing shows under the list until a load says something.
+func TestSecretList_NoNoticeBeforeTheFirstLoad(t *testing.T) {
+	q := &queue{}
+	sl := newQueuedList(t, q)
+	sl.Refresh()
+	if shownButton(sl.Content(), "Retry") != nil || shownButton(sl.Content(), "Details…") != nil {
+		t.Fatal("the notice should stay hidden while the first load runs")
+	}
+	q.flush()
+}
+
+// A second load while one runs would drop the first's replay queue, so a
+// save made meanwhile could vanish; Retry waits for the load to finish.
+func TestSecretList_RetryWaitsForTheLoadInFlight(t *testing.T) {
+	q := &queue{}
+	sl := newQueuedList(t, q)
+	sl.Refresh()
+	if !sl.retry.Disabled() {
+		t.Fatal("Retry should be disabled while a load runs")
+	}
+	test.Tap(sl.retry)
+	sl.Upsert(testutil.PasswordSecret("saved", "v", "work"))
+	q.flush()
+
+	if !slices.ContainsFunc(sl.secrets, func(s *store.Secret) bool { return s.Name == "saved" }) {
+		t.Fatalf("a save made during the load was lost: %v", sl.secrets)
+	}
+	if sl.retry.Disabled() {
+		t.Fatal("Retry should be enabled again once the load finishes")
 	}
 }

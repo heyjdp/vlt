@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/heyjdp/vlt/internal/crypto"
@@ -117,6 +119,56 @@ func TestStore_List_SkipsDamagedForeignOrMisplacedFilesAndKeepsTheRest(t *testin
 	}
 	if len(got) != 1 || got[0].Name != "good" || got[0].Group != "work" || got[0].Value != "pw-good" {
 		t.Fatalf("List = %v; want only the good secret, once", names(got))
+	}
+}
+
+func TestStore_Contents_NamesTheFilesItCouldNotRead(t *testing.T) {
+	t.Parallel()
+
+	s, id := newTestStoreAndKey(t, t.TempDir())
+	damagedSecrets(t, s, id)
+
+	got, err := s.Contents(context.Background())
+	if err != nil {
+		t.Fatalf("Contents: %v", err)
+	}
+	if len(got.Secrets) != 1 || got.Secrets[0].Name != "good" {
+		t.Fatalf("Contents.Secrets = %v; want only the good secret", names(got.Secrets))
+	}
+	want := []string{
+		"personal/good.age", "work/empty.age", "work/flipped.age", "work/foreign.age",
+		"work/garbage.age", "work/nameless.age", "work/swapped.age", "work/untyped.age",
+	}
+	if !slices.Equal(got.Unreadable, want) {
+		t.Fatalf("Contents.Unreadable = %v; want %v", got.Unreadable, want)
+	}
+}
+
+func TestStore_Contents_NamesAGroupFolderItCannotRead(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs Unix folder permissions that apply to this user")
+	}
+	t.Parallel()
+
+	s := newTestStore(t)
+	ctx := context.Background()
+	for _, group := range []string{"home", "work"} {
+		if err := s.Create(ctx, testutil.PasswordSecret("key", "pw", group)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	home := filepath.Join(s.Dir(), "home")
+	if err := os.Chmod(home, 0o300); err != nil { // can't be listed
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(home, 0o700) })
+
+	got, err := s.Contents(ctx)
+	if err != nil {
+		t.Fatalf("Contents: %v", err)
+	}
+	if len(got.Secrets) != 1 || got.Secrets[0].Group != "work" || !slices.Equal(got.Unreadable, []string{"home/"}) {
+		t.Fatalf("Contents = %v, unreadable %v; want work's secret, and home/ named", names(got.Secrets), got.Unreadable)
 	}
 }
 
