@@ -106,7 +106,7 @@ func TestLock_AStaleLockOnThisComputerIsTakenOver(t *testing.T) {
 	}
 }
 
-func TestLock_AnUnreadableLockIsInUse(t *testing.T) {
+func TestLock_ADamagedLockIsInUse(t *testing.T) {
 	t.Parallel()
 	s := openedVault(t)
 	if err := s.fs.WriteFileAtomic(lockFile, []byte("not json")); err != nil {
@@ -116,6 +116,75 @@ func TestLock_AnUnreadableLockIsInUse(t *testing.T) {
 	var inUse *InUseError
 	if !errors.As(err, &inUse) || inUse.Lock.Host != "" || !strings.Contains(err.Error(), "unreadable") {
 		t.Fatalf("AcquireLock = %v", err)
+	}
+}
+
+// lockReadFails makes reading the lock file fail with err, as a dropped
+// connection or a file system error would: every time, or only the first
+// times (a connection that comes back).
+type lockReadFails struct {
+	vaultFS
+	err   error
+	times int // 0 = always
+	reads *int
+}
+
+func (f lockReadFails) ReadFile(name string) ([]byte, error) {
+	if name == lockFile {
+		*f.reads++
+		if f.times == 0 || *f.reads <= f.times {
+			return nil, f.err
+		}
+	}
+	return f.vaultFS.ReadFile(name)
+}
+
+func TestLock_ALockThatCannotBeReadIsAnErrorNotInUse(t *testing.T) {
+	t.Parallel()
+	for name, readErr := range map[string]error{
+		"a dropped connection": ErrConnectionLost,
+		"an I/O error":         errors.New("input/output error"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := openedVault(t)
+			plantLock(t, s, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
+			s.fs = lockReadFails{vaultFS: s.fs, err: readErr, reads: new(int)}
+
+			err := s.AcquireLock(context.Background(), false)
+			if errors.Is(err, ErrVaultInUse) || !errors.Is(err, readErr) {
+				t.Fatalf("AcquireLock = %v; want the read error, not \"open elsewhere\"", err)
+			}
+		})
+	}
+}
+
+// A dropped connection is retried (the next call reconnects), so a lock
+// held elsewhere is still found.
+func TestLock_AConnectionThatComesBackStillFindsTheLock(t *testing.T) {
+	t.Parallel()
+	s := openedVault(t)
+	plantLock(t, s, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
+	s.fs = lockReadFails{vaultFS: s.fs, err: ErrConnectionLost, times: 1, reads: new(int)}
+
+	err := s.AcquireLock(context.Background(), false)
+	var inUse *InUseError
+	if !errors.As(err, &inUse) || inUse.Lock.Host != "laptop.local" {
+		t.Fatalf("AcquireLock = %v; want the lock held on laptop.local", err)
+	}
+}
+
+// A lock vlt may not read most likely belongs to another user's copy.
+func TestLock_ALockVltMayNotReadIsInUse(t *testing.T) {
+	t.Parallel()
+	s := openedVault(t)
+	plantLock(t, s, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
+	s.fs = lockReadFails{vaultFS: s.fs, err: fs.ErrPermission, reads: new(int)}
+
+	err := s.AcquireLock(context.Background(), false)
+	var inUse *InUseError
+	if !errors.As(err, &inUse) || inUse.Lock.Host != "" {
+		t.Fatalf("AcquireLock = %v; want in use, holder unknown", err)
 	}
 }
 

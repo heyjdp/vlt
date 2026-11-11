@@ -46,7 +46,10 @@ Accepted:
 - **Hosts are told apart by name only.** Two computers with the same host name count as one. This is documented.
 - **A Windows quirk.** Another user's elevated process looks gone, because `FindProcess` gets access denied.
 
+Later narrowed by [[F37 Lock read errors]]: only a damaged lock, or one this user may not read, counts as in use; a dropped connection is retried, and other read errors are returned.
+
 ## Related
 - [[Roadmap]]
 - [[ADR-002 Vaults on a server over the system ssh]]
 - [[F27 Server vaults in the UI]]
+- [[F37 Lock read errors]]

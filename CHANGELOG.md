@@ -17,6 +17,7 @@ All notable changes to vlt are documented here. The format follows
 - A server vault whose folder has `#`, `?` or `%` in its name, given as an `ssh://` location (with a port or a one-letter host), was saved unescaped, so vlt could not open it again. Locations are now saved in a form that reads back as themselves, including folders with leading or trailing spaces, `@[` in the path, or a folder named `~` at the server's root.
 - A host that isn't an IPv6 address but holds a colon (`[:]:vault`), or a stray `]` in a host name, was accepted; both are now refused, as is a server folder name with a control character (a NUL would make the server use another folder).
 - `host:~//vault` and `ssh://host/~//vault` named `/vault` at the server's root instead of `vault` in your home directory. `SSH://` is now read like `ssh://`.
+- A dropped connection or a disk error while reading another copy's `vlt.lock` was reported as "Vault Already Open", and *Open Anyway* then met the same fault. A dropped connection is now retried, and an error that persists is treated like a failure to write the lock: logged, and the vault opens without recording that it is open. A lock file that is damaged, or that you may not read, still counts as open elsewhere.
 - Settings no longer offers to switch to, or move to, the current vault when its location is written another way (an unescaped space in an `ssh://` location saved by an older version, say).
 
 ## [0.2.0] - 2026-11-02

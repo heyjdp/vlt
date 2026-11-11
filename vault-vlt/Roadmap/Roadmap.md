@@ -155,6 +155,7 @@ Added 2026-11-11, from an audit with the samber Go skills (security, safety, con
 - [[F34 Tampered vault files]]
 - [[F35 Location round trip]]
 - [[F36 Private exports]]
+- [[F37 Lock read errors]]
 
 ## Tracker
 
