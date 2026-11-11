@@ -163,6 +163,7 @@ Added 2026-11-11. Goal: deep modules for the error wording, operations, secret f
 - [[F39 Secret files and keys]]
 - [[F40 Error wording]]
 - [[F41 Operations]]
+- [[F42 Settings module]]
 
 ## Tracker
 
@@ -183,3 +184,6 @@ Each fix note's `status` property is one of `todo`, `in-progress`, or `done`. Th
 
 > [!success] Phase 10 is done (2026-11-11)
 > [[F34 Tampered vault files]], [[F35 Location round trip]], [[F36 Private exports]], [[F37 Lock read errors]] and [[F38 Secret list errors]] each went through code, documentation and tooling verification before their commits, and were merged into `main` but not yet pushed. Verification turned three of them into production fixes beyond the audit's finding (swapped secret files, four more location round-trip bugs, a Retry that could lose a save).
+
+> [!success] Phase 11 is done (2026-11-11)
+> [[F39 Secret files and keys]], [[F40 Error wording]], [[F41 Operations]] and [[F42 Settings module]] are committed on the branch `refactor/deepen-ui-store`, each with its tests, documentation and lint passing, and await independent verification before merging into `main`; nothing is pushed. Besides the deeper modules, they fix a nested vault counted and copied as secrets, internal prefixes in error messages, *Move Vault* and *Switch Vault* overlapping a copy, and a location from `VLT_VAULT_DIR` shown in another form than vlt writes.
