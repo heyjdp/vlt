@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"sync"
 
 	"filippo.io/age"
@@ -29,6 +30,17 @@ var errEmptyPassphrase = errors.New("passphrase cannot be empty")
 // DefaultWorkFactor is the scrypt work factor (log2 N) used to wrap the vault
 // key: N = 2^18 with r = 8 costs 256 MiB and roughly a second per derivation.
 const DefaultWorkFactor = 18
+
+// MaxWorkFactor is the highest scrypt work factor DecryptWithPassphrase
+// accepts: 2^20 costs 1 GiB and a few seconds. Whoever can write vlt.age (a
+// server, a shared folder) could otherwise set one that takes gigabytes of
+// memory and many seconds for every unlock, or for every file a migration
+// reads. vlt writes DefaultWorkFactor.
+const MaxWorkFactor = 20
+
+// ErrWorkFactorTooHigh is returned for a file whose scrypt work factor is
+// above MaxWorkFactor; no key derivation is run for it.
+var ErrWorkFactorTooHigh = errors.New("the passphrase-protected file asks for more key-derivation work than vlt allows")
 
 // Identity is a vault key: an age X25519 identity whose encoded secret key is
 // held in a memguard LockedBuffer (mlock'd, guard pages). Zero destroys that
@@ -96,7 +108,8 @@ func (id *Identity) Zero() {
 // WrapIdentity encrypts the vault key to passphrase with age's scrypt
 // recipient at the given work factor (log2 N; 0 means DefaultWorkFactor).
 // The result is what gets stored on disk as vlt.age. Lower work factors are
-// for tests only: decryption accepts any factor up to age's maximum.
+// for tests only. A factor above MaxWorkFactor is refused, since
+// DecryptWithPassphrase would never open the result.
 func WrapIdentity(passphrase string, id *Identity, workFactor int) ([]byte, error) {
 	if passphrase == "" {
 		return nil, fmt.Errorf("crypto.WrapIdentity: %w", errEmptyPassphrase)
@@ -107,6 +120,9 @@ func WrapIdentity(passphrase string, id *Identity, workFactor int) ([]byte, erro
 	}
 	if workFactor <= 0 {
 		workFactor = DefaultWorkFactor
+	}
+	if workFactor > MaxWorkFactor {
+		return nil, fmt.Errorf("crypto.WrapIdentity: %w (2^%d; at most 2^%d)", ErrWorkFactorTooHigh, workFactor, MaxWorkFactor)
 	}
 	r.SetWorkFactor(workFactor)
 
@@ -155,10 +171,16 @@ func DecryptWithPassphrase(passphrase string, ciphertext []byte) ([]byte, error)
 	if passphrase == "" {
 		return nil, fmt.Errorf("crypto.DecryptWithPassphrase: %w", errEmptyPassphrase)
 	}
+	if err := checkWorkFactor(ciphertext); err != nil {
+		return nil, fmt.Errorf("crypto.DecryptWithPassphrase: %w", err)
+	}
 	sid, err := age.NewScryptIdentity(passphrase)
 	if err != nil {
 		return nil, fmt.Errorf("crypto.DecryptWithPassphrase: %w", err)
 	}
+	// age checks the cap too, but its error has no type; checkWorkFactor
+	// says why first, and this stays as a second guard.
+	sid.SetMaxWorkFactor(MaxWorkFactor)
 	r, err := age.Decrypt(bytes.NewReader(ciphertext), sid)
 	if err != nil {
 		var noMatch *age.NoIdentityMatchError
@@ -172,6 +194,24 @@ func DecryptWithPassphrase(passphrase string, ciphertext []byte) ([]byte, error)
 		return nil, fmt.Errorf("crypto.DecryptWithPassphrase: read: %w", err)
 	}
 	return out, nil
+}
+
+// checkWorkFactor refuses an age file whose scrypt stanza
+// ("-> scrypt <salt> <logN>", in the header before the "---" line) asks for
+// a work factor above MaxWorkFactor. Anything it can't read is left for age
+// to judge.
+func checkWorkFactor(ciphertext []byte) error {
+	header, _, _ := bytes.Cut(ciphertext, []byte("\n---"))
+	for line := range bytes.SplitSeq(header, []byte("\n")) {
+		f := bytes.Fields(line)
+		if len(f) != 4 || string(f[0]) != "->" || string(f[1]) != "scrypt" {
+			continue
+		}
+		if logN, err := strconv.Atoi(string(f[3])); err == nil && logN > MaxWorkFactor {
+			return fmt.Errorf("%w (2^%d; at most 2^%d)", ErrWorkFactorTooHigh, logN, MaxWorkFactor)
+		}
+	}
+	return nil
 }
 
 // Wipe overwrites b with zeros. Use it on decrypted plaintext that is no

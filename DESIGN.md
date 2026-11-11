@@ -15,6 +15,7 @@ Target platforms: **Linux, macOS, Windows, OpenBSD**
 
 - **Mechanism:** a random age X25519 identity (the *vault key*) encrypts every secret; the vault key is stored in `vlt.age`, encrypted to the passphrase with age's scrypt recipient (`age.NewScryptRecipient`). See ADR-001 in the project vault (`vault-vlt/Decisions/`).
 - Unlock runs exactly one scrypt derivation (decrypting `vlt.age`); secret decryption is X25519 and costs microseconds
+- A passphrase-protected file whose scrypt work factor is above 2^20 (`crypto.MaxWorkFactor`; vlt writes 2^18) is refused before any derivation runs (`crypto.ErrWorkFactorTooHigh`), and age is given the same cap. Whoever can write `vlt.age` (a server, a shared folder) could otherwise make every unlock, and every file a migration reads, cost gigabytes of memory and many seconds
 - No key material leaves the vault directory, and the only key on disk is passphrase-encrypted
 - The vault key lives in process memory (memguard) and is zeroed on lock or session timeout
 - Changing the passphrase atomically rewrites only `vlt.age`
@@ -216,7 +217,7 @@ vlt/
 ### Package Responsibilities
 
 **`internal/crypto`**
-- `identity.go` — generates the X25519 vault key and holds it in a `memguard.LockedBuffer`; `WrapIdentity`/`UnwrapIdentity` encrypt it to and from the passphrase (scrypt); `DecryptWithPassphrase` reads legacy files; `Zero()` wipes on lock
+- `identity.go` — generates the X25519 vault key and holds it in a `memguard.LockedBuffer`; `WrapIdentity`/`UnwrapIdentity` encrypt it to and from the passphrase (scrypt); `DecryptWithPassphrase` reads `vlt.age` and legacy files, refusing a work factor above `MaxWorkFactor` before deriving; `Zero()` wipes on lock
 - `vault.go` — `Encrypt(identity, envelope) ([]byte, error)` and `Decrypt(identity, ciphertext) ([]byte, error)` to the vault key
 
 **`internal/store`**

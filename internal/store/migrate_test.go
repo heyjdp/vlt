@@ -6,8 +6,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 
+	"github.com/heyjdp/vlt/internal/crypto"
 	"github.com/heyjdp/vlt/internal/store"
 	"github.com/heyjdp/vlt/internal/testutil"
 )
@@ -196,4 +198,30 @@ func TestStore_Open_LegacyWithoutSentinelRejectsWrongPassphrase(t *testing.T) {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// A legacy secret asking for more key-derivation work than vlt allows is
+// refused for that reason, not reported as a wrong passphrase.
+func TestStore_Open_LegacyFileOverTheWorkFactorCapSaysSo(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	testutil.WriteLegacyVault(t, dir, testPass, testutil.PasswordSecret("gh", "ghp_x", "work"))
+	if err := os.Remove(filepath.Join(dir, "vlt.age")); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "work", "gh.age")
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = regexp.MustCompile(`(?m)^(-> scrypt \S+) \d+$`).ReplaceAll(data, []byte("$1 22"))
+	if err := os.WriteFile(file, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = store.Open(context.Background(), dir, testPass, quietLog())
+	if !errors.Is(err, crypto.ErrWorkFactorTooHigh) || errors.Is(err, store.ErrWrongPassphrase) {
+		t.Fatalf("Open = %v; want ErrWorkFactorTooHigh, not a wrong passphrase", err)
+	}
 }

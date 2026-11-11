@@ -3,8 +3,10 @@ package crypto_test
 import (
 	"bytes"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"filippo.io/age"
 
@@ -177,5 +179,54 @@ func TestIsSecretKey(t *testing.T) {
 				t.Fatalf("IsSecretKey(%q) = %v, want %v", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+// withWorkFactor rewrites the work factor in an scrypt file's header, as
+// whoever can write vlt.age could. The header's MAC no longer matches, but
+// the work factor must be refused before any key derivation runs.
+func withWorkFactor(t *testing.T, file []byte, logN int) []byte {
+	t.Helper()
+	lines := strings.Split(string(file), "\n")
+	for i, line := range lines {
+		if f := strings.Fields(line); len(f) == 4 && f[0] == "->" && f[1] == "scrypt" {
+			f[3] = strconv.Itoa(logN)
+			lines[i] = strings.Join(f, " ")
+			return []byte(strings.Join(lines, "\n"))
+		}
+	}
+	t.Fatal("no scrypt stanza in the file")
+	return nil
+}
+
+func TestDecryptWithPassphrase_RefusesAWorkFactorAboveTheCap(t *testing.T) {
+	t.Parallel()
+
+	r, err := age.NewScryptRecipient("right-pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.SetWorkFactor(10)
+	good, err := encryptToRecipient(r, []byte("key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, logN := range []int{crypto.MaxWorkFactor + 1, 22, 30} {
+		start := time.Now()
+		_, err := crypto.DecryptWithPassphrase("right-pass", withWorkFactor(t, good, logN))
+		if !errors.Is(err, crypto.ErrWorkFactorTooHigh) {
+			t.Errorf("work factor %d: err = %v; want ErrWorkFactorTooHigh", logN, err)
+		}
+		if d := time.Since(start); d > time.Second {
+			t.Errorf("work factor %d: refusing took %v; no key derivation should run", logN, d)
+		}
+	}
+}
+
+func TestMaxWorkFactor_IsNotBelowTheDefault(t *testing.T) {
+	t.Parallel()
+	if crypto.MaxWorkFactor < crypto.DefaultWorkFactor {
+		t.Fatalf("MaxWorkFactor %d is below DefaultWorkFactor %d: vlt couldn't open its own vaults",
+			crypto.MaxWorkFactor, crypto.DefaultWorkFactor)
 	}
 }

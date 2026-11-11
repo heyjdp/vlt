@@ -6,6 +6,7 @@ All notable changes to vlt are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- vlt refuses to open a passphrase-protected file (`vlt.age`, or a secret file in an older vault being upgraded) that demands more passphrase-hashing work than vlt ever uses (more than 2^20; vlt writes 2^18), and says so. Anyone who can change the vault's files, such as a server or a shared folder, could otherwise make every unlock use gigabytes of memory and take many seconds.
 - Built with the go1.27.4 toolchain, which fixes GO-2026-6859 in `net/http` (used by the update check).
 - Exported files are readable only by you on macOS, Linux and OpenBSD (mode 0600). They were created with your default permissions, usually readable by every user of the computer, so an exported SSH or TLS key was exposed (and ssh refuses a key others can read). The export is written to a new file and renamed into place, so nobody who opened the file the save dialog created can read it through that, and a symlink at the path is replaced rather than written through. On Windows the folder's permissions still apply.
 - An exported file's decoded contents are wiped from memory if the vault locks just as decoding finishes; they were left for the garbage collector to reclaim.
