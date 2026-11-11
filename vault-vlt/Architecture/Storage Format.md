@@ -74,7 +74,7 @@ Each `.age` file decrypts to an indented JSON document (`internal/store/secret.g
 
 `totp_secret` holds the base32 secret or the `otpauth://totp/…` link, trimmed, as entered; vlt makes RFC 6238 codes from it ([[F32 TOTP codes]]).
 
-File secrets are base64-encoded inside `value`, so a 10 MiB import becomes about $\tfrac{4}{3}\times 10 \approx 13.3$ MiB of JSON. `List()` decrypts **every** file, including large file secrets, just to show names. An unencrypted-name index or a separate encrypted metadata file would avoid that.
+File secrets are base64-encoded inside `value`, so a 10 MiB import becomes about $\tfrac{4}{3}\times 10 \approx 13.3$ MiB of JSON. `Contents()` decrypts **every** file, including large file secrets, just to show names. An unencrypted-name index or a separate encrypted metadata file would avoid that.
 
 ## Write semantics
 
@@ -87,7 +87,7 @@ flowchart LR
 
 - A crash leaves either the old file or the new one, never a truncated file.
 - New group directories are fsynced into their parent (`mkdirAllSynced`).
-- Leftover `.tmp-*` files never end in `.age`, so `List` and `CopyTo` skip them.
+- Leftover `.tmp-*` files never end in `.age`, so `Contents` and `CopyTo` skip them.
 - On a server ([[F25 SFTP backend and server locations]]), a write goes through these steps:
   1. Create a `.tmp-*` file exclusively in the private `.vlt-tmp/` folder, so no other user can open it before step 2.
   2. `chmod 0600`, before any data is written.

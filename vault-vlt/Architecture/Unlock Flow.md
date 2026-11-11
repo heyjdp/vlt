@@ -42,7 +42,7 @@ sequenceDiagram
     opt vlt.lock held by another copy
         A->>User: Vault Already Open: Open Anyway / Cancel
     end
-    A-)S: List(session ctx), background
+    A-)S: Contents(session ctx), background
     loop each of n files
         S->>S: X25519 decrypt (µs)
     end

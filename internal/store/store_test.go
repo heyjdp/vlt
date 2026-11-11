@@ -37,28 +37,6 @@ func newTestStoreAndKey(t *testing.T, dir string) (*store.Store, *crypto.Identit
 	return s, id
 }
 
-func TestStore_Init_CreatesVaultDir(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	vaultDir := filepath.Join(dir, "myvault")
-	id := testutil.NewTestIdentity(t)
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	s := store.New(id, vaultDir, log)
-
-	if err := s.Init(); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-
-	info, err := os.Stat(vaultDir)
-	if err != nil {
-		t.Fatalf("expected vault directory to exist: %v", err)
-	}
-	if !info.IsDir() {
-		t.Fatal("expected vault path to be a directory")
-	}
-}
-
 func TestStore_SaveAndGet_Password(t *testing.T) {
 	t.Parallel()
 
@@ -216,7 +194,7 @@ func TestStore_Delete_ReturnsErrNotFoundForMissing(t *testing.T) {
 	}
 }
 
-func TestStore_List_ReturnsAllSecrets(t *testing.T) {
+func TestStore_Contents_ReturnsAllSecrets(t *testing.T) {
 	t.Parallel()
 
 	s := newTestStore(t)
@@ -234,19 +212,19 @@ func TestStore_List_ReturnsAllSecrets(t *testing.T) {
 		}
 	}
 
-	got, err := s.List(ctx)
+	got, err := s.Contents(ctx)
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("Contents: %v", err)
 	}
 
-	if len(got) != 3 {
-		t.Fatalf("expected 3 secrets, got %d", len(got))
+	if len(got.Secrets) != 3 {
+		t.Fatalf("expected 3 secrets, got %d", len(got.Secrets))
 	}
 }
 
-// TestStore_List_IgnoresLeftoverTempFiles is a regression guard: List filters
+// TestStore_Contents_IgnoresLeftoverTempFiles is a regression guard: Contents filters
 // on the .age extension, which temp files written by writeFileAtomic never have.
-func TestStore_List_IgnoresLeftoverTempFiles(t *testing.T) {
+func TestStore_Contents_IgnoresLeftoverTempFiles(t *testing.T) {
 	t.Parallel()
 
 	s := newTestStore(t)
@@ -261,28 +239,28 @@ func TestStore_List_IgnoresLeftoverTempFiles(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	got, err := s.List(ctx)
+	got, err := s.Contents(ctx)
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("Contents: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("expected 1 secret, got %d", len(got))
+	if len(got.Secrets) != 1 {
+		t.Fatalf("expected 1 secret, got %d", len(got.Secrets))
 	}
 }
 
-func TestStore_List_ReturnsEmptyForNewVault(t *testing.T) {
+func TestStore_Contents_ReturnsEmptyForNewVault(t *testing.T) {
 	t.Parallel()
 
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	got, err := s.List(ctx)
+	got, err := s.Contents(ctx)
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("Contents: %v", err)
 	}
 
-	if len(got) != 0 {
-		t.Fatalf("expected 0 secrets, got %d", len(got))
+	if len(got.Secrets) != 0 {
+		t.Fatalf("expected 0 secrets, got %d", len(got.Secrets))
 	}
 }
 
@@ -465,7 +443,7 @@ func TestStore_VaultStructure_GroupBasedPaths(t *testing.T) {
 	}
 }
 
-func TestStore_List_StopsWhenContextCancelled(t *testing.T) {
+func TestStore_Contents_StopsWhenContextCancelled(t *testing.T) {
 	t.Parallel()
 
 	s := newTestStore(t)
@@ -475,11 +453,11 @@ func TestStore_List_StopsWhenContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	got, err := s.List(ctx)
+	got, err := s.Contents(ctx)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
-	if got != nil {
-		t.Fatalf("a cancelled List must not return partial results, got %d", len(got))
+	if got.Secrets != nil {
+		t.Fatalf("a cancelled Contents must not return partial results, got %d", len(got.Secrets))
 	}
 }

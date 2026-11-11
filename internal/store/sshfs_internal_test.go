@@ -233,9 +233,9 @@ func TestRemoteStore_FullLifecycle(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer func() { s.Close(); <-s.Closed() }()
-	got, err := s.List(ctx)
-	if err != nil || len(got) != 1 || got[0].Value != "ghp_rotated" {
-		t.Fatalf("List = %v, %v", got, err)
+	got, err := s.Contents(ctx)
+	if err != nil || len(got.Secrets) != 1 || got.Secrets[0].Value != "ghp_rotated" {
+		t.Fatalf("Contents = %v, %v", got.Secrets, err)
 	}
 
 	// Copy the remote vault to a local folder and back to another remote one.
@@ -389,9 +389,9 @@ func TestRemoteStore_RealServer(t *testing.T) {
 			t.Fatalf("Create secret: %v", err)
 		}
 	}
-	got, err := s.List(ctx)
-	if err != nil || len(got) != 20 {
-		t.Fatalf("List = %d secrets, %v", len(got), err)
+	got, err := s.Contents(ctx)
+	if err != nil || len(got.Secrets) != 20 {
+		t.Fatalf("Contents = %d secrets, %v", len(got.Secrets), err)
 	}
 	s.Close()
 	<-s.Closed()
@@ -427,7 +427,7 @@ func openRemoteVault(t *testing.T) (*Store, *pipeServer, string) {
 	return s, srv, dir
 }
 
-func TestRemoteStore_ListKeepsNameOrderWithManyFiles(t *testing.T) {
+func TestRemoteStore_ContentsKeepsNameOrderWithManyFiles(t *testing.T) {
 	s, _, _ := openRemoteVault(t)
 	ctx := context.Background()
 	var want []string
@@ -438,16 +438,16 @@ func TestRemoteStore_ListKeepsNameOrderWithManyFiles(t *testing.T) {
 		}
 		want = append([]string{name}, want...)
 	}
-	got, err := s.List(ctx)
+	got, err := s.Contents(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var names []string
-	for _, sec := range got {
+	for _, sec := range got.Secrets {
 		names = append(names, sec.Name)
 	}
 	if !slices.Equal(names, want) {
-		t.Fatalf("List order = %v", names)
+		t.Fatalf("Contents order = %v", names)
 	}
 }
 
@@ -483,9 +483,9 @@ func TestRemoteStore_TempFilesStayInAPrivateFolderThatIsNotAGroup(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(dir, tmpDir, "x.age"), []byte("junk"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.List(ctx)
-	if err != nil || len(got) != 1 {
-		t.Fatalf("List = %d, %v", len(got), err)
+	got, err := s.Contents(ctx)
+	if err != nil || len(got.Secrets) != 1 {
+		t.Fatalf("Contents = %d, %v", len(got.Secrets), err)
 	}
 	dest := t.TempDir()
 	if err := s.CopyTo(ctx, dest); err != nil {
@@ -517,7 +517,7 @@ func TestRemoteFS_LoosenedTempFolderIsMadePrivate(t *testing.T) {
 	}
 }
 
-func TestRemoteStore_ListFailsWhenTheConnectionDrops(t *testing.T) {
+func TestRemoteStore_ContentsFailsWhenTheConnectionDrops(t *testing.T) {
 	s, srv, _ := openRemoteVault(t)
 	ctx := context.Background()
 	if err := s.Create(ctx, &Secret{Type: TypePassword, Name: "a", Group: "g", Value: "v"}); err != nil {
@@ -527,8 +527,8 @@ func TestRemoteStore_ListFailsWhenTheConnectionDrops(t *testing.T) {
 	inner := s.fs
 	s.fs = &dropOnRead{vaultFS: inner, srv: srv}
 	defer func() { s.fs = inner }()
-	if _, err := s.List(ctx); !errors.Is(err, ErrConnectionLost) {
-		t.Fatalf("List = %v, want ErrConnectionLost rather than a partial list", err)
+	if _, err := s.Contents(ctx); !errors.Is(err, ErrConnectionLost) {
+		t.Fatalf("Contents = %v, want ErrConnectionLost rather than a partial list", err)
 	}
 }
 

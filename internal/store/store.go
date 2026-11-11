@@ -25,8 +25,8 @@ var ErrSecretExists = errors.New("a secret with that name already exists")
 
 // Store manages secrets in an age-encrypted vault, in a local directory or
 // on an SSH server. Secrets are stored at <group>/<slug>.age, encrypted to
-// the vault key. Use Create or Open to obtain one; New is for callers that
-// already hold the vault key. Its methods may be called concurrently.
+// the vault key. Use Create or Open to obtain one. Its methods may be called
+// concurrently.
 type Store struct {
 	fs  vaultFS
 	loc Location
@@ -45,12 +45,6 @@ type Store struct {
 
 	closeOnce sync.Once
 	closed    chan struct{}
-}
-
-// New creates a Store over the local directory dir that encrypts and
-// decrypts with the given vault key. It does not read or write vlt.age.
-func New(id *crypto.Identity, dir string, log *slog.Logger) *Store {
-	return newStore(id, localFS{root: dir}, Location{Path: dir}, log, options{})
 }
 
 func newStore(id *crypto.Identity, fsys vaultFS, loc Location, log *slog.Logger, o options) *Store {
@@ -72,14 +66,6 @@ func (s *Store) Dir() string {
 // Location returns where the vault lives.
 func (s *Store) Location() Location {
 	return s.loc
-}
-
-// Init creates the vault directory with secure permissions.
-func (s *Store) Init() error {
-	if err := s.fs.MkdirAll("."); err != nil {
-		return fmt.Errorf("store.Init: %w", err)
-	}
-	return nil
 }
 
 // Create encrypts and writes a new secret to vault/<group>/<slug>.age. It
@@ -244,11 +230,11 @@ func (s *Store) Delete(ctx context.Context, name, group string) error {
 	return nil
 }
 
-// listWorkers bounds how many secret files List reads at once. Reading in
+// listWorkers bounds how many secret files Contents reads at once. Reading in
 // parallel hides the round trip to a server; locally it changes little.
 const listWorkers = 8
 
-// Contents is what List found in a vault.
+// Contents is what Store.Contents found in a vault.
 type Contents struct {
 	// Secrets are the readable secrets, in directory order.
 	Secrets []*Secret
@@ -256,15 +242,6 @@ type Contents struct {
 	// folders) that could not be read, decrypted or parsed, or hold a secret
 	// stored elsewhere (see openSecret), sorted. A group folder ends in "/".
 	Unreadable []string
-}
-
-// List returns the readable secrets in the vault; see Contents.
-func (s *Store) List(ctx context.Context) ([]*Secret, error) {
-	c, err := s.contents(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("store.List: %w", err)
-	}
-	return c.Secrets, nil
 }
 
 // Contents returns all secrets in the vault by walking every group

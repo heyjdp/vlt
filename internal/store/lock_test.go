@@ -227,8 +227,8 @@ func TestLock_LockFileIsNotPartOfTheVault(t *testing.T) {
 	if _, err := os.Stat(dest + "/" + lockFile); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatal("CopyTo must not copy the lock")
 	}
-	if secrets, err := s.List(context.Background()); err != nil || len(secrets) != 0 {
-		t.Fatalf("List = %v, %v", secrets, err)
+	if secrets, err := s.Contents(context.Background()); err != nil || len(secrets.Secrets) != 0 {
+		t.Fatalf("Contents = %v, %v", secrets.Secrets, err)
 	}
 }
 

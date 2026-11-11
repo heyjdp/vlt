@@ -107,18 +107,18 @@ func TestStore_Get_RefusesDamagedForeignOrMisplacedFiles(t *testing.T) {
 	}
 }
 
-func TestStore_List_SkipsDamagedForeignOrMisplacedFilesAndKeepsTheRest(t *testing.T) {
+func TestStore_Contents_SkipsDamagedForeignOrMisplacedFilesAndKeepsTheRest(t *testing.T) {
 	t.Parallel()
 
 	s, id := newTestStoreAndKey(t, t.TempDir())
 	damagedSecrets(t, s, id)
 
-	got, err := s.List(context.Background())
+	got, err := s.Contents(context.Background())
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("Contents: %v", err)
 	}
-	if len(got) != 1 || got[0].Name != "good" || got[0].Group != "work" || got[0].Value != "pw-good" {
-		t.Fatalf("List = %v; want only the good secret, once", names(got))
+	if len(got.Secrets) != 1 || got.Secrets[0].Name != "good" || got.Secrets[0].Group != "work" || got.Secrets[0].Value != "pw-good" {
+		t.Fatalf("Contents = %v; want only the good secret, once", names(got.Secrets))
 	}
 }
 
@@ -174,7 +174,7 @@ func TestStore_Contents_NamesAGroupFolderItCannotRead(t *testing.T) {
 
 // A folder or file named by hand may differ from the slug in case; the
 // secret is still where its name and group put it.
-func TestStore_List_AcceptsAFileWhosePathDiffersOnlyInCase(t *testing.T) {
+func TestStore_Contents_AcceptsAFileWhosePathDiffersOnlyInCase(t *testing.T) {
 	t.Parallel()
 
 	s := newTestStore(t)
@@ -190,9 +190,9 @@ func TestStore_List_AcceptsAFileWhosePathDiffersOnlyInCase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := s.List(context.Background())
-	if err != nil || len(got) != 1 || got[0].Name != "GitHub Key" {
-		t.Fatalf("List = %v, %v; want the secret despite the case of its path", names(got), err)
+	got, err := s.Contents(context.Background())
+	if err != nil || len(got.Secrets) != 1 || got.Secrets[0].Name != "GitHub Key" {
+		t.Fatalf("Contents = %v, %v; want the secret despite the case of its path", names(got.Secrets), err)
 	}
 }
 

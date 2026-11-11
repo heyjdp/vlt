@@ -192,12 +192,12 @@ func TestOpen_RunsExactlyOneScrypt(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer opened.Close()
-	listed, err := opened.List(context.Background())
+	listed, err := opened.Contents(context.Background())
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("Contents: %v", err)
 	}
-	if len(listed) != 100 {
-		t.Fatalf("expected 100 secrets, got %d", len(listed))
+	if len(listed.Secrets) != 100 {
+		t.Fatalf("expected 100 secrets, got %d", len(listed.Secrets))
 	}
 	if derivations != 1 {
 		t.Fatalf("expected exactly 1 scrypt derivation for unlock+list, got %d", derivations)
@@ -303,9 +303,9 @@ func TestLegacyNames_StayEditableAndDeletable(t *testing.T) {
 	writeRaw(t, s, filepath.Join(dir, "work", "foo.age"), &Secret{Version: 1, Type: TypePassword, Name: "foo ", Group: "work", Value: "old"})
 	writeRaw(t, s, filepath.Join(dir, "work", ".age"), &Secret{Version: 1, Type: TypePassword, Name: "!!!", Group: "work", Value: "old"})
 
-	listed, err := s.List(ctx)
-	if err != nil || len(listed) != 2 {
-		t.Fatalf("List: %d secrets, err %v", len(listed), err)
+	listed, err := s.Contents(ctx)
+	if err != nil || len(listed.Secrets) != 2 {
+		t.Fatalf("Contents: %d secrets, err %v", len(listed.Secrets), err)
 	}
 
 	for _, name := range []string{"foo", "!!!"} {
@@ -398,12 +398,12 @@ func TestMigration_MigratesAGroupHoldingASecretNamedVlt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	secrets, err := s.List(context.Background())
+	secrets, err := s.Contents(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(secrets) != 2 || len(s.SkippedFiles()) != 0 {
-		t.Fatalf("listed %d secrets, skipped %v; want both migrated", len(secrets), s.SkippedFiles())
+	if len(secrets.Secrets) != 2 || len(s.SkippedFiles()) != 0 {
+		t.Fatalf("listed %d secrets, skipped %v; want both migrated", len(secrets.Secrets), s.SkippedFiles())
 	}
 }
 
