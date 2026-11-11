@@ -49,21 +49,21 @@ func background[T any](r runner, work func(context.Context) (T, error), done fun
 	backgroundOwned(r, work, done, nil)
 }
 
-// backgroundOwned is background for a result that must be released (such
-// as plaintext to wipe) when it is dropped: if the context has been
-// cancelled by the time the result reaches the main goroutine, release, if
-// not nil, is called with it there instead of done. The work may finish
-// after its last check of the context, so only this check can catch a lock
-// in between.
-func backgroundOwned[T any](r runner, work func(context.Context) (T, error), done func(T, error), release func(T)) {
+// backgroundOwned is background for an outcome that must not simply vanish
+// when it is dropped (plaintext to wipe, a change to report): if the
+// context has been cancelled by the time the outcome reaches the main
+// goroutine, dropped, if not nil, is called with it there instead of done.
+// The work may finish after its last check of the context, so only this
+// check can catch a lock in between.
+func backgroundOwned[T any](r runner, work func(context.Context) (T, error), done, dropped func(T, error)) {
 	ctx := r.context()
 	r.spawn(func() {
 		v, err := work(ctx)
 		fyne.Do(func() {
 			if ctx.Err() != nil {
 				// The session ended (vault locked); drop the result.
-				if release != nil {
-					release(v)
+				if dropped != nil {
+					dropped(v, err)
 				}
 				return
 			}

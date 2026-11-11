@@ -141,6 +141,10 @@ func startOwned[T any](o *operations, op *operation, work func(context.Context) 
 		op.control.Disable()
 	}
 	hide := o.showProgress(op)
+	var dropped func(T, error)
+	if release != nil {
+		dropped = func(v T, _ error) { release(v) }
+	}
 	backgroundOwned(o.run, work, func(v T, err error) {
 		if op.kind != "" {
 			delete(o.running, op.kind)
@@ -157,7 +161,7 @@ func startOwned[T any](o *operations, op *operation, work func(context.Context) 
 		default:
 			showError(o.window, op.doing, err)
 		}
-	}, release)
+	}, dropped)
 	return true
 }
 
