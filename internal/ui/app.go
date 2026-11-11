@@ -124,7 +124,7 @@ func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, setti
 		),
 	))
 
-	app.session = newSession[*store.Store](timers, fyne.Do, settings.LockTimeout, sessionCallbacks{
+	app.session = newSession[*store.Store](timers, fyne.Do, run.spawn, settings.LockTimeout, sessionCallbacks{
 		Warn: app.showLockWarning,
 		// The session has already closed the store (zeroing its key);
 		// Lock returns to the unlock screen.
@@ -259,7 +259,7 @@ func (a *App) onUnlock(passphrase string) {
 			if a.unlockScreen != screen {
 				// The screen was replaced (e.g. vault switched) while scrypt ran.
 				if r.store != nil {
-					r.store.Close()
+					a.session.Discard(r.store)
 				}
 				return
 			}
@@ -413,7 +413,7 @@ func (a *App) onCreate(passphrase string) {
 		func(r openResult, err error) {
 			if a.createScreen != screen {
 				if r.store != nil {
-					r.store.Close()
+					a.session.Discard(r.store)
 				}
 				return
 			}
@@ -465,7 +465,7 @@ func (a *App) unlockedOrAsk(r openResult, setBusy func(bool), current func() boo
 				return // already closed (timed out, or quitting)
 			}
 			if !openAnyway || !current() {
-				s.Close()
+				a.session.Discard(s)
 				return
 			}
 			setBusy(true)
@@ -473,7 +473,7 @@ func (a *App) unlockedOrAsk(r openResult, setBusy func(bool), current func() boo
 				func(ctx context.Context) (none, error) { return none{}, s.AcquireLock(ctx, true) },
 				func(_ none, err error) {
 					if !current() {
-						s.Close()
+						a.session.Discard(s)
 						return
 					}
 					setBusy(false)

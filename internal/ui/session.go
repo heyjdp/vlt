@@ -2,16 +2,20 @@ package ui
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 )
 
-// sessionStore is what a session needs of an open vault: closing it, which
-// zeroes its key at once, and a channel closed once it has released its
-// lock and connection (a vault on a server does that in the background).
-// *store.Store satisfies it; tests also use a store that never finishes.
+// sessionStore is what a session needs of an open vault: zeroing its key
+// (ZeroKey, which must not block), closing it (Close, which releases its
+// lock file and connection and may block on the vault's storage: a local
+// vault on a network folder that stops answering), and a channel closed
+// once Close has finished. *store.Store satisfies it; tests also use
+// stores that never finish.
 type sessionStore interface {
 	comparable
+	ZeroKey()
 	Close()
 	Closed() <-chan struct{}
 }
@@ -30,9 +34,14 @@ type sessionCallbacks struct {
 // countdown with its warning.
 //
 // Its methods may be called from any goroutine; its state is guarded by
-// its own mutex. When the auto-lock timeout passes, or a waiting store's
-// time runs out, the store is closed (its key zeroed) at once, on the
-// timer's goroutine, so a busy main goroutine never keeps a key in memory
+// its own mutex. Every store the session lets go of (on End, the auto-lock,
+// Begin, Hold, Discard, Close) has its key zeroed at once and is detached
+// under that mutex; its Close (the lock file's release, the connection)
+// then runs through spawn, a new goroutine in production, so neither the
+// main goroutine nor the mutex ever waits on the vault's storage. Close
+// waits a bounded time for those releases. When the auto-lock timeout
+// passes, or a waiting store's time runs out, the key is zeroed at once, on
+// the timer's goroutine, so a busy main goroutine never keeps a key in memory
 // past the timeout. Only then do the callbacks run, through post, which in
 // production is fyne.Do, so they always run on the Fyne main goroutine. A
 // timer that was already firing when activity arrived or the session ended
@@ -45,8 +54,11 @@ type sessionCallbacks struct {
 type session[S sessionStore] struct {
 	newTimer timerFactory
 	post     func(func())
-	timeout  func() time.Duration // the auto-lock timeout, re-read on each restart; 0 = off
-	cb       sessionCallbacks
+	// spawn runs a let-go store's Close without waiting for it: a new
+	// goroutine in production; tests over local stores run it inline.
+	spawn   func(func())
+	timeout func() time.Duration // the auto-lock timeout, re-read on each restart; 0 = off
+	cb      sessionCallbacks
 
 	mu     sync.Mutex
 	store  S // the zero S (nil) while locked
@@ -62,9 +74,9 @@ type session[S sessionStore] struct {
 	// so it is closed when the auto-lock timeout passes without an answer.
 	pending      S
 	pendingTimer stoppableTimer
-	// closing is the last ended store's Closed channel, which Close waits
-	// for.
-	closing <-chan struct{}
+	// closing holds the Closed channels of stores let go of whose release
+	// may still be running, which Close waits for.
+	closing []<-chan struct{}
 	// paused counts the pauses of this session not yet resumed (see Pause).
 	paused int
 }
@@ -78,9 +90,10 @@ type session[S sessionStore] struct {
 const pausedLockAfter = time.Hour
 
 // newSession returns a session with no vault open. timeout returns the
-// auto-lock timeout (0 = off); post runs a callback on the main goroutine.
-func newSession[S sessionStore](timers timerFactory, post func(func()), timeout func() time.Duration, cb sessionCallbacks) *session[S] {
-	return &session[S]{newTimer: timers, post: post, timeout: timeout, cb: cb}
+// auto-lock timeout (0 = off); post runs a callback on the main goroutine;
+// spawn runs a let-go store's Close in the background.
+func newSession[S sessionStore](timers timerFactory, post, spawn func(func()), timeout func() time.Duration, cb sessionCallbacks) *session[S] {
+	return &session[S]{newTimer: timers, post: post, spawn: spawn, timeout: timeout, cb: cb}
 }
 
 // Begin opens the session on s and starts the auto-lock countdown. The
@@ -170,9 +183,9 @@ func (ss *session[S]) Pause() (resume func()) {
 	}
 }
 
-// End closes the open store (zeroing its key), cancels the session context
-// and stops the countdown. Ending a session that isn't open only counts as
-// an end for Current.
+// End zeroes the open store's key and lets it go (its lock is released in
+// the background), cancels the session context and stops the countdown.
+// Ending a session that isn't open only counts as an end for Current.
 func (ss *session[S]) End() {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
@@ -180,8 +193,8 @@ func (ss *session[S]) End() {
 }
 
 // Hold keeps s waiting on a question until Take. If the auto-lock timeout
-// (when on) passes first, s is closed and onExpire runs (through post). A
-// store already waiting is closed.
+// (when on) passes first, s is discarded and onExpire runs (through post).
+// A store already waiting is discarded.
 func (ss *session[S]) Hold(s S, onExpire func()) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
@@ -193,10 +206,19 @@ func (ss *session[S]) Hold(s S, onExpire func()) {
 	}
 	ss.pendingTimer = ss.newTimer(d, func() {
 		if ss.Take(s) {
-			s.Close()
+			ss.Discard(s)
 			ss.post(onExpire)
 		}
 	})
+}
+
+// Discard zeroes the key of a store the caller owns (one Take returned, or
+// one opened for a screen since replaced) and closes it in the background;
+// Close waits for it like the session's own.
+func (ss *session[S]) Discard(s S) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	ss.letGoLocked(s)
 }
 
 // Take ends the wait for s and reports whether s was still waiting. When it
@@ -214,21 +236,15 @@ func (ss *session[S]) Take(s S) bool {
 	return true
 }
 
-// Close ends the session and closes a waiting store, then waits up to wait
-// for every closed store to release its lock and connection. It reports
-// whether they all did in time; a dead network must not stop vlt quitting.
+// Close ends the session and discards a waiting store, then waits up to
+// wait for every store let go of to release its lock and connection. It
+// reports whether they all did in time; a dead network must not stop vlt
+// quitting.
 func (ss *session[S]) Close(wait time.Duration) bool {
 	ss.mu.Lock()
-	var done []<-chan struct{}
-	var none S
-	if ss.pending != none {
-		done = append(done, ss.pending.Closed())
-	}
 	ss.dropPendingLocked()
 	ss.endLocked()
-	if ss.closing != nil {
-		done = append(done, ss.closing)
-	}
+	done := slices.Clone(ss.closing)
 	ss.mu.Unlock()
 
 	deadline := time.After(wait)
@@ -246,8 +262,7 @@ func (ss *session[S]) Close(wait time.Duration) bool {
 func (ss *session[S]) endLocked() {
 	var none S
 	if ss.store != none {
-		ss.closing = ss.store.Closed()
-		ss.store.Close()
+		ss.letGoLocked(ss.store)
 		ss.store = none
 	}
 	if ss.cancel != nil {
@@ -259,12 +274,32 @@ func (ss *session[S]) endLocked() {
 	ss.gen++
 }
 
-// dropPendingLocked closes a waiting store and stops its timer. The caller
-// holds ss.mu.
+// letGoLocked zeroes s's key now and closes s through spawn, keeping its
+// Closed channel for Close (and dropping those already closed). The caller
+// holds ss.mu and no longer refers to s.
+func (ss *session[S]) letGoLocked(s S) {
+	s.ZeroKey()
+	ss.closing = slices.DeleteFunc(ss.closing, isClosedChan)
+	ss.closing = append(ss.closing, s.Closed())
+	ss.spawn(s.Close)
+}
+
+// isClosedChan reports whether ch is closed.
+func isClosedChan(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+// dropPendingLocked discards a waiting store and stops its timer. The
+// caller holds ss.mu.
 func (ss *session[S]) dropPendingLocked() {
 	var none S
 	if ss.pending != none {
-		ss.pending.Close()
+		ss.letGoLocked(ss.pending)
 		ss.pending = none
 	}
 	ss.stopPendingTimerLocked()
