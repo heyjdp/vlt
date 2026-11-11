@@ -217,7 +217,7 @@ vlt/
 ### Package Responsibilities
 
 **`internal/crypto`**
-- `identity.go` — generates the X25519 vault key and holds it in a `memguard.LockedBuffer`; `WrapIdentity`/`UnwrapIdentity` encrypt it to and from the passphrase (scrypt); `DecryptWithPassphrase` reads `vlt.age` and legacy files, refusing a work factor above `MaxWorkFactor` before deriving; `Zero()` wipes on lock
+- `identity.go` — generates the X25519 vault key and holds it in a `memguard.LockedBuffer`; `WrapIdentity`/`UnwrapIdentity` encrypt it to and from the passphrase (scrypt); `DecryptWithPassphrase` reads `vlt.age` and legacy files, refusing a work factor above `MaxWorkFactor` before deriving; `Zero()` wipes on lock. `WrapIdentity` runs the scrypt derivation (seconds) before taking the identity's mutex and holds it only to write the key into the encrypted stream, so a lock during *Change Passphrase* zeroes the key at once; a wrap whose key was zeroed meanwhile fails with `ErrIdentityZeroed` and returns nothing
 - `vault.go` — `Encrypt(identity, envelope) ([]byte, error)` and `Decrypt(identity, ciphertext) ([]byte, error)` to the vault key
 
 **`internal/store`**

@@ -133,14 +133,39 @@ func WrapIdentity(passphrase string, id *Identity, workFactor int) ([]byte, erro
 	return out, nil
 }
 
-// wrapTo encrypts the vault key to r.
+// wrapTo encrypts the vault key to r. The recipient's key derivation (for
+// scrypt, seconds) runs in age.Encrypt, before the key is needed, so it runs
+// without id.mu: Zero (a lock) must not wait for it. Only writing the key
+// into the encrypted stream holds the mutex; if the key was zeroed during
+// the derivation, the wrap fails and nothing is returned.
 func wrapTo(r age.Recipient, id *Identity) ([]byte, error) {
+	var buf bytes.Buffer
+	w, err := age.Encrypt(&buf, r)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeKey(w, id); err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, fmt.Errorf("close: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// writeKey writes the encoded vault key to w under id.mu, or fails with
+// ErrIdentityZeroed. age buffers it and seals it in that buffer when w is
+// closed, as for any encryption.
+func writeKey(w io.Writer, id *Identity) error {
 	id.mu.Lock()
 	defer id.mu.Unlock()
 	if id.parsed == nil {
-		return nil, ErrIdentityZeroed
+		return ErrIdentityZeroed
 	}
-	return encryptTo(r, id.buf.Bytes())
+	if _, err := w.Write(id.buf.Bytes()); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	return nil
 }
 
 // UnwrapIdentity decrypts a wrapped vault key with passphrase.

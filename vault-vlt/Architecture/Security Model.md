@@ -42,7 +42,7 @@ flowchart TB
     style X fill:#c62828,color:#fff
 ```
 
-The passphrase is no longer held for the session. It is used once to unwrap `vlt.age` and then dropped. The long-lived secret is the vault key. Its encoded form is in the green buffer, but age's parsed `X25519Identity` (and one transient string copy) sit on the Go heap. `Identity.Zero()` destroys the buffer and drops the pointer, but it cannot wipe the heap copy.
+The passphrase is no longer held for the session. It is used once to unwrap `vlt.age` and then dropped. The long-lived secret is the vault key. Its encoded form is in the green buffer, but age's parsed `X25519Identity` (and one transient string copy) sit on the Go heap. `Identity.Zero()` destroys the buffer and drops the pointer, but it cannot wipe the heap copy. It never waits for a passphrase change: the scrypt derivation runs without the identity's mutex, so a lock mid-change zeroes the key at once and the change fails ([[F45 Lock without freezing]]).
 
 ## Realistic goal
 
