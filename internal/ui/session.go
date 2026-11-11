@@ -39,14 +39,15 @@ type sessionCallbacks struct {
 // under that mutex; its Close (the lock file's release, the connection)
 // then runs through spawn, a new goroutine in production, so neither the
 // main goroutine nor the mutex ever waits on the vault's storage. Close
-// waits a bounded time for those releases. When the auto-lock timeout
-// passes, or a waiting store's time runs out, the key is zeroed at once, on
-// the timer's goroutine, so a busy main goroutine never keeps a key in memory
-// past the timeout. Only then do the callbacks run, through post, which in
-// production is fyne.Do, so they always run on the Fyne main goroutine. A
-// timer that was already firing when activity arrived or the session ended
-// does nothing, and neither does a waiting store's timer once the store
-// has been taken.
+// waits a bounded time for those releases. A waiting store busy with
+// background work (Busy) is zeroed at once too, but closed only at Idle.
+// When the auto-lock timeout passes, or a waiting store's time runs out, the
+// key is zeroed at once, on the timer's goroutine, so a busy main goroutine
+// never keeps a key in memory past the timeout. Only then do the callbacks
+// run, through post, which in production is fyne.Do, so they always run on
+// the Fyne main goroutine. A timer that was already firing when activity
+// arrived or the session ended does nothing, and neither does a waiting
+// store's timer once the store has been taken.
 //
 // An operation that must not be cut off for want of input (moving the
 // vault, changing its passphrase) pauses the auto-lock (Pause) while it
@@ -74,6 +75,11 @@ type session[S sessionStore] struct {
 	// so it is closed when the auto-lock timeout passes without an answer.
 	pending      S
 	pendingTimer stoppableTimer
+	// busy holds stores taken over in the background (Open Anyway takes a
+	// waiting store's lock over) between Busy and Idle, which must not be
+	// closed meanwhile. A busy store let go has its key zeroed at once and
+	// is marked true: Idle then closes it.
+	busy map[S]bool
 	// closing holds the Closed channels of stores let go of whose release
 	// may still be running, which Close waits for.
 	closing []<-chan struct{}
@@ -214,6 +220,39 @@ func (ss *session[S]) Hold(s S, onExpire func()) {
 	})
 }
 
+// Busy marks the waiting s as in use by background work that must not race
+// its Close (taking its lock over), and reports whether s was still waiting.
+// s stays waiting: if it is let go meanwhile (its time runs out, another
+// store is held, vlt quits), its key is zeroed at once and Close waits for
+// its release, but its Close runs only at Idle. Call Idle when the work is
+// done, then Take as usual.
+func (ss *session[S]) Busy(s S) bool {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	var none S
+	if s == none || ss.pending != s {
+		return false
+	}
+	if ss.busy == nil {
+		ss.busy = make(map[S]bool)
+	}
+	ss.busy[s] = false
+	return true
+}
+
+// Idle ends Busy: if s was let go meanwhile it is closed now (through
+// spawn). It may be called from any goroutine, and does nothing for a store
+// not busy.
+func (ss *session[S]) Idle(s S) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	letGo, ok := ss.busy[s]
+	delete(ss.busy, s)
+	if ok && letGo {
+		ss.spawn(s.Close)
+	}
+}
+
 // Discard zeroes the key of a store the caller owns (one Take returned, or
 // one opened for a screen since replaced) and closes it in the background;
 // Close waits for it like the session's own.
@@ -292,13 +331,17 @@ func (ss *session[S]) endLocked() {
 	ss.gen++
 }
 
-// letGoLocked zeroes s's key now and closes s through spawn, keeping its
-// Closed channel for Close (and dropping those already closed). The caller
-// holds ss.mu and no longer refers to s.
+// letGoLocked zeroes s's key now and closes s through spawn (or, if s is
+// busy, at Idle), keeping its Closed channel for Close (and dropping those
+// already closed). The caller holds ss.mu and no longer refers to s.
 func (ss *session[S]) letGoLocked(s S) {
 	s.ZeroKey()
 	ss.closing = slices.DeleteFunc(ss.closing, isClosedChan)
 	ss.closing = append(ss.closing, s.Closed())
+	if _, busy := ss.busy[s]; busy {
+		ss.busy[s] = true // closed by Idle
+		return
+	}
 	ss.spawn(s.Close)
 }
 

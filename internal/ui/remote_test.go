@@ -361,3 +361,59 @@ func TestSettings_SwitchToTheSameLocationWrittenDifferently(t *testing.T) {
 	}
 	app.Lock()
 }
+
+// runNext runs the first piece of work q holds.
+func runNext(t *testing.T, q *queue) {
+	t.Helper()
+	if len(q.pending) == 0 {
+		t.Fatal("no work queued")
+	}
+	next := q.pending[0]
+	q.pending = q.pending[1:]
+	next()
+}
+
+// queuedLockApp is an app over a vault in dir with a queued runner, showing
+// the unlock screen (or the create screen, for a missing vault).
+func queuedLockApp(t *testing.T, dir string) (*App, fyne.Window, *queue) {
+	t.Helper()
+	a := test.NewTempApp(t)
+	w := test.NewTempWindow(t, nil)
+	q := &queue{}
+	app := newApp(a, w, settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
+	q.flush()
+	return app, w, q
+}
+
+// Quitting while "Open Anyway" takes the lock over: the store being taken
+// over is still the session's, so quitting waits for its release, which
+// follows the takeover.
+func TestApp_QuitDuringATakeoverWaitsForTheStoresRelease(t *testing.T) {
+	dir := t.TempDir()
+	newVaultWith(t, dir)
+	plantLock(t, dir)
+	app, w, q := queuedLockApp(t, dir)
+
+	unlock(app)
+	runNext(t, q)
+	waiting := app.session.Pending()
+	test.Tap(dialogButton(t, w, "Open Anyway"))
+
+	if app.session.Close(0) {
+		t.Fatal("quitting must wait for the vault being taken over")
+	}
+	if isClosedChan(waiting.Closed()) {
+		t.Fatal("the store must not be closed while its lock is taken over")
+	}
+	q.flush() // the takeover ends; the store is then closed
+
+	if !isClosedChan(waiting.Closed()) || app.session.Store() != nil {
+		t.Fatal("after quitting, the store taken over is closed and the vault stays locked")
+	}
+	if got := lockHolder(t, dir); got != "" {
+		t.Fatalf("the lock taken over should be released, held by %q", got)
+	}
+	if !app.session.Close(time.Second) {
+		t.Fatal("quitting should then find every store released")
+	}
+}
