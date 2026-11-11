@@ -51,7 +51,7 @@ Add a small plaintext header line or a `vlt.json` with `{"format": 2}` so future
 **Positive**
 - Unlock costs $t_s + n\,t_x$ instead of $(n+1)\,t_s$: about 0.75 s regardless of size.
 - Changing the passphrase is a single atomic rewrite with no partial-failure states.
-- Raising the scrypt work factor becomes affordable.
+- Raising the scrypt work factor becomes affordable (up to `MaxWorkFactor`, 2^20; see [[F43 Scrypt work factor cap]]).
 - The long-lived in-memory secret is the X25519 key, not the passphrase.
 
 **Negative**

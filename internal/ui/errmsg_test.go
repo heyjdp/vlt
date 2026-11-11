@@ -53,6 +53,25 @@ func TestErrorMessage_DescribesRealErrorsInPlainWords(t *testing.T) {
 			want: "Couldn't open the vault: the passphrase is incorrect",
 		},
 		{
+			name:  "a vault key asking for too much key-derivation work",
+			doing: "Couldn't open the vault",
+			err: func(t *testing.T) error {
+				_, dir := openTestVault(t)
+				key := filepath.Join(dir, "vlt.age")
+				data, err := os.ReadFile(key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				data = regexp.MustCompile(`(?m)^(-> scrypt \S+) \d+$`).ReplaceAll(data, []byte("$1 22"))
+				if err := os.WriteFile(key, data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				_, err = store.Open(ctx, dir, testPassphrase, quietLog(), testKDF)
+				return err
+			},
+			want: "Couldn't open the vault: the passphrase-protected file asks for more key-derivation work than vlt allows (2^22; at most 2^20)",
+		},
+		{
 			name:  "wrong current passphrase on change",
 			doing: "Couldn't change the passphrase",
 			err: func(t *testing.T) error {

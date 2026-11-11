@@ -315,6 +315,10 @@ func openWithoutKeyFile(ctx context.Context, fsys vaultFS, loc Location, passphr
 		}
 		passphraseFiles++
 		plaintext, err := o.decryptWithPassphrase(passphrase, data)
+		if errors.Is(err, crypto.ErrWorkFactorTooHigh) {
+			// Not a wrong passphrase: say why, rather than let it read as one.
+			return nil, fmt.Errorf("store.Open: %w", err)
+		}
 		if err != nil {
 			continue
 		}
