@@ -55,7 +55,7 @@ func TestApp_UnlockTakesTheLockAndLockReleasesIt(t *testing.T) {
 
 	unlock(app)
 	host, _ := os.Hostname()
-	if app.store == nil || lockHolder(t, dir) != host {
+	if app.session.Store() == nil || lockHolder(t, dir) != host {
 		t.Fatalf("unlocking should record this computer in vlt.lock, got %q", lockHolder(t, dir))
 	}
 	app.Lock()
@@ -73,7 +73,7 @@ func TestApp_VaultOpenElsewhereAsksAndOpenAnywayTakesOver(t *testing.T) {
 	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 
 	unlock(app)
-	if app.store != nil || app.unlockScreen == nil {
+	if app.session.Store() != nil || app.unlockScreen == nil {
 		t.Fatal("the vault must not open before the user answers")
 	}
 	msg := findType[*widget.Label](w.Canvas().Overlays().Top())
@@ -83,7 +83,7 @@ func TestApp_VaultOpenElsewhereAsksAndOpenAnywayTakesOver(t *testing.T) {
 	test.Tap(dialogButton(t, w, "Open Anyway"))
 
 	host, _ := os.Hostname()
-	if app.store == nil || lockHolder(t, dir) != host {
+	if app.session.Store() == nil || lockHolder(t, dir) != host {
 		t.Fatalf("Open Anyway should unlock and take the lock over (held by %q)", lockHolder(t, dir))
 	}
 	app.Lock()
@@ -100,7 +100,7 @@ func TestApp_VaultOpenElsewhereCancelLeavesItLocked(t *testing.T) {
 	unlock(app)
 	test.Tap(dialogButton(t, w, "Cancel"))
 
-	if app.store != nil || app.unlockScreen == nil {
+	if app.session.Store() != nil || app.unlockScreen == nil {
 		t.Fatal("Cancel must leave the vault locked on the unlock screen")
 	}
 	if got := lockHolder(t, dir); got != "laptop.local" {
@@ -208,7 +208,7 @@ func TestApp_ServerDialogValidatesAndSwitchesTheLocation(t *testing.T) {
 func TestSettings_RefusesABadLocation(t *testing.T) {
 	app, _ := newFlowApp(t)
 	unlock(app)
-	ss := app.openSettings(app.store, app.run)
+	ss := app.openSettings(app.session.Store(), app.run)
 	box := ss.buildVaultLocation()
 	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")
 
@@ -233,7 +233,7 @@ func TestApp_CancelClosesTheWaitingVault(t *testing.T) {
 	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 
 	unlock(app)
-	waiting := app.pending
+	waiting := app.session.Pending()
 	if waiting == nil {
 		t.Fatal("the opened vault should wait for an answer")
 	}
@@ -243,7 +243,7 @@ func TestApp_CancelClosesTheWaitingVault(t *testing.T) {
 	default:
 		t.Fatal("Cancel must close the waiting vault (its key is in memory)")
 	}
-	if app.pending != nil {
+	if app.session.Pending() != nil {
 		t.Fatal("nothing should be pending after Cancel")
 	}
 }
@@ -258,7 +258,7 @@ func TestApp_UnansweredOpenElsewhereDialogLocksAfterTheTimeout(t *testing.T) {
 	app := newApp(a, w, Config{VaultDir: dir, LockTimeoutMs: 60_000}, quietLog(), inlineRunner(), clock.factory, testKDF)
 
 	unlock(app)
-	waiting := app.pending
+	waiting := app.session.Pending()
 	timer := clock.active(time.Minute)
 	if waiting == nil || timer == nil {
 		t.Fatal("the dialog should be guarded by the auto-lock timeout")
@@ -286,7 +286,7 @@ func TestApp_QuitReleasesTheLock(t *testing.T) {
 	if lockHolder(t, dir) == "" {
 		t.Fatal("expected a lock while unlocked")
 	}
-	app.closeStores(time.Second) // what quit does before exiting
+	app.session.Close(time.Second) // what quit does before exiting
 	if got := lockHolder(t, dir); got != "" {
 		t.Fatalf("quitting while unlocked must remove vlt.lock, held by %q", got)
 	}

@@ -273,6 +273,7 @@ The test suite covers:
   - *Lock file*: unlocking takes it, and locking or quitting releases it; a vault open elsewhere asks first, *Open Anyway* takes over, *Cancel* closes the waiting vault and leaves the other lock alone, and an unanswered question closes it after the auto-lock timeout
   - *Background work*: unlock and create run off the UI thread with progress; stale results after a vault switch or lock are dropped; lock cancels the initial list load
   - *List and detail*: saves, deletes and imports update rows in place (also under a search filter and during the first load); forms save every field, mask secrets, and copy the right value; group suggestions show one spelling per group, a new or imported secret typed into a differently spelled group uses the existing one, and search matches a group by either spelling
+  - *Session*: the session module alone, with real temporary stores, a stand-in for a server store that releases its lock late, and hand-fired timers: begin and end (store closed, context cancelled, earlier work sees the end; beginning again ends the open session), the warning (only with room for it) and auto-lock, the key zeroed before the main goroutine runs and a late timeout notice dropped, activity restarting the countdown and silencing timers already firing, no countdown while locked or with auto-lock off, a waiting store closed when the timeout passes, kept once taken, or closed when another replaces it, and quitting closing both stores and waiting, within a deadline, for their locks to be released
   - *Auto-lock*: activity resets the countdown, idleness locks, the warning and its buttons work, timeout changes apply, zero disables it
   - *Clipboard*: cleared after the TTL, each copy gets its full TTL, unrelated content is left alone, cleared on lock and quit
   - *Import and export*: read errors and oversized files save nothing; the SHA-256 is reported; failed writes and closes are reported
@@ -378,7 +379,8 @@ internal/
 ├── update/
 │   └── update.go            Asks GitHub for the latest release; compares versions
 ├── ui/
-│   ├── app.go               Lock/unlock state machine, header bar, layout
+│   ├── app.go               Screen switching (unlock, create, main view), header bar, layout
+│   ├── session.go           Vault session: the open or waiting store, auto-lock countdown and warning
 │   ├── about.go             About dialog: build details, Copy Details, Report a Bug
 │   ├── updates.go           Check for Updates: on request, and at start-up if turned on
 │   ├── totp.go              A record's one-time code panel (code, countdown, Copy Code)

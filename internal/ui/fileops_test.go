@@ -108,7 +108,7 @@ func TestApp_FailingImportSavesNothing(t *testing.T) {
 	r := &fakeURIReader{Reader: failingReader(4096), uri: storage.NewFileURI("/tmp/id_rsa")}
 	app.detailView.fileOps.processImport(r)
 
-	secrets, err := app.store.List(t.Context())
+	secrets, err := app.session.Store().List(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
