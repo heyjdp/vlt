@@ -27,7 +27,7 @@ Two copies of vlt with the same vault open can make conflicting edits. Two compu
 
 ## Fix
 - **Taking the lock:** `Store.AcquireLock` creates `vlt.lock` exclusively. It records host, user, PID, the time and a random token.
-- **Releasing it:** `Close` removes the lock only if it still holds that token.
+- **Releasing it:** `Close` removes the lock only if it still holds that token (since [[F45 Lock without freezing]]: a release can run late, so the lock moved aside is deleted only once known to be ours; a newer one is put back, or left aside, never deleted).
 - **Someone else has it:** a lock held elsewhere comes back as `*InUseError` (`errors.Is(err, ErrVaultInUse)`), and `force` takes it over.
 - **Stale locks:** a lock from this host whose process is gone, or from this same process, is taken over silently. `processAlive` uses `kill(pid, 0)` on Unix and `FindProcess` on Windows.
 - **Advisory only:** the lock holds no secrets, `CopyTo` doesn't copy it, and failing to write it never blocks an unlock.

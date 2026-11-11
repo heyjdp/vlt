@@ -353,6 +353,31 @@ func TestStore_Close_ZeroesKey(t *testing.T) {
 	}
 }
 
+func TestStore_ZeroKey_ZeroesTheKeyButLeavesTheLockForClose(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	s := createVault(t, dir)
+	if err := s.Create(context.Background(), testutil.PasswordSecret("a", "1", "")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AcquireLock(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	s.ZeroKey()
+
+	if _, err := s.Get(context.Background(), "a", ""); err == nil {
+		t.Fatal("expected Get to fail once the key is zeroed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "vlt.lock")); err != nil {
+		t.Fatalf("ZeroKey must not touch the vault's storage: %v", err)
+	}
+	s.Close()
+	if _, err := os.Stat(filepath.Join(dir, "vlt.lock")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Close should still release the lock: %v", err)
+	}
+}
+
 func TestStore_Open_CorruptKeyFileIsNotReportedAsWrongPassphrase(t *testing.T) {
 	t.Parallel()
 

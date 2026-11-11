@@ -8,7 +8,8 @@ import (
 
 // runner moves blocking vault work (scrypt, file I/O) off the Fyne main
 // goroutine so the window never freezes. Every blocking store call in this
-// package goes through background.
+// package goes through background; a store's Close runs through spawn, via
+// the session.
 //
 // spawn starts the work: a new goroutine in production. Tests use an inline
 // or queued spawn, which together with fyne/test's inline fyne.Do makes

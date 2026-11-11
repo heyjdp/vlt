@@ -402,11 +402,20 @@ func (s *Store) ChangePassphrase(ctx context.Context, oldPass, newPass string) e
 	return nil
 }
 
+// ZeroKey zeroes the vault key at once, without touching the vault's
+// storage: the Store can no longer read or write secrets. Close is still
+// needed to release the lock file and the connection.
+func (s *Store) ZeroKey() {
+	s.id.Zero()
+}
+
 // Close zeroes the vault key at once, then releases the vault's lock file
 // (if this Store holds it) and, for a vault on a server, ends the
-// connection. For a local vault that cleanup is done before Close returns;
-// for a remote one it runs in the background, so a dead network cannot hold
-// up locking. Closed reports when it has finished. The Store must not be
+// connection. For a local vault that cleanup is done before Close returns,
+// so it can block on a network folder that stops answering (the UI's
+// session therefore calls ZeroKey, then Close on another goroutine); for a
+// remote one it runs in the background, so a dead network cannot hold up
+// locking. Closed reports when it has finished. The Store must not be
 // used after Close; calling Close again does nothing.
 func (s *Store) Close() {
 	s.id.Zero()

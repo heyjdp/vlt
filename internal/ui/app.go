@@ -124,7 +124,7 @@ func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, setti
 		),
 	))
 
-	app.session = newSession[*store.Store](timers, fyne.Do, settings.LockTimeout, sessionCallbacks{
+	app.session = newSession[*store.Store](timers, fyne.Do, run.spawn, settings.LockTimeout, sessionCallbacks{
 		Warn: app.showLockWarning,
 		// The session has already closed the store (zeroing its key);
 		// Lock returns to the unlock screen.
@@ -259,7 +259,7 @@ func (a *App) onUnlock(passphrase string) {
 			if a.unlockScreen != screen {
 				// The screen was replaced (e.g. vault switched) while scrypt ran.
 				if r.store != nil {
-					r.store.Close()
+					a.session.Discard(r.store)
 				}
 				return
 			}
@@ -413,7 +413,7 @@ func (a *App) onCreate(passphrase string) {
 		func(r openResult, err error) {
 			if a.createScreen != screen {
 				if r.store != nil {
-					r.store.Close()
+					a.session.Discard(r.store)
 				}
 				return
 			}
@@ -445,7 +445,9 @@ func (a *App) lockVault(ctx context.Context, s *store.Store) openResult {
 // unlockedOrAsk goes on to the main view, unless another copy of vlt has
 // the vault open: then it asks first, and on "Open Anyway" takes the lock
 // over. current reports whether the screen that started the unlock is
-// still shown; if it is not, or the user cancels, the store is closed.
+// still shown; if it is not, or the user cancels, the store is discarded.
+// Until the takeover ends the store stays with the session, waiting, so the
+// auto-lock and quitting zero its key and release it.
 func (a *App) unlockedOrAsk(r openResult, setBusy func(bool), current func() bool) {
 	if r.inUse == nil {
 		a.unlocked(r.store)
@@ -461,19 +463,30 @@ func (a *App) unlockedOrAsk(r openResult, setBusy func(bool), current func() boo
 	dialog.ShowCustomConfirm("Vault Already Open", "Open Anyway", "Cancel",
 		widget.NewLabel(inUseMessage(r.inUse)),
 		func(openAnyway bool) {
-			if !a.session.Take(s) {
-				return // already closed (timed out, or quitting)
-			}
 			if !openAnyway || !current() {
-				s.Close()
+				if a.session.Take(s) {
+					a.session.Discard(s)
+				}
 				return
+			}
+			// s stays waiting while its lock is taken over, so the auto-lock
+			// and quitting still cover it; Busy keeps them from closing it
+			// before the takeover ends.
+			if !a.session.Busy(s) {
+				return // already closed (timed out, or quitting)
 			}
 			setBusy(true)
 			background(a.run,
-				func(ctx context.Context) (none, error) { return none{}, s.AcquireLock(ctx, true) },
+				func(ctx context.Context) (none, error) {
+					defer a.session.Idle(s)
+					return none{}, s.AcquireLock(ctx, true)
+				},
 				func(_ none, err error) {
+					if !a.session.Take(s) {
+						return // closed meanwhile (timed out, or quitting)
+					}
 					if !current() {
-						s.Close()
+						a.session.Discard(s)
 						return
 					}
 					setBusy(false)

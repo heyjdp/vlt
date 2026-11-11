@@ -2,6 +2,8 @@ package ui
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,7 +24,8 @@ func openTestStore(t *testing.T) *store.Store {
 }
 
 // isClosed reports whether s has been closed and has released its lock (a
-// local store does both before Close returns).
+// local store does both before Close returns, and these sessions run Close
+// inline).
 func isClosed(s *store.Store) bool {
 	select {
 	case <-s.Closed():
@@ -40,7 +43,7 @@ type sessionEvents struct{ warned, timedOut int }
 func newTestSession(timeout time.Duration) (*session[*store.Store], *fakeClock, *sessionEvents) {
 	clock := &fakeClock{}
 	ev := &sessionEvents{}
-	s := newSession[*store.Store](clock.factory, func(f func()) { f() }, func() time.Duration { return timeout },
+	s := newSession[*store.Store](clock.factory, func(f func()) { f() }, inline, func() time.Duration { return timeout },
 		sessionCallbacks{Warn: func() { ev.warned++ }, TimedOut: func() { ev.timedOut++ }})
 	return s, clock, ev
 }
@@ -49,23 +52,65 @@ func newTestSession(timeout time.Duration) (*session[*store.Store], *fakeClock, 
 // runs, as fyne.Do hands them to the main goroutine.
 func queuedSession(timeout time.Duration) (*session[*store.Store], *fakeClock, *sessionEvents, *[]func()) {
 	clock, ev, posted := &fakeClock{}, &sessionEvents{}, &[]func(){}
-	s := newSession[*store.Store](clock.factory, func(f func()) { *posted = append(*posted, f) },
+	s := newSession[*store.Store](clock.factory, func(f func()) { *posted = append(*posted, f) }, inline,
 		func() time.Duration { return timeout },
 		sessionCallbacks{Warn: func() { ev.warned++ }, TimedOut: func() { ev.timedOut++ }})
 	return s, clock, ev, posted
 }
 
+// inline runs a store's Close at once, so tests over real local stores see
+// the lock released when End returns.
+func inline(f func()) { f() }
+
 // slowStore stands in for a vault on a server: Close zeroes the key at once
 // but the lock is released only when release is called.
 type slowStore struct {
 	closedAt int // how many Close calls
+	zeroed   int // how many ZeroKey calls
 	done     chan struct{}
 }
 
 func newSlowStore() *slowStore               { return &slowStore{done: make(chan struct{})} }
+func (s *slowStore) ZeroKey()                { s.zeroed++ }
 func (s *slowStore) Close()                  { s.closedAt++ }
 func (s *slowStore) Closed() <-chan struct{} { return s.done }
 func (s *slowStore) release()                { close(s.done) }
+
+// stuckStore stands in for a local vault on a network folder that has
+// stopped answering: ZeroKey takes effect at once, but Close blocks in the
+// lock file's release until unstick is called (and zeroes only then, so a
+// session relying on Close to zero the key is caught).
+type stuckStore struct {
+	zeroed  atomic.Bool
+	unstuck chan struct{}
+	once    sync.Once
+	done    chan struct{}
+}
+
+func newStuckStore() *stuckStore {
+	return &stuckStore{unstuck: make(chan struct{}), done: make(chan struct{})}
+}
+func (s *stuckStore) ZeroKey()                { s.zeroed.Store(true) }
+func (s *stuckStore) Close()                  { <-s.unstuck; s.ZeroKey(); close(s.done) }
+func (s *stuckStore) Closed() <-chan struct{} { return s.done }
+
+// unstick lets Close finish; calling it again does nothing.
+func (s *stuckStore) unstick() { s.once.Do(func() { close(s.unstuck) }) }
+
+// returnsPromptly reports whether f returns within a few seconds.
+func returnsPromptly(f func()) bool {
+	done := make(chan struct{})
+	go func() {
+		f()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(3 * time.Second):
+		return false
+	}
+}
 
 const sessionTimeout = 5 * time.Minute
 
@@ -451,7 +496,7 @@ func TestSession_CloseWaitsForStoresToReleaseTheirLocks(t *testing.T) {
 		t.Run(which, func(t *testing.T) {
 			t.Parallel()
 			clock := &fakeClock{}
-			sess := newSession[*slowStore](clock.factory, func(f func()) { f() },
+			sess := newSession[*slowStore](clock.factory, func(f func()) { f() }, inline,
 				func() time.Duration { return sessionTimeout }, sessionCallbacks{Warn: func() {}, TimedOut: func() {}})
 			st := newSlowStore()
 			switch which {
@@ -482,5 +527,169 @@ func TestSession_CloseWaitsForAStoreEndedEarlier(t *testing.T) {
 	sess.End()
 	if !sess.Close(time.Second) {
 		t.Fatal("the store ended earlier has released its lock")
+	}
+}
+
+// Locking must not wait on the vault's storage: a "local" vault on a network
+// folder that stops answering would freeze the window (End runs on the main
+// goroutine) and every keystroke (Activity waits on the session's mutex).
+// The key is zeroed at once and the store detached; only the lock file's
+// release waits, in the background, and quitting still waits for it.
+func TestSession_EndingZeroesTheKeyAtOnceAndReleasesTheLockInTheBackground(t *testing.T) {
+	t.Parallel()
+	for _, how := range []string{"lock", "auto-lock", "unlock again", "discard a waiting vault", "hold another"} {
+		t.Run(how, func(t *testing.T) {
+			t.Parallel()
+			clock := &fakeClock{}
+			sess := newSession[*stuckStore](clock.factory, func(f func()) { f() }, func(f func()) { go f() },
+				func() time.Duration { return sessionTimeout }, sessionCallbacks{Warn: func() {}, TimedOut: func() {}})
+			st, next := newStuckStore(), newStuckStore()
+			next.unstick() // a store that follows st releases at once
+			// Let the background Close end, however the test ends.
+			t.Cleanup(st.unstick)
+			var end func()
+			switch how {
+			case "lock":
+				sess.Begin(st)
+				end = sess.End
+			case "auto-lock":
+				sess.Begin(st)
+				end = clock.active(sessionTimeout).f
+			case "unlock again":
+				sess.Begin(st)
+				end = func() { sess.Begin(next) }
+			case "discard a waiting vault":
+				sess.Hold(st, func() {})
+				end = func() {
+					if sess.Take(st) {
+						sess.Discard(st)
+					}
+				}
+			case "hold another":
+				sess.Hold(st, func() {})
+				end = func() { sess.Hold(next, func() {}) }
+			}
+
+			if !returnsPromptly(end) {
+				t.Fatal("ending waited for the store to release its lock")
+			}
+			if !st.zeroed.Load() || sess.Store() == st || sess.Pending() == st {
+				t.Fatal("the key should be zeroed and the store let go before ending returns")
+			}
+			if !returnsPromptly(sess.Activity) {
+				t.Fatal("input waited for the store to release its lock")
+			}
+			if sess.Close(20 * time.Millisecond) {
+				t.Fatal("quitting should wait for the lock to be released")
+			}
+			st.unstick()
+			if !sess.Close(time.Second) {
+				t.Fatal("once the lock is released, quitting goes ahead")
+			}
+		})
+	}
+}
+
+// A waiting store's time can run out while vlt quits. Whichever goes first,
+// quitting must wait for that store's release: the timer must not take the
+// store (out of the quit's reach) and only then let it go. The window is
+// narrow; the loop finds it reliably under the race detector (go test -race).
+func TestSession_QuitWhileAWaitingStoreTimesOutWaitsForItsRelease(t *testing.T) {
+	t.Parallel()
+	for range 20000 {
+		clock := &fakeClock{}
+		sess := newSession[*slowStore](clock.factory, func(func()) {}, inline,
+			func() time.Duration { return sessionTimeout }, sessionCallbacks{Warn: func() {}, TimedOut: func() {}})
+		st := newSlowStore() // never releases its lock
+		sess.Hold(st, func() {})
+		expire := clock.active(sessionTimeout).f
+		expired := make(chan struct{})
+		go func() {
+			defer close(expired)
+			expire()
+		}()
+		quitWaited := !sess.Close(0)
+		<-expired
+		if !quitWaited {
+			t.Fatal("quitting did not wait for the release of a store whose time ran out meanwhile")
+		}
+	}
+}
+
+// Open Anyway takes a waiting store's lock over in the background. Until
+// that ends the store stays the session's: being let go (quit, its time
+// running out, another store held) zeroes its key at once, but its Close
+// (which must not run during the takeover) waits for Idle, and quitting
+// waits for that Close.
+func TestSession_ABusyStoreLetGoIsClosedOnceIdle(t *testing.T) {
+	t.Parallel()
+	for _, how := range []string{"quit", "time runs out", "hold another"} {
+		t.Run(how, func(t *testing.T) {
+			t.Parallel()
+			clock := &fakeClock{}
+			sess := newSession[*slowStore](clock.factory, func(f func()) { f() }, inline,
+				func() time.Duration { return sessionTimeout }, sessionCallbacks{Warn: func() {}, TimedOut: func() {}})
+			st := newSlowStore()
+			expired := 0
+			sess.Hold(st, func() { expired++ })
+			if !sess.Busy(st) {
+				t.Fatal("a waiting store can be made busy")
+			}
+
+			switch how {
+			case "quit":
+				if sess.Close(20 * time.Millisecond) {
+					t.Fatal("quitting should wait for the busy store's release")
+				}
+			case "time runs out":
+				clock.active(sessionTimeout).f()
+				if expired != 1 {
+					t.Fatal("the store's time ran out; onExpire should run")
+				}
+			case "hold another":
+				other := newSlowStore()
+				other.release()
+				sess.Hold(other, func() {})
+			}
+			if st.zeroed == 0 || st.closedAt != 0 {
+				t.Fatalf("letting a busy store go zeroes its key at once and leaves Close for later (zeroed %d, closed %d)", st.zeroed, st.closedAt)
+			}
+
+			sess.Idle(st)
+			if st.closedAt != 1 || sess.Take(st) {
+				t.Fatalf("once idle, a store let go is closed (closed %d) and no longer the session's", st.closedAt)
+			}
+			if sess.Close(20 * time.Millisecond) {
+				t.Fatal("quitting should wait for the store's release")
+			}
+			st.release()
+			if !sess.Close(time.Second) {
+				t.Fatal("once the store has released its lock, quitting goes ahead")
+			}
+		})
+	}
+}
+
+func TestSession_ABusyStoreNotLetGoIsTheCallersOnceTaken(t *testing.T) {
+	t.Parallel()
+	sess, clock, _ := newTestSession(sessionTimeout)
+	st, other := openTestStore(t), openTestStore(t)
+	if sess.Busy(other) {
+		t.Fatal("only a waiting store can be made busy")
+	}
+	sess.Hold(st, func() {})
+	if !sess.Busy(st) {
+		t.Fatal("a waiting store can be made busy")
+	}
+	sess.Idle(st)
+	if isClosed(st) || sess.Pending() != st {
+		t.Fatal("a store not let go stays waiting once idle")
+	}
+	if !sess.Take(st) || !clock.timers[0].stopped {
+		t.Fatal("the store is then taken as usual")
+	}
+	sess.Idle(st) // again: does nothing
+	if isClosed(st) {
+		t.Fatal("a taken store is the caller's")
 	}
 }

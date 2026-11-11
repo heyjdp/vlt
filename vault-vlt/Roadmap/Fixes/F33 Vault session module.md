@@ -50,7 +50,7 @@ Verification found and fixed:
 - **Untestable waits.** Quitting waits for a server vault to release its lock, but four mutants of that wait survived: local stores release their locks before `Close` returns. The session is now generic over a small `sessionStore` interface, so tests use a stand-in that releases its lock only when told to.
 - **Latent:**
   - `Begin` on an open session now ends it first.
-  - `Hold` closes a store already waiting.
+  - `Hold` closes a store already waiting (since [[F45 Lock without freezing]]: its key is zeroed at once and its `Close` runs through `spawn`; a store whose lock *Open Anyway* is taking over stays waiting, marked busy, and is closed when the takeover ends).
   - `Take(nil)` is false.
   - `Close` stops the waiting store's timer.
 - **Tests that missed things.** 11 of 25 mutants survived at first. Tests were added for:

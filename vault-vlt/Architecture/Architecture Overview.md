@@ -73,7 +73,7 @@ stateDiagram-v2
     Unlocked --> Unlocked: user input resets timer
 ```
 
-Widget input (entries, buttons, list selection, sliders), unfocused key presses and dialog answers reset the timer. A warning shows 30 s before locking when the timeout is 60 s or more. While the vault is moved or its passphrase changed, the auto-lock waits (no warning) for up to an hour without input, then counts down in full; *Lock* still locks at once. See [[F07 Inactivity-based auto-lock]] and [[F44 Auto-lock during long operations]].
+Widget input (entries, buttons, list selection, sliders), unfocused key presses and dialog answers reset the timer. A warning shows 30 s before locking when the timeout is 60 s or more. While the vault is moved or its passphrase changed, the auto-lock waits (no warning) for up to an hour without input, then counts down in full; *Lock* still locks at once. Locking zeroes the key at once; the lock file is released in the background ([[F45 Lock without freezing]]). See [[F07 Inactivity-based auto-lock]] and [[F44 Auto-lock during long operations]].
 
 ## Dependencies
 

@@ -361,3 +361,160 @@ func TestSettings_SwitchToTheSameLocationWrittenDifferently(t *testing.T) {
 	}
 	app.Lock()
 }
+
+// runNext runs the first piece of work q holds.
+func runNext(t *testing.T, q *queue) {
+	t.Helper()
+	if len(q.pending) == 0 {
+		t.Fatal("no work queued")
+	}
+	next := q.pending[0]
+	q.pending = q.pending[1:]
+	next()
+}
+
+// queuedLockApp is an app over a vault in dir with a queued runner, showing
+// the unlock screen (or the create screen, for a missing vault).
+func queuedLockApp(t *testing.T, dir string) (*App, fyne.Window, *queue) {
+	t.Helper()
+	a := test.NewTempApp(t)
+	w := test.NewTempWindow(t, nil)
+	q := &queue{}
+	app := newApp(a, w, settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
+	q.flush()
+	return app, w, q
+}
+
+// releasedInTheBackground checks that a store let go by the app is closed
+// through the session, not on the main goroutine: its release is still
+// queued (holder is still the lock's holder, or the store is not yet
+// closed), and once the queue runs the lock is gone and quitting has
+// nothing left to wait for.
+func releasedInTheBackground(t *testing.T, app *App, q *queue, dir, holder string, closed <-chan struct{}) {
+	t.Helper()
+	if got := lockHolder(t, dir); got != holder {
+		t.Fatalf("the lock should still be held by %q until the release runs, held by %q", holder, got)
+	}
+	if closed != nil && isClosedChan(closed) {
+		t.Fatal("the store was closed on the main goroutine, not through the session")
+	}
+	q.flush()
+	if closed != nil && !isClosedChan(closed) {
+		t.Fatal("the store let go was never closed")
+	}
+	if holder != "laptop.local" {
+		if got := lockHolder(t, dir); got != "" {
+			t.Fatalf("the store let go should have released its lock, held by %q", got)
+		}
+	}
+	if !app.session.Close(time.Second) {
+		t.Fatal("quitting should find every store released")
+	}
+	if app.session.Store() != nil {
+		t.Fatal("the vault must stay locked")
+	}
+}
+
+// Unlocking finished after the screen was replaced (a vault switch): the
+// opened store is let go.
+func TestApp_AnUnlockFinishingAfterAVaultSwitchIsDiscarded(t *testing.T) {
+	dir := t.TempDir()
+	newVaultWith(t, dir)
+	app, _, q := queuedLockApp(t, dir)
+
+	unlock(app)
+	app.showUnlockScreen() // as switching vaults does, while scrypt runs
+	runNext(t, q)          // the open finishes
+
+	host, _ := os.Hostname()
+	releasedInTheBackground(t, app, q, dir, host, nil)
+}
+
+// Creating finished after the create screen was replaced: the new vault's
+// store is let go.
+func TestApp_ACreateFinishingAfterTheScreenWasReplacedIsDiscarded(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "vault")
+	app, _, q := queuedLockApp(t, dir)
+	if app.createScreen == nil {
+		t.Fatal("expected the create screen")
+	}
+
+	test.Type(app.createScreen.entry, testPassphrase)
+	test.Type(app.createScreen.confirm, testPassphrase)
+	test.Tap(app.createScreen.createBtn)
+	app.showUnlockScreen() // the screen is replaced while scrypt runs
+	runNext(t, q)          // the create finishes
+
+	host, _ := os.Hostname()
+	releasedInTheBackground(t, app, q, dir, host, nil)
+}
+
+// Cancel on "Vault Already Open" lets the waiting store go.
+func TestApp_CancelOnVaultAlreadyOpenDiscardsTheStore(t *testing.T) {
+	dir := t.TempDir()
+	newVaultWith(t, dir)
+	plantLock(t, dir)
+	app, w, q := queuedLockApp(t, dir)
+
+	unlock(app)
+	runNext(t, q) // the open finishes; the question is asked
+	waiting := app.session.Pending()
+	if waiting == nil {
+		t.Fatal("the opened vault should wait for an answer")
+	}
+	test.Tap(dialogButton(t, w, "Cancel"))
+
+	releasedInTheBackground(t, app, q, dir, "laptop.local", waiting.Closed())
+}
+
+// "Open Anyway", then the screen is replaced before the takeover ends: the
+// store, now holding the lock, is let go.
+func TestApp_ATakeoverFinishingAfterTheScreenWasReplacedIsDiscarded(t *testing.T) {
+	dir := t.TempDir()
+	newVaultWith(t, dir)
+	plantLock(t, dir)
+	app, w, q := queuedLockApp(t, dir)
+
+	unlock(app)
+	runNext(t, q)
+	waiting := app.session.Pending()
+	test.Tap(dialogButton(t, w, "Open Anyway"))
+	app.showUnlockScreen() // the screen is replaced during the takeover
+	runNext(t, q)          // the takeover finishes
+
+	host, _ := os.Hostname()
+	releasedInTheBackground(t, app, q, dir, host, waiting.Closed())
+}
+
+// Quitting while "Open Anyway" takes the lock over: the store being taken
+// over is still the session's, so quitting waits for its release, which
+// follows the takeover.
+func TestApp_QuitDuringATakeoverWaitsForTheStoresRelease(t *testing.T) {
+	dir := t.TempDir()
+	newVaultWith(t, dir)
+	plantLock(t, dir)
+	app, w, q := queuedLockApp(t, dir)
+
+	unlock(app)
+	runNext(t, q)
+	waiting := app.session.Pending()
+	test.Tap(dialogButton(t, w, "Open Anyway"))
+
+	if app.session.Close(0) {
+		t.Fatal("quitting must wait for the vault being taken over")
+	}
+	if isClosedChan(waiting.Closed()) {
+		t.Fatal("the store must not be closed while its lock is taken over")
+	}
+	q.flush() // the takeover ends; the store is then closed
+
+	if !isClosedChan(waiting.Closed()) || app.session.Store() != nil {
+		t.Fatal("after quitting, the store taken over is closed and the vault stays locked")
+	}
+	if got := lockHolder(t, dir); got != "" {
+		t.Fatalf("the lock taken over should be released, held by %q", got)
+	}
+	if !app.session.Close(time.Second) {
+		t.Fatal("quitting should then find every store released")
+	}
+}
