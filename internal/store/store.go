@@ -437,23 +437,28 @@ func (s *Store) CopyTo(ctx context.Context, dest string) error {
 	}
 	defer func() { _ = dst.Close() }()
 
-	if err := s.checkCopyTarget(dst); err != nil {
+	if err := s.copyTo(ctx, dst); err != nil {
 		return fmt.Errorf("store.CopyTo %q: %w", loc, err)
-	}
-	if err := dst.MkdirAll("."); err != nil {
-		return fmt.Errorf("store.CopyTo: mkdir %q: %w", loc, err)
-	}
-	if err := s.copyFile(ctx, dst, formatFile); err != nil {
-		return fmt.Errorf("store.CopyTo: %w", err)
-	}
-	if err := s.copySecrets(ctx, dst); err != nil {
-		return fmt.Errorf("store.CopyTo: %w", err)
-	}
-	if err := s.copyFile(ctx, dst, keyFile); err != nil {
-		return fmt.Errorf("store.CopyTo: %w", err)
 	}
 	s.log.Info("vault copied", "from", s.loc.String(), "to", loc.String())
 	return nil
+}
+
+// copyTo does CopyTo's work on the opened destination dst.
+func (s *Store) copyTo(ctx context.Context, dst vaultFS) error {
+	if err := s.checkCopyTarget(dst); err != nil {
+		return err
+	}
+	if err := dst.MkdirAll("."); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	if err := s.copyFile(ctx, dst, formatFile); err != nil {
+		return err
+	}
+	if err := s.copySecrets(ctx, dst); err != nil {
+		return err
+	}
+	return s.copyKey(ctx, dst)
 }
 
 // checkCopyTarget returns ErrVaultExists if dst holds a vault or secret
@@ -530,6 +535,31 @@ func (s *Store) copyFile(ctx context.Context, dst vaultFS, name string) error {
 	}
 	if err := dst.WriteFileAtomic(name, data); err != nil {
 		return fmt.Errorf("write %s: %w", name, err)
+	}
+	return nil
+}
+
+// copyKey copies vlt.age, if this vault has it, to dst. It never replaces
+// one: another instance may have created a vault at dst since
+// checkCopyTarget looked, and that vault's key must not be lost
+// (ErrVaultExists).
+func (s *Store) copyKey(ctx context.Context, dst vaultFS) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	data, err := s.fs.ReadFile(keyFile)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", keyFile, err)
+	}
+	err = dst.WriteFileExclusive(keyFile, data)
+	if errors.Is(err, fs.ErrExist) {
+		return ErrVaultExists
+	}
+	if err != nil {
+		return fmt.Errorf("write %s: %w", keyFile, err)
 	}
 	return nil
 }

@@ -198,3 +198,46 @@ func TestStore_CopyTo_RefusesAKeylessVaultItDidNotCopy(t *testing.T) {
 		})
 	}
 }
+
+// keyRace plants a vault key file just before the copy writes its own: as
+// if another instance created a vault at the destination meanwhile.
+type keyRace struct{ vaultFS }
+
+func (f keyRace) WriteFileExclusive(name string, data []byte) error {
+	if err := f.plant(name); err != nil {
+		return err
+	}
+	return f.vaultFS.WriteFileExclusive(name, data)
+}
+
+func (f keyRace) WriteFileAtomic(name string, data []byte) error {
+	if err := f.plant(name); err != nil {
+		return err
+	}
+	return f.vaultFS.WriteFileAtomic(name, data)
+}
+
+// plant writes another vault's key file if name is the key file.
+func (f keyRace) plant(name string) error {
+	if name != keyFile {
+		return nil
+	}
+	return f.vaultFS.WriteFileAtomic(keyFile, []byte("another vault's key"))
+}
+
+// A vault created at the destination while the copy ran keeps its key file:
+// the copy is refused rather than overwrite it.
+func TestStore_CopyTo_DoesNotReplaceAKeyFileWrittenMeanwhile(t *testing.T) {
+	t.Parallel()
+	s := copySource(t)
+	dest := filepath.Join(t.TempDir(), "dest")
+
+	err := s.copyTo(context.Background(), keyRace{localFS{root: dest}})
+
+	if !errors.Is(err, ErrVaultExists) {
+		t.Fatalf("copyTo = %v; want ErrVaultExists", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dest, keyFile)); err != nil || string(got) != "another vault's key" {
+		t.Fatalf("the other vault's key file was replaced: %q, %v", got, err)
+	}
+}
