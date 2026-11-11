@@ -368,6 +368,7 @@ internal/
 ├── store/
 │   ├── secret.go            Secret types, JSON envelope, slugification, group directories and labels
 │   ├── store.go             Secret CRUD, list, copy
+│   ├── layout.go            Which files are secrets (the directory walker); SecretID and GroupID
 │   ├── location.go          Vault locations: local paths, host:path, ssh:// URLs
 │   ├── fs.go                Storage interface; the local file system
 │   ├── sshfs.go             SFTP storage over the system's ssh client
@@ -390,6 +391,8 @@ internal/
 │   ├── unlock.go            Passphrase entry screen (existing vault)
 │   ├── create.go            Create-vault screen (passphrase + confirmation, open existing)
 │   ├── runner.go            Runs vault I/O off the UI thread, results via fyne.Do
+│   ├── operations.go        Runs what the user asks for: progress, no overlapping changes, confirmations, file choosers
+│   ├── picker.go            File and folder choosers (Fyne's dialogs; a scripted fake in tests)
 │   ├── errmsg.go            Turns any error into words for people (all error dialogs and labels)
 │   ├── activity.go          Tracks user input for the auto-lock countdown
 │   ├── clipboard.go         Copies secrets and clears them after the TTL or on lock

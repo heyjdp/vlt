@@ -45,7 +45,7 @@ created: 2026-11-11
 - **`SecretID`** (`Secret.ID()`) names the file a secret lives in, as a comparable value: names that differ only in case or punctuation, and differently spelled labels of one group, give equal IDs. **`GroupID`** (`GroupIDOf(label)`, `SecretID.Group()`) names a group's folder, and `GroupID.Contains(query)` matches a search against the folder spelling. The store builds paths from `SecretID`; the UI compares IDs and no longer calls `NormalizeGroup` or `Slugify`. Labels are still kept as typed.
 - **`*ExistsError`**: `Create` (file taken) and `Update` (file held by another name) wrap it. It carries the secret already there, or `ReadErr` when that file can't be read, and matches `errors.Is(err, ErrSecretExists)`, so existing callers are unchanged. Import is now one `Create` and a confirm: same name asks, then `Update`; a differently named secret or an unreadable file is refused with the reason.
 - **Removed `Store.List`**; its tests call `Contents` and check `Contents.Secrets` (renamed `TestStore_Contents_*`, `TestRemoteStore_Contents*`). **`store.New` and `Store.Init`** moved to `export_test.go`; the test of `Init` itself went with them.
-- **Tests**: `TestStore_Contents_SkipsAVaultInsideTheVault` and `TestStore_CopyTo_LeavesAVaultInsideTheVaultBehind` (red before the walker); `TestSecret_ID`, `TestSecret_ID_SameIDIsTheSameFile`, `TestGroupID_Contains`; `TestStore_Create_ExistsErrorCarriesTheSecretThere`, `TestStore_Create_ExistsErrorWithoutAReadableSecret`, `TestStore_Update_ExistsErrorCarriesTheSecretThere`; `TestFlow_ImportOverADifferentlyNamedSecretIsRefused` and `TestFlow_ImportOverAnUnreadableFileIsRefused` (the second red before `ExistsError`).
+- **Tests**: `TestStore_Contents_SkipsAVaultInsideTheVault` and `TestStore_CopyTo_LeavesAVaultInsideTheVaultBehind` (red before the walker); `TestSecret_ID_IsSharedByNamesAndGroupsThatMeanTheSame`, `TestSecret_ID_SameIDIsTheSameFile`, `TestGroupID_Contains_MatchesEitherSpellingOrPartOfTheFolderName`; `TestStore_Create_ExistsErrorCarriesTheSecretThere`, `TestStore_Create_ExistsErrorWithoutAReadableSecret`, `TestStore_Update_ExistsErrorCarriesTheSecretThere`; `TestFlow_ImportOverADifferentlyNamedSecretIsRefused` and `TestFlow_ImportOverAnUnreadableFileIsRefused` (the second red before `ExistsError`).
 
 ## Outcome
 - Mutation checks: dropping the nested-vault skip fails both new tests (and the `Exists` ones); an ID that ignores the slug, or a `Contains` that matches an empty query, fails the ID tests; an `ExistsError` without `Existing`, without `ReadErr`, or that isn't `ErrSecretExists` fails the store tests.
@@ -53,9 +53,11 @@ created: 2026-11-11
 - Nested vaults without `vlt.json` (format 1, or a copy that lost it) still can't be told from a group; `Contents` still names their `vlt.age` as unreadable, as the log and *Details…* explain.
 - Kept: `NormalizeGroup` and `Slugify` stay exported, because `internal/testutil` writes legacy vault files by path.
 - Older fix notes cite the old `TestStore_List_*` names; they describe the code as it was.
+- Verification added `CopyTo` tests on the new walker: a group folder that can't be listed, a cancel mid-copy, and a file where a group folder belongs at the destination (`store_internal_test.go`).
 
 ## Acceptance criteria
 - [x] The nested-vault tests fail without the shared walker
+- [x] `TestFlow_ImportOverAnUnreadableFileIsRefused` fails without `ExistsError`
 - [x] The UI no longer calls `store.NormalizeGroup` or `store.Slugify`
 - [x] `errors.Is(err, store.ErrSecretExists)` still holds for every existing caller
 - [x] `go test -race ./...` and golangci-lint pass

@@ -55,6 +55,7 @@ created: 2026-11-11
 - Mutation checks: writing back a wrapper's prefix, dropping its suffix, giving up on a wrapper that doesn't repeat one of its causes, dropping the passphrase, cancel, timeout, not-exist, `PathError`, `LinkError` or `mkdir` wording, the capitalisation, or either `Unwrap` form each fail a test. Mapping `fs.ErrPermission` to "permission denied" survives, since the system's text says the same.
 - Kept: Settings' "New " + validation text, and the unlock screen's fixed messages for a wrong passphrase, a missing key and no vault, which are already written for people and decide the flow.
 - Rule for later code: a package may add any wrapper, as long as its `pkg.Func:` prefix comes before a `%w` and never inside one string.
+- Verification found four gaps, fixed test first: the server backend's errors lost the file (pkg/sftp gives bare `os.ErrPermission`; `errorf` now returns `*fs.PathError`); `writeFileExclusive`'s fallback error wrapped text around a cause and read garbled (now two clauses); `vlt.json`, a temp folder's mode and the secret holding a file were said before their cause and dropped (now after it; Save names the other secret, and a file error whose cause has its own words is described rather than replaced); a single cause is now found with `LastIndex`, so `"a: a"` no longer leaks a prefix. So the rule above gains: context people need goes after the `%w`, and no text wraps around a cause.
 
 ## Acceptance criteria
 - [x] No error display in `internal/ui` shows `err.Error()` directly

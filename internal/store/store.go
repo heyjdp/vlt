@@ -100,10 +100,11 @@ func (s *Store) Location() Location {
 }
 
 // Create encrypts and writes a new secret to vault/<group>/<slug>.age. It
-// returns an *ExistsError (ErrSecretExists) holding the secret already there
-// if any secret occupies that path, including a different name with the same
-// SecretID (e.g. "GitHub Key" and "github-key"), so it never overwrites. The name must pass NewSecretName. The secret's Name
-// is trimmed in place and its Group set to GroupLabel(Group).
+// returns an *ExistsError (ErrSecretExists) holding the secret already
+// there if any secret occupies that path, including a different name with
+// the same SecretID (e.g. "GitHub Key" and "github-key"), so it never
+// overwrites. The name must pass NewSecretName. The secret's Name is
+// trimmed in place and its Group set to GroupLabel(Group).
 func (s *Store) Create(ctx context.Context, secret *Secret) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("store.Create: %w", err)
@@ -143,9 +144,10 @@ func (s *Store) Create(ctx context.Context, secret *Secret) error {
 // path must exist and hold a secret with the same name (compared after
 // trimming, so names stored untrimmed by older versions still match);
 // otherwise it returns ErrSecretNotFound or an *ExistsError holding the
-// differently named secret that shares its SecretID. CreatedAt is preserved from the stored
-// copy, and Group is set to GroupLabel(Group). Names that predate
-// NewSecretName's rules are accepted here so legacy secrets stay editable.
+// differently named secret that shares its SecretID. CreatedAt is
+// preserved from the stored copy, and Group is set to GroupLabel(Group).
+// Names that predate NewSecretName's rules are accepted here so legacy
+// secrets stay editable.
 func (s *Store) Update(ctx context.Context, secret *Secret) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("store.Update: %w", err)
