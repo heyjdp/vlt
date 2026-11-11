@@ -3,6 +3,8 @@ package ui
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -872,5 +874,89 @@ func TestSettings_APassphraseChangeFinishedAfterTheLockIsReported(t *testing.T) 
 
 	if text := dialogText(t, app.window); !strings.Contains(text, "unlock it with the new passphrase") {
 		t.Fatalf("the report says %q; want it to say the new passphrase applies", text)
+	}
+}
+
+// A passphrase change the vault locked during reports how it ended: not
+// saved when the lock stopped it; possibly saved when the server's reply
+// was lost (the rename of vlt.age may have happened); otherwise the error.
+func TestSettings_APassphraseChangeEndedByALockReportsItsOutcome(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     error
+		want    []string
+		notWant string
+	}{
+		{
+			"stopped by the lock", fmt.Errorf("store.ChangePassphrase: %w", context.Canceled),
+			[]string{"the passphrase was not changed", "Unlock with your current passphrase"},
+			"may or may not",
+		},
+		{
+			"connection lost", fmt.Errorf("store.ChangePassphrase: %w", store.ErrConnectionLost),
+			[]string{"may or may not have been saved", "try the new one"},
+			"was not changed",
+		},
+		{
+			"server unreachable", fmt.Errorf("store.ChangePassphrase: %w", store.ErrUnreachable),
+			[]string{"may or may not have been saved", "try the new one"},
+			"was not changed",
+		},
+		{
+			"another error", fmt.Errorf("store.ChangePassphrase: %w", errors.New("disk full")),
+			[]string{"Couldn't change the passphrase: disk full"},
+			"may or may not",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, ss := settingsApp(t, noTimers)
+			app.Lock()
+
+			ss.passphraseChangeOutlived(tt.err)
+
+			text := dialogText(t, app.window)
+			for _, want := range tt.want {
+				if !strings.Contains(text, want) {
+					t.Fatalf("the report says %q; want it to say %q", text, want)
+				}
+			}
+			if strings.Contains(text, tt.notWant) {
+				t.Fatalf("the report says %q; it must not say %q", text, tt.notWant)
+			}
+		})
+	}
+}
+
+// A passphrase change that fails while the vault stays unlocked says why
+// under the form; when the server's reply was lost, that the change may
+// still have been saved.
+func TestPassphraseChangeFailure(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			"wrong passphrase", fmt.Errorf("store.ChangePassphrase: %w", store.ErrWrongPassphrase),
+			"Current passphrase is incorrect",
+		},
+		{
+			"connection lost", fmt.Errorf("store.ChangePassphrase: %w", store.ErrConnectionLost),
+			"The change may or may not have been saved",
+		},
+		{
+			"another error", fmt.Errorf("store.ChangePassphrase: %w", errors.New("disk full")),
+			"Couldn't change the passphrase: disk full",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := passphraseChangeFailure(tt.err); !strings.Contains(got, tt.want) {
+				t.Fatalf("passphraseChangeFailure = %q; want it to say %q", got, tt.want)
+			}
+		})
 	}
 }

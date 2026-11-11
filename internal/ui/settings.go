@@ -134,11 +134,7 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 			control:      changeBtn,
 			keepUnlocked: true,
 			failed: func(err error) {
-				if errors.Is(err, store.ErrWrongPassphrase) {
-					errorLabel.SetText("Current passphrase is incorrect")
-				} else {
-					errorLabel.SetText(errorMessage("Couldn't change the passphrase", err))
-				}
+				errorLabel.SetText(passphraseChangeFailure(err))
 				errorLabel.Show()
 			},
 			afterEnd: ss.passphraseChangeOutlived,
@@ -186,8 +182,25 @@ func (ss *SettingsScreen) passphraseChangeOutlived(err error) {
 				"The vault locked before the change was saved, so the passphrase was not changed.\nUnlock with your current passphrase.", window)
 		})
 	default:
-		fyne.Do(func() { showError(window, "Couldn't change the passphrase", err) })
+		text := passphraseChangeFailure(err)
+		fyne.Do(func() { dialog.ShowError(errors.New(text), window) })
 	}
+}
+
+// passphraseChangeFailure says why a passphrase change failed. When the
+// server's reply was lost, vlt.age may have been renamed into place on the
+// server all the same, so the user is told the change may have been saved
+// and which passphrase to try.
+func passphraseChangeFailure(err error) string {
+	switch {
+	case errors.Is(err, store.ErrWrongPassphrase):
+		return "Current passphrase is incorrect"
+	case isServerError(err):
+		return errorMessage("Couldn't confirm the passphrase change", err) +
+			". The change may or may not have been saved: the server may have made it though its reply was lost. " +
+			"If your current passphrase is refused next time you unlock, try the new one."
+	}
+	return errorMessage("Couldn't change the passphrase", err)
 }
 
 func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
