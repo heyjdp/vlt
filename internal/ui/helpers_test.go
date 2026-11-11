@@ -33,6 +33,41 @@ func quietLog() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
+// settingsAt returns settings, kept in a's preferences, that propose the
+// vault location dir (as written) with nothing saved and every other
+// setting zero: auto-lock off, no default location, no environment
+// variables. opts change that starting point.
+func settingsAt(a fyne.App, dir string, opts ...func(*Settings)) *Settings {
+	s := &Settings{prefs: a.Preferences(), log: quietLog()}
+	s.useLocation(dir)
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// withLockTimeoutMs sets the auto-lock timeout.
+func withLockTimeoutMs(ms int) func(*Settings) {
+	return func(s *Settings) { s.lockTimeout = time.Duration(ms) * time.Millisecond }
+}
+
+// withDefaultClipboardTTL sets the clipboard TTL to its default, 30 s.
+func withDefaultClipboardTTL(s *Settings) { s.clipboardTTL = DefaultClipboardTTLs * time.Second }
+
+// withUpdateChecks turns the start-up update check on.
+func withUpdateChecks(s *Settings) { s.checkUpdates = true }
+
+// withDefaultVault sets the default local location.
+func withDefaultVault(dir string) func(*Settings) {
+	return func(s *Settings) { s.def = store.Location{Path: dir} }
+}
+
+// vaultFromEnv marks the location as set by VLT_VAULT_DIR.
+func vaultFromEnv(s *Settings) { s.env = map[Setting]string{SettingVault: envVaultDir} }
+
+// localAt is the local vault location dir.
+func localAt(dir string) store.Location { return store.Location{Path: dir} }
+
 // inlineRunner runs background work immediately on the caller's goroutine.
 // With fyne/test's inline fyne.Do, app tests are deterministic.
 func inlineRunner() runner {

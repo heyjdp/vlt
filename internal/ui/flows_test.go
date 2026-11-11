@@ -26,7 +26,7 @@ func newFlowApp(t *testing.T, secrets ...*store.Secret) (*App, fyne.Window) {
 	dir := t.TempDir()
 	newVaultWith(t, dir, secrets...)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	return app, w
 }
 
@@ -219,7 +219,7 @@ func TestFlow_SwitchVaultThroughSettings(t *testing.T) {
 	test.Tap(findButton(box, "Switch Vault (no copy)"))
 	test.Tap(dialogButton(t, w, "Yes"))
 
-	if app.config.VaultDir != newDir || app.createScreen == nil {
+	if app.settings.Vault() != localAt(newDir) || app.createScreen == nil {
 		t.Fatal("switching to an empty folder should relock into the create screen for it")
 	}
 	app.Lock()

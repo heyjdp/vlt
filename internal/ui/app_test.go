@@ -19,7 +19,7 @@ func TestApp_UnlockLoadsSecretsIntoList(t *testing.T) {
 		testutil.PasswordSecret("gh", "x", "work"),
 		testutil.PasswordSecret("bank", "y", "personal"),
 	)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 
 	unlock(app)
 
@@ -37,7 +37,7 @@ func TestApp_UnlockRunsOffTheMainGoroutine(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
 	q.flush() // the Exists check
 
 	unlock(app)
@@ -62,12 +62,12 @@ func TestApp_StaleUnlockIsDiscardedAfterVaultSwitch(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
 	q.flush()
 
 	unlock(app)
 	// Before the open completes, the vault directory changes and the app relocks.
-	app.config.VaultDir = t.TempDir()
+	app.settings.ProposeVault(localAt(t.TempDir()))
 	app.Lock()
 	q.flush()
 
@@ -83,7 +83,7 @@ func TestApp_SaveFromListSelectionUpdatesList(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "old", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	sec := app.secretList.secrets[0]
@@ -101,7 +101,7 @@ func TestApp_SaveNewSecretAddsItToList(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	sec := testutil.PasswordSecret("new-one", "v", "work")
@@ -117,7 +117,7 @@ func TestApp_DeleteRemovesSecretFromList(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gone", "v", "work"), testutil.PasswordSecret("kept", "v", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	var target *store.Secret
@@ -138,7 +138,7 @@ func TestApp_ImportAddsSecretToList(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	app.detailView.fileOps.importSecret(testutil.FileSecret("id_rsa", "id_rsa", "eA==", "keys"), importedFile{size: 1})
@@ -154,7 +154,7 @@ func TestApp_SaveCompletingAfterLockIsDropped(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
 	q.flush()
 	unlockQueued(t, app, q)
 	q.flush() // initial list load
@@ -173,7 +173,7 @@ func TestApp_LockCancelsInitialListLoad(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "x", "work"))
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
 	q.flush()
 	unlockQueued(t, app, q)
 	list := app.secretList
@@ -190,7 +190,7 @@ func TestApp_CreateRunsOffTheMainGoroutine(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := filepath.Join(t.TempDir(), "vault")
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
 	q.flush()
 
 	test.Type(app.createScreen.entry, "correct horse battery")

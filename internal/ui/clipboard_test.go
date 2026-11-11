@@ -135,7 +135,7 @@ func TestApp_LockClearsCopiedSecret(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir, ClipboardTTLs: 30}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir, withDefaultClipboardTTL), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	app.detailView.copyValue("ghp_secret")
@@ -153,10 +153,10 @@ func TestApp_ClipboardTTLChangeAppliesToNextCopy(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir, ClipboardTTLs: 30}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir, withDefaultClipboardTTL), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
-	app.config.ClipboardTTLs = 5 // Settings slider
+	app.settings.SetClipboardTTL(5 * time.Second) // Settings slider
 	app.detailView.copyValue("x")
 
 	if app.clipboard.remaining != 5 {
@@ -190,7 +190,7 @@ func TestApp_QuitClearsCopiedSecret(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir, ClipboardTTLs: 30}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir, withDefaultClipboardTTL), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	app.detailView.copyValue("ghp_secret")

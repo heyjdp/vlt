@@ -26,13 +26,13 @@ func fakeLatest(app *App, rel update.Release, err error) *int {
 }
 
 // updateApp is a locked app at version, with a vault and a fake browser.
-func updateApp(t *testing.T, version string, cfg Config) (*App, fyne.Window, *[]string) {
+func updateApp(t *testing.T, version string, opts ...func(*Settings)) (*App, fyne.Window, *[]string) {
 	t.Helper()
 	a := test.NewTempApp(t)
-	cfg.VaultDir = t.TempDir()
-	newVaultWith(t, cfg.VaultDir)
+	dir := t.TempDir()
+	newVaultWith(t, dir)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, cfg, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, w, settingsAt(a, dir, opts...), quietLog(), inlineRunner(), noTimers, testKDF)
 	app.version = version
 	return app, w, openedURLs(app)
 }
@@ -69,7 +69,7 @@ func dialogText(t *testing.T, w fyne.Window) string {
 }
 
 func TestCheckForUpdates_OffersANewerReleaseAndOpensItsPage(t *testing.T) {
-	app, w, opened := updateApp(t, "v0.1.0", Config{})
+	app, w, opened := updateApp(t, "v0.1.0")
 	fakeLatest(app, update.Release{Tag: "v0.1.1", Notes: "TOTP codes"}, nil)
 
 	checkForUpdatesMenu(t, w)
@@ -86,7 +86,7 @@ func TestCheckForUpdates_OffersANewerReleaseAndOpensItsPage(t *testing.T) {
 }
 
 func TestCheckForUpdates_CloseOpensNothing(t *testing.T) {
-	app, w, opened := updateApp(t, "v0.1.0", Config{})
+	app, w, opened := updateApp(t, "v0.1.0")
 	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
 
 	checkForUpdatesMenu(t, w)
@@ -97,7 +97,7 @@ func TestCheckForUpdates_CloseOpensNothing(t *testing.T) {
 }
 
 func TestCheckForUpdates_SaysWhenUpToDate(t *testing.T) {
-	app, w, opened := updateApp(t, "v0.1.1-2-gabc1234", Config{})
+	app, w, opened := updateApp(t, "v0.1.1-2-gabc1234")
 	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
 
 	checkForUpdatesMenu(t, w)
@@ -110,7 +110,7 @@ func TestCheckForUpdates_SaysWhenUpToDate(t *testing.T) {
 }
 
 func TestCheckForUpdates_ADevelopmentBuildIsShownTheLatestRelease(t *testing.T) {
-	app, w, opened := updateApp(t, "", Config{})
+	app, w, opened := updateApp(t, "")
 	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
 
 	checkForUpdatesMenu(t, w)
@@ -124,7 +124,7 @@ func TestCheckForUpdates_ADevelopmentBuildIsShownTheLatestRelease(t *testing.T) 
 }
 
 func TestCheckForUpdates_AFailureIsReportedPlainly(t *testing.T) {
-	app, w, _ := updateApp(t, "v0.1.0", Config{})
+	app, w, _ := updateApp(t, "v0.1.0")
 	fakeLatest(app, update.Release{}, fmt.Errorf("update.Latest: %w", update.ErrRateLimited))
 
 	checkForUpdatesMenu(t, w)
@@ -135,14 +135,14 @@ func TestCheckForUpdates_AFailureIsReportedPlainly(t *testing.T) {
 }
 
 func TestCheckForUpdates_TestAppsNeverReachTheNetwork(t *testing.T) {
-	app, _, _ := updateApp(t, "v0.1.0", Config{})
+	app, _, _ := updateApp(t, "v0.1.0")
 	if _, err := app.latest(context.Background()); !errors.Is(err, errNoUpdateCheck) {
 		t.Fatalf("latest = %v; only NewApp may set the real checker", err)
 	}
 }
 
 func TestCheckAtStartup_IsOffUnlessTurnedOn(t *testing.T) {
-	app, w, _ := updateApp(t, "v0.1.0", Config{})
+	app, w, _ := updateApp(t, "v0.1.0")
 	calls := fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
 
 	app.checkAtStartup()
@@ -161,7 +161,7 @@ func releaseDialogText(t *testing.T, w fyne.Window) string {
 }
 
 func TestCheckAtStartup_WaitsForTheUnlockThenTellsAboutEachNewReleaseOnce(t *testing.T) {
-	app, w, _ := updateApp(t, "v0.1.0", Config{CheckUpdates: true})
+	app, w, _ := updateApp(t, "v0.1.0", withUpdateChecks)
 	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
 
 	app.checkAtStartup()
@@ -203,7 +203,7 @@ func TestCheckAtStartup_WaitsForTheUnlockThenTellsAboutEachNewReleaseOnce(t *tes
 }
 
 func TestCheckAtStartup_AnnouncesAtOnceWhenAlreadyUnlocked(t *testing.T) {
-	app, w, _ := updateApp(t, "v0.1.0", Config{CheckUpdates: true})
+	app, w, _ := updateApp(t, "v0.1.0", withUpdateChecks)
 	q := &queue{}
 	setRunner(app, q.runner())
 	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
@@ -219,7 +219,7 @@ func TestCheckAtStartup_AnnouncesAtOnceWhenAlreadyUnlocked(t *testing.T) {
 }
 
 func TestCheckAtStartup_SaysNothingAfterAManualCheck(t *testing.T) {
-	app, w, _ := updateApp(t, "v0.1.0", Config{CheckUpdates: true})
+	app, w, _ := updateApp(t, "v0.1.0", withUpdateChecks)
 	q := &queue{}
 	setRunner(app, q.runner())
 	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
@@ -237,7 +237,7 @@ func TestCheckAtStartup_SaysNothingAfterAManualCheck(t *testing.T) {
 }
 
 func TestStartUpdateChecks_SetsTheCheckerThenChecks(t *testing.T) {
-	app, w, _ := updateApp(t, "v0.1.0", Config{CheckUpdates: true})
+	app, w, _ := updateApp(t, "v0.1.0", withUpdateChecks)
 	calls := 0
 	app.startUpdateChecks(func(context.Context) (update.Release, error) {
 		calls++
@@ -253,7 +253,7 @@ func TestStartUpdateChecks_SetsTheCheckerThenChecks(t *testing.T) {
 }
 
 func TestCheckForUpdates_AResultAfterALockIsDropped(t *testing.T) {
-	app, w, _ := updateApp(t, "v0.1.0", Config{})
+	app, w, _ := updateApp(t, "v0.1.0")
 	unlock(app)
 	q := &queue{}
 	setRunner(app, q.runner())
@@ -282,7 +282,7 @@ func TestCheckForUpdates_AnsweringTheDialogCountsAsActivity(t *testing.T) {
 	newVaultWith(t, dir)
 	w := test.NewTempWindow(t, nil)
 	clock := &fakeClock{}
-	app := newApp(a, w, Config{VaultDir: dir, LockTimeoutMs: DefaultLockTimeoutMs}, quietLog(), inlineRunner(), clock.factory, testKDF)
+	app := newApp(a, w, settingsAt(a, dir, withLockTimeoutMs(DefaultLockTimeoutMs)), quietLog(), inlineRunner(), clock.factory, testKDF)
 	app.version = "v0.1.0"
 	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
 	unlock(app)
@@ -307,7 +307,7 @@ func TestCheckAtStartup_IsSilentWhenUpToDateUnknownOrFailing(t *testing.T) {
 		{"offline", "v0.1.0", update.Release{}, errors.New("dial tcp: no route to host")},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			app, w, _ := updateApp(t, tt.version, Config{CheckUpdates: true})
+			app, w, _ := updateApp(t, tt.version, withUpdateChecks)
 			calls := fakeLatest(app, tt.rel, tt.err)
 			app.checkAtStartup()
 			if *calls != 1 || w.Canvas().Overlays().Top() != nil {
@@ -334,7 +334,7 @@ func updateCheck(t *testing.T, ss *SettingsScreen) *widget.Check {
 }
 
 func TestSettings_ShowsTheSavedUpdateChoice(t *testing.T) {
-	app, ss := settingsApp(t, Config{VaultDir: t.TempDir(), CheckUpdates: true}, noTimers)
+	app, ss := settingsApp(t, noTimers, withUpdateChecks)
 	if !updateCheck(t, ss).Checked {
 		t.Fatal("the box should show the saved choice")
 	}
@@ -342,7 +342,7 @@ func TestSettings_ShowsTheSavedUpdateChoice(t *testing.T) {
 }
 
 func TestSettings_UpdateCheckIsSavedAndCheckNowChecks(t *testing.T) {
-	app, ss := settingsApp(t, Config{VaultDir: t.TempDir()}, noTimers)
+	app, ss := settingsApp(t, noTimers)
 	calls := fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
 
 	check := updateCheck(t, ss)
@@ -350,10 +350,10 @@ func TestSettings_UpdateCheckIsSavedAndCheckNowChecks(t *testing.T) {
 		t.Fatal("the startup check should be off by default")
 	}
 	check.SetChecked(true)
-	if !app.config.CheckUpdates || !app.fyneApp.Preferences().Bool(prefCheckUpdates) {
+	if !app.settings.CheckUpdates() || !app.fyneApp.Preferences().Bool(prefCheckUpdates) {
 		t.Fatal("turning the startup check on should be saved")
 	}
-	if !LoadConfig(app.fyneApp.Preferences(), env(nil), "/default", quietLog()).CheckUpdates {
+	if !LoadSettings(app.fyneApp.Preferences(), env(nil), "/default", quietLog()).CheckUpdates() {
 		t.Fatal("the saved choice should be loaded on the next start")
 	}
 

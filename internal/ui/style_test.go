@@ -130,7 +130,7 @@ func TestSecretList_CountFollowsTheSearch(t *testing.T) {
 	newVaultWith(t, dir,
 		testutil.PasswordSecret("github", "x", "work"),
 		testutil.PasswordSecret("wifi", "y", "home"))
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	if got := app.secretList.count.Text; got != "2 secrets" {

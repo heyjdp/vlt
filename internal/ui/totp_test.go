@@ -62,7 +62,7 @@ func openRecordAt59(t *testing.T, rec *store.Secret) (*App, *fakeClock, *clockAt
 	dir := t.TempDir()
 	newVaultWith(t, dir, rec)
 	timers := &fakeClock{}
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), timers.factory, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), timers.factory, testKDF)
 	unlock(app)
 	clock := &clockAt{t: time.Unix(59, 0).UTC()}
 	app.detailView.now = clock.now
@@ -282,7 +282,7 @@ func TestTOTP_ASaveFinishingAfterMovingOnDoesNotPullTheRecordBack(t *testing.T) 
 	dir := t.TempDir()
 	other := testutil.PasswordSecret("aaa", "x", "work")
 	newVaultWith(t, dir, totpRecord(""), other)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	q := &queue{}
 	app.sessionOps.run = q.runner()

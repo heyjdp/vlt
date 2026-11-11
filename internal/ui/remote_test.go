@@ -51,7 +51,7 @@ func TestApp_UnlockTakesTheLockAndLockReleasesIt(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 
 	unlock(app)
 	host, _ := os.Hostname()
@@ -70,7 +70,7 @@ func TestApp_VaultOpenElsewhereAsksAndOpenAnywayTakesOver(t *testing.T) {
 	newVaultWith(t, dir)
 	plantLock(t, dir)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 
 	unlock(app)
 	if app.session.Store() != nil || app.unlockScreen == nil {
@@ -95,7 +95,7 @@ func TestApp_VaultOpenElsewhereCancelLeavesItLocked(t *testing.T) {
 	newVaultWith(t, dir)
 	plantLock(t, dir)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 
 	unlock(app)
 	test.Tap(dialogButton(t, w, "Cancel"))
@@ -115,7 +115,7 @@ func TestApp_UnlockScreenNamesTheVault(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	if findDeep(app.unlockScreen.Content(), func(o fyne.CanvasObject) bool {
 		l, ok := o.(*widget.Label)
 		return ok && l.Text == displayLocation(dir)
@@ -144,7 +144,7 @@ func TestApp_UnreachableServerOffersRetryAndTheLocalVault(t *testing.T) {
 	a := test.NewTempApp(t)
 	local := t.TempDir()
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, Config{VaultDir: "nas:/srv/vault", DefaultVaultDir: local}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, w, settingsAt(a, "nas:/srv/vault", withDefaultVault(local)), quietLog(), inlineRunner(), noTimers, testKDF)
 
 	content := w.Content()
 	if app.unlockScreen != nil || app.createScreen != nil {
@@ -162,9 +162,38 @@ func TestApp_UnreachableServerOffersRetryAndTheLocalVault(t *testing.T) {
 		t.Fatal("expected Retry")
 	}
 	test.Tap(findButton(content, "Use the Vault on This Computer"))
-	if app.config.VaultDir != local || app.createScreen == nil {
-		t.Fatalf("expected the create screen for %s, location now %q", local, app.config.VaultDir)
+	if app.settings.Vault() != localAt(local) || app.createScreen == nil {
+		t.Fatalf("expected the create screen for %s, location now %q", local, app.settings.Vault())
 	}
+}
+
+// A saved location that no longer parses (a rule tightened since it was
+// saved) is shown with the reason, and the default vault is offered.
+func TestApp_UnparsableSavedLocationShowsWhyAndOffersTheDefault(t *testing.T) {
+	a := test.NewTempApp(t)
+	w := test.NewTempWindow(t, nil)
+	local := t.TempDir()
+	a.Preferences().SetString(prefVaultDir, "nas:")
+	app := newApp(a, w, LoadSettings(a.Preferences(), env(nil), local, quietLog()), quietLog(), inlineRunner(), noTimers, testKDF)
+
+	want := "nas:\n\nInvalid vault location: \"nas:\" names no folder on the server"
+	if findDeep(w.Content(), func(o fyne.CanvasObject) bool {
+		l, ok := o.(*widget.Label)
+		return ok && l.Text == want
+	}) == nil {
+		t.Fatalf("the error screen should name the location as saved and say why: %q", want)
+	}
+	test.Tap(findButton(w.Content(), "Use the Vault on This Computer"))
+	if app.createScreen == nil {
+		t.Fatal("expected the create screen for the default location")
+	}
+	test.Type(app.createScreen.entry, testPassphrase)
+	test.Type(app.createScreen.confirm, testPassphrase)
+	test.Tap(app.createScreen.createBtn)
+	if got := LoadSettings(a.Preferences(), env(nil), "/elsewhere", quietLog()).Vault(); got != localAt(local) {
+		t.Fatalf("after creating the default vault, saved location = %q, want %q", got, local)
+	}
+	app.Lock()
 }
 
 // The offer is for another vault: a current location that is the default,
@@ -176,7 +205,7 @@ func TestApp_UnreadableDefaultVaultIsNotOfferedAgain(t *testing.T) {
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	newApp(a, w, Config{VaultDir: "  " + file, DefaultVaultDir: file}, quietLog(), inlineRunner(), noTimers, testKDF)
+	newApp(a, w, settingsAt(a, "  "+file, withDefaultVault(file)), quietLog(), inlineRunner(), noTimers, testKDF)
 
 	if findButton(w.Content(), "Retry") == nil {
 		t.Fatal("expected the error screen")
@@ -190,7 +219,7 @@ func TestApp_UnreachableServerFromTheEnvironmentOffersOnlyRetry(t *testing.T) {
 	fakeSSH(t)
 	a := test.NewTempApp(t)
 	w := test.NewTempWindow(t, nil)
-	newApp(a, w, Config{VaultDir: "nas:/srv/vault", DefaultVaultDir: t.TempDir(), FromEnv: EnvSettings{VaultDir: true}},
+	newApp(a, w, LoadSettings(a.Preferences(), env(map[string]string{envVaultDir: "nas:/srv/vault"}), t.TempDir(), quietLog()),
 		quietLog(), inlineRunner(), noTimers, testKDF)
 	if findButton(w.Content(), "Use the Vault on This Computer") != nil {
 		t.Fatal("VLT_VAULT_DIR fixes the location; no switch should be offered")
@@ -201,7 +230,7 @@ func TestApp_ServerDialogValidatesAndSwitchesTheLocation(t *testing.T) {
 	fakeSSH(t)
 	a := test.NewTempApp(t)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, Config{VaultDir: t.TempDir()}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, w, settingsAt(a, t.TempDir()), quietLog(), inlineRunner(), noTimers, testKDF)
 	if app.createScreen == nil || app.createScreen.serverBtn == nil {
 		t.Fatal("the create screen should offer a vault on a server")
 	}
@@ -216,8 +245,8 @@ func TestApp_ServerDialogValidatesAndSwitchesTheLocation(t *testing.T) {
 	test.Type(entry, "me@nas:/srv/vault")
 	test.Tap(dialogButton(t, w, "Use This Location"))
 
-	if app.config.VaultDir != "me@nas:/srv/vault" {
-		t.Fatalf("location = %q", app.config.VaultDir)
+	if got := app.settings.Vault().String(); got != "me@nas:/srv/vault" {
+		t.Fatalf("location = %q", got)
 	}
 	if app.createScreen != nil {
 		t.Fatal("the fake server is unreachable, so the error screen should show, not the create screen")
@@ -227,6 +256,7 @@ func TestApp_ServerDialogValidatesAndSwitchesTheLocation(t *testing.T) {
 func TestSettings_RefusesABadLocation(t *testing.T) {
 	app, _ := newFlowApp(t)
 	unlock(app)
+	before := app.settings.Vault()
 	ss := app.openSettings(app.session.Store(), app.sessionOps)
 	box := ss.buildVaultLocation()
 	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")
@@ -237,7 +267,7 @@ func TestSettings_RefusesABadLocation(t *testing.T) {
 		l, ok := o.(*widget.Label)
 		return ok && l.Visible() && strings.Contains(l.Text, "names no folder")
 	})
-	if errLabel == nil || app.config.VaultDir == "nas:" {
+	if errLabel == nil || app.settings.Vault() != before {
 		t.Fatal("a location without a folder must be refused with a reason")
 	}
 	app.Lock()
@@ -249,7 +279,7 @@ func TestApp_CancelClosesTheWaitingVault(t *testing.T) {
 	newVaultWith(t, dir)
 	plantLock(t, dir)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 
 	unlock(app)
 	waiting := app.session.Pending()
@@ -274,7 +304,7 @@ func TestApp_UnansweredOpenElsewhereDialogLocksAfterTheTimeout(t *testing.T) {
 	plantLock(t, dir)
 	w := test.NewTempWindow(t, nil)
 	clock := &fakeClock{}
-	app := newApp(a, w, Config{VaultDir: dir, LockTimeoutMs: 60_000}, quietLog(), inlineRunner(), clock.factory, testKDF)
+	app := newApp(a, w, settingsAt(a, dir, withLockTimeoutMs(60_000)), quietLog(), inlineRunner(), clock.factory, testKDF)
 
 	unlock(app)
 	waiting := app.session.Pending()
@@ -300,7 +330,7 @@ func TestApp_QuitReleasesTheLock(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	if lockHolder(t, dir) == "" {
 		t.Fatal("expected a lock while unlocked")
@@ -316,7 +346,7 @@ func TestApp_QuitReleasesTheLock(t *testing.T) {
 func TestSettings_SwitchToTheSameLocationWrittenDifferently(t *testing.T) {
 	app, _ := newFlowApp(t)
 	unlock(app)
-	app.config.VaultDir = "ssh://me@nas:2222/srv/my vault"
+	app.settings.useLocation("ssh://me@nas:2222/srv/my vault") // as saved by an older version
 	ss := app.openSettings(app.session.Store(), app.sessionOps)
 	box := ss.buildVaultLocation()
 	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")

@@ -17,7 +17,7 @@ func newLockingApp(t *testing.T) (*App, *fakeClock) {
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "x", "work"))
 	clock := &fakeClock{}
-	cfg := Config{VaultDir: dir, LockTimeoutMs: int(testTimeout / time.Millisecond)}
+	cfg := settingsAt(a, dir, withLockTimeoutMs(int(testTimeout/time.Millisecond)))
 	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), clock.factory, testKDF)
 	unlock(app)
 	return app, clock
@@ -116,7 +116,7 @@ func TestAutoLock_ShortTimeoutHasNoWarning(t *testing.T) {
 func TestAutoLock_TimeoutChangeAppliesOnNextActivity(t *testing.T) {
 	app, clock := newLockingApp(t)
 
-	app.config.LockTimeoutMs = int((10 * time.Minute) / time.Millisecond)
+	app.settings.SetLockTimeout(10 * time.Minute)
 	test.Type(app.secretList.searchEntry, "x")
 
 	if clock.active(10*time.Minute) == nil {
@@ -130,7 +130,7 @@ func TestAutoLock_DisabledWhenTimeoutIsZero(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	clock := &fakeClock{}
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), clock.factory, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), clock.factory, testKDF)
 	unlock(app)
 
 	if len(clock.timers) != 0 {

@@ -120,7 +120,7 @@ func (a *App) versionName() string {
 // takes the focus from the passphrase entry. A failed check is only logged:
 // it must never get in the way of unlocking.
 func (a *App) checkAtStartup() {
-	if !a.config.CheckUpdates {
+	if !a.settings.CheckUpdates() {
 		return
 	}
 	background(a.run, a.latest, func(rel update.Release, err error) {
@@ -132,7 +132,7 @@ func (a *App) checkAtStartup() {
 			return
 		}
 		// Announce each release once: only one newer than the last announced.
-		if last := a.fyneApp.Preferences().String(prefUpdateNotified); last != "" {
+		if last := a.settings.AnnouncedRelease(); last != "" {
 			if newer, ok := update.IsNewer(last, rel.Tag); ok && !newer {
 				return
 			}
@@ -152,6 +152,6 @@ func (a *App) announceRelease() {
 	}
 	rel := *a.pendingRelease
 	a.pendingRelease = nil
-	a.fyneApp.Preferences().SetString(prefUpdateNotified, rel.Tag)
+	a.settings.SetAnnouncedRelease(rel.Tag)
 	a.showUpdateAvailable(rel)
 }

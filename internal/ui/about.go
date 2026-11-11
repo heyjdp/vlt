@@ -108,7 +108,7 @@ func issueURL(details string) string {
 func (a *App) aboutDetails() buildDetails {
 	info, ok := debug.ReadBuildInfo()
 	d := readBuildDetails(a.version, info, ok)
-	if loc, err := store.ParseLocation(a.config.VaultDir); err == nil && a.config.VaultDir != "" {
+	if loc := a.settings.Vault(); loc != (store.Location{}) {
 		d.Vault = "local"
 		if loc.IsRemote() {
 			d.Vault = "on a server"

@@ -103,7 +103,7 @@ func TestApp_FailingImportSavesNothing(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	r := &fakeURIReader{Reader: failingReader(4096), uri: storage.NewFileURI("/tmp/id_rsa")}
@@ -156,7 +156,7 @@ func TestApp_FailingImportShowsErrorNotGroupForm(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	importFile(t, app, &fakeURIReader{Reader: failingReader(10), uri: storage.NewFileURI("/tmp/x")})
@@ -227,7 +227,7 @@ func exportApp(t *testing.T) (*App, fyne.Window, *scriptedPicker) {
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.FileSecret("notes", "notes.txt", "aGVsbG8=", "docs"))
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	p := pickerOf(app)
 	unlock(app)
 	return app, w, p
@@ -316,7 +316,7 @@ func TestApp_LockDismissesOpenDialogs(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
 	dialog.ShowInformation("open", "a dialog left open", w)
