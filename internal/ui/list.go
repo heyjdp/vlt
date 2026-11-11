@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -9,6 +8,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -16,7 +16,8 @@ import (
 	"github.com/heyjdp/vlt/internal/store"
 )
 
-// SecretList displays a filterable list of secrets with category headers.
+// SecretList displays a filterable list of secrets, with a notice under it
+// when the vault couldn't be loaded or some secret files couldn't be read.
 // Its methods must be called on the Fyne main goroutine; the vault is read
 // in the background (see Refresh).
 type SecretList struct {
@@ -30,6 +31,14 @@ type SecretList struct {
 	list        *widget.List
 	count       *widget.Label // "n secrets" under the list
 	content     *fyne.Container
+
+	// notice explains a failed load (with Retry) or skipped files (with
+	// Details…); it is hidden when the vault loaded cleanly.
+	notice     *fyne.Container
+	noticeText *widget.Label
+	retry      *widget.Button
+	details    *widget.Button
+	unreadable []string
 
 	secrets  []*store.Secret
 	filtered []*store.Secret
@@ -91,9 +100,16 @@ func NewSecretList(window fyne.Window, s *store.Store, detail *DetailView, log *
 	}
 
 	sl.count = caption("")
+	sl.noticeText = widget.NewLabel("")
+	sl.noticeText.Wrapping = fyne.TextWrapWord
+	sl.noticeText.Importance = widget.WarningImportance
+	sl.retry = widget.NewButton("Retry", sl.Refresh)
+	sl.details = widget.NewButton("Details…", sl.showUnreadable)
+	sl.notice = container.NewVBox(sl.noticeText, container.NewCenter(container.NewHBox(sl.retry, sl.details)))
+	sl.notice.Hide()
 	sl.content = panelBackground(container.NewBorder(
 		padded(sl.searchEntry, 8),
-		container.NewVBox(widget.NewSeparator(), container.NewCenter(sl.count)),
+		container.NewVBox(widget.NewSeparator(), sl.notice, container.NewCenter(sl.count)),
 		nil,
 		nil,
 		sl.list,
@@ -140,6 +156,46 @@ func countText(shown, total int) string {
 	return fmt.Sprintf("%d secrets", total)
 }
 
+// unreadableText counts skipped paths for the notice; group folders end
+// in "/".
+func unreadableText(paths []string) string {
+	what := "secret file"
+	if slices.ContainsFunc(paths, func(p string) bool { return strings.HasSuffix(p, "/") }) {
+		what = "secret file or folder"
+		if len(paths) > 1 {
+			what = "secret files or folders"
+		}
+	} else if len(paths) > 1 {
+		what = "secret files"
+	}
+	return fmt.Sprintf("%d %s couldn't be read.", len(paths), what)
+}
+
+// showNotice shows text under the list, with one of its buttons.
+func (sl *SecretList) showNotice(text string, button *widget.Button) {
+	sl.noticeText.SetText(text)
+	for _, b := range []*widget.Button{sl.retry, sl.details} {
+		if b == button {
+			b.Show()
+		} else {
+			b.Hide()
+		}
+	}
+	sl.notice.Show()
+}
+
+// showUnreadable lists the secret files the last load skipped, and why
+// that can happen.
+func (sl *SecretList) showUnreadable() {
+	dialog.ShowInformation("Secret Files Not Shown",
+		"These files (and folders, ending in /) in the vault couldn't be read, so their secrets\n"+
+			"aren't listed. A file may be "+
+			"damaged, come from another vault, or have been moved or copied by hand or by a\n"+
+			"sync tool. vlt leaves them untouched; the log has the reason for each.\n\n"+
+			strings.Join(sl.unreadable, "\n"),
+		sl.window)
+}
+
 // Content returns the list panel widget.
 func (sl *SecretList) Content() *fyne.Container {
 	return sl.content
@@ -152,16 +208,27 @@ func (sl *SecretList) Content() *fyne.Container {
 func (sl *SecretList) Refresh() {
 	sl.loading = true
 	sl.replay = nil
+	// One load at a time: a second would drop the first's replay queue,
+	// and could then overwrite saves made since with what it read before.
+	sl.retry.Disable()
 	background(sl.run,
-		func(ctx context.Context) ([]*store.Secret, error) { return sl.store.List(ctx) },
-		func(secrets []*store.Secret, err error) {
+		sl.store.Contents,
+		func(c store.Contents, err error) {
 			replay := sl.replay
 			sl.loading, sl.replay = false, nil
+			sl.retry.Enable()
 			if err != nil {
 				sl.log.Error("failed to list secrets", "err", err)
+				sl.showNotice("Couldn't load the vault: "+userMessage(err), sl.retry)
 				return
 			}
-			sl.secrets = secrets
+			sl.unreadable = c.Unreadable
+			if len(c.Unreadable) == 0 {
+				sl.notice.Hide()
+			} else {
+				sl.showNotice(unreadableText(c.Unreadable), sl.details)
+			}
+			sl.secrets = c.Secrets
 			for _, op := range replay {
 				op()
 			}

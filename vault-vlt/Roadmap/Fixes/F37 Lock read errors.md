@@ -36,7 +36,7 @@ Verification confirmed the classification: pkg/sftp maps a denied read to `os.Er
 - **"read vlt.lock" twice in the message**: both file systems already name the file; the extra prefix is gone.
 - **Docs**: the vault now opens without recording that it is open when the lock can't be read, which the CHANGELOG and the Security Model now say; [[F26 Vault lock file]] points here.
 
-Still open: after a connection that stays down, the list's load error is only logged, so the vault looks empty. That is [[F38 Secret list errors]].
+After a connection that stays down, the list's load error was only logged, so the vault looked empty; [[F38 Secret list errors]] shows it with *Retry*.
 
 ## Acceptance criteria
 - [x] `TestLock_ALockThatCannotBeReadIsAnErrorNotInUse` and the retry test fail before the fix; the permission and damaged-lock tests guard the cases that stay in use

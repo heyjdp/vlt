@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -247,17 +248,47 @@ func (s *Store) Delete(ctx context.Context, name, group string) error {
 // parallel hides the round trip to a server; locally it changes little.
 const listWorkers = 8
 
-// List returns all secrets in the vault by walking every group subdirectory,
-// in directory order. Files that cannot be read, decrypted or parsed are
-// logged and skipped. It checks ctx before each file and returns ctx's error
-// once it is cancelled.
+// Contents is what List found in a vault.
+type Contents struct {
+	// Secrets are the readable secrets, in directory order.
+	Secrets []*Secret
+	// Unreadable are the vault-relative paths of secret files (and group
+	// folders) that could not be read, decrypted or parsed, or hold a secret
+	// stored elsewhere (see openSecret), sorted. A group folder ends in "/".
+	Unreadable []string
+}
+
+// List returns the readable secrets in the vault; see Contents.
 func (s *Store) List(ctx context.Context) ([]*Secret, error) {
+	c, err := s.contents(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("store.List: %w", err)
+	}
+	return c.Secrets, nil
+}
+
+// Contents returns all secrets in the vault by walking every group
+// subdirectory (secrets in directory order), and names the files it skipped: those
+// it cannot read, decrypt or parse are logged and left out, so one damaged
+// file doesn't hide the rest. A lost connection fails the whole listing
+// rather than leave secrets silently missing. It checks ctx before each file
+// and returns ctx's error once it is cancelled.
+func (s *Store) Contents(ctx context.Context) (Contents, error) {
+	c, err := s.contents(ctx)
+	if err != nil {
+		return Contents{}, fmt.Errorf("store.Contents: %w", err)
+	}
+	return c, nil
+}
+
+func (s *Store) contents(ctx context.Context) (Contents, error) {
+	var c Contents
 	groups, err := s.fs.ReadDir(".")
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
+			return c, nil
 		}
-		return nil, fmt.Errorf("store.List: %w", err)
+		return c, err
 	}
 
 	var names []string
@@ -267,7 +298,11 @@ func (s *Store) List(ctx context.Context) ([]*Secret, error) {
 		}
 		entries, err := s.fs.ReadDir(groupEntry.Name())
 		if err != nil {
+			if errors.Is(err, ErrConnectionLost) || errors.Is(err, ErrUnreachable) {
+				return c, err
+			}
 			s.log.Warn("failed to read group directory", "group", groupEntry.Name(), "err", err)
+			c.Unreadable = append(c.Unreadable, groupEntry.Name()+"/")
 			continue
 		}
 		for _, entry := range entries {
@@ -301,44 +336,35 @@ func (s *Store) List(ctx context.Context) ([]*Secret, error) {
 	close(next)
 	wg.Wait()
 	if cancelled != nil {
-		return nil, fmt.Errorf("store.List: %w", cancelled)
+		return c, cancelled
 	}
 	// A lost connection would otherwise leave secrets silently missing from
 	// the list; fail instead, so the user sees why.
 	for _, err := range failed {
 		if errors.Is(err, ErrConnectionLost) || errors.Is(err, ErrUnreachable) {
-			return nil, fmt.Errorf("store.List: %w", err)
+			return c, err
 		}
 	}
 
-	var secrets []*Secret
-	for _, secret := range found {
-		if secret != nil {
-			secrets = append(secrets, secret)
+	for i, secret := range found {
+		if failed[i] != nil {
+			s.log.Warn("skipping unreadable secret file", "path", names[i], "err", failed[i])
+			c.Unreadable = append(c.Unreadable, names[i])
+			continue
 		}
+		c.Secrets = append(c.Secrets, secret)
 	}
-	return secrets, nil
+	slices.Sort(c.Unreadable)
+	return c, nil
 }
 
-// readSecret reads and decrypts one secret file for List. A file that
-// cannot be read, decrypted or parsed is logged and skipped (nil, nil); a
-// lost connection is returned, so List can fail rather than show a partial
-// list.
+// readSecret reads, decrypts and checks one secret file for Contents.
 func (s *Store) readSecret(name string) (*Secret, error) {
 	ciphertext, err := s.fs.ReadFile(name)
 	if err != nil {
-		if errors.Is(err, ErrConnectionLost) || errors.Is(err, ErrUnreachable) {
-			return nil, err
-		}
-		s.log.Warn("failed to read secret file", "path", name, "err", err)
-		return nil, nil
+		return nil, err
 	}
-	secret, err := s.openSecret(name, ciphertext)
-	if err != nil {
-		s.log.Warn("skipping unreadable secret file", "path", name, "err", err)
-		return nil, nil
-	}
-	return secret, nil
+	return s.openSecret(name, ciphertext)
 }
 
 // openSecret decrypts and parses the secret file at file (vault-relative).
