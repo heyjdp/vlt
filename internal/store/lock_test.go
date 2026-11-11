@@ -263,3 +263,57 @@ func TestLock_ReleaseLeavesNoTempFiles(t *testing.T) {
 		}
 	}
 }
+
+// renameHook runs after once its store has renamed the lock aside, as a
+// release does first.
+type renameHook struct {
+	vaultFS
+	after func()
+}
+
+func (f renameHook) Rename(oldname, newname string) error {
+	err := f.vaultFS.Rename(oldname, newname)
+	if err == nil && oldname == lockFile && f.after != nil {
+		f.after()
+	}
+	return err
+}
+
+// The UI releases a lock in the background, so a quick lock and unlock can
+// open the vault again while the old session's release is still running.
+// Whichever way the two interleave, the new session's lock survives.
+func TestLock_AReleaseStillRunningLeavesTheNextSessionsLock(t *testing.T) {
+	t.Parallel()
+	for _, when := range []string{"after the old lock was renamed aside", "before the release started"} {
+		t.Run(when, func(t *testing.T) {
+			t.Parallel()
+			old := openedVault(t)
+			if err := old.AcquireLock(context.Background(), false); err != nil {
+				t.Fatal(err)
+			}
+			next, err := Open(context.Background(), old.loc.Path, internalPass, quiet(), WithWorkFactor(10))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(next.Close)
+			unlock := func() {
+				if err := next.AcquireLock(context.Background(), false); err != nil {
+					t.Errorf("unlocking again: %v", err)
+				}
+			}
+			if when == "before the release started" {
+				unlock() // takes over the old session's lock: same process
+			} else {
+				old.fs = renameHook{vaultFS: old.fs, after: unlock}
+			}
+
+			old.Close()
+			<-old.Closed()
+
+			held, err := next.readLock()
+			if err != nil || held.Token != next.lockToken || held.Token == "" {
+				t.Fatalf("the next session's lock is gone: %+v, %v", held, err)
+			}
+		})
+	}
+}
