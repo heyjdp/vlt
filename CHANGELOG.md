@@ -8,6 +8,9 @@ All notable changes to vlt are documented here. The format follows
 ### Security
 - Built with the go1.27.4 toolchain, which fixes GO-2026-6859 in `net/http` (used by the update check).
 
+### Changed
+- Built with Fyne 2.8.2 (was 2.7.3) and age 1.3.2 (was 1.3.1). Building on Linux now also needs `libwayland-dev`.
+
 ## [0.2.0] - 2026-11-02
 
 ### Added
