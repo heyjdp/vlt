@@ -7,6 +7,7 @@ All notable changes to vlt are documented here. The format follows
 
 ### Security
 - Built with the go1.27.4 toolchain, which fixes GO-2026-6859 in `net/http` (used by the update check).
+- Exported files are readable only by you on macOS, Linux and OpenBSD (mode 0600). They were created with your default permissions, usually readable by every user of the computer, so an exported SSH or TLS key was exposed (and ssh refuses a key others can read). The export is written to a new file and renamed into place, so nobody who opened the file the save dialog created can read it through that, and a symlink at the path is replaced rather than written through. On Windows the folder's permissions still apply.
 - A secret file is only accepted at the path its own name and group give, and only if it holds a named secret of a known type. Whoever can write the vault's files (a server, a shared folder) could otherwise copy one secret's file over another's, or into another group, and vlt would open it there. Such files, like damaged ones, fail to open and are left out of the list.
 
 ### Changed

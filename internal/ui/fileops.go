@@ -8,9 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -327,9 +330,9 @@ func (fo *FileOps) saveExport(writer fyne.URIWriteCloser, err error, name, filen
 	}
 	background(fo.run,
 		func(context.Context) (int, error) {
-			n, err := writeExport(writer, data)
+			n, err := fo.writePrivateExport(writer, data)
 			if err != nil {
-				if delErr := storage.Delete(writer.URI()); delErr != nil {
+				if delErr := storage.Delete(writer.URI()); delErr != nil && !errors.Is(delErr, fs.ErrNotExist) {
 					return 0, fmt.Errorf("%w (the file at %s may be incomplete)", err, writer.URI().Path())
 				}
 			}
@@ -355,6 +358,79 @@ func (fo *FileOps) dropPending() {
 		crypto.Wipe(fo.pending)
 		fo.pending = nil
 	}
+}
+
+// writePrivateExport writes data to the file w names and wipes data. A
+// local file on Unix is written so only the user can read it: the save
+// dialog has already created it with the user's umask (often readable by
+// everyone), and anyone who opened it since could read through that
+// handle. So data goes to a new 0600 temp file in the same folder, which is
+// renamed over the file; a planted file or symlink is replaced, never
+// followed, and a failed export removes only the temp file. If the user may
+// not add files to the folder, the existing file is made private and
+// written in place, or not at all if it can't be (it may be another
+// user's). Windows has no Unix modes (the folder's ACL applies), and other
+// schemes are written as given.
+func (fo *FileOps) writePrivateExport(w fyne.URIWriteCloser, data []byte) (int, error) {
+	if w.URI().Scheme() != "file" || runtime.GOOS == "windows" {
+		return writeExport(w, data)
+	}
+	path := w.URI().Path()
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".vlt-export-*")
+	if err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			err = os.Chmod(path, 0o600)
+			if err == nil {
+				fo.log.Info("export written in place: the folder takes no new files")
+				return writeExport(w, data)
+			}
+		}
+		crypto.Wipe(data)
+		_ = w.Close()
+		return 0, fmt.Errorf("write privately: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		crypto.Wipe(data)
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return 0, fmt.Errorf("close: %w", err)
+	}
+	n, err := writeExport(syncOnClose{tmp}, data)
+	if err == nil {
+		err = os.Rename(tmp.Name(), path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp.Name())
+		return 0, err
+	}
+	syncFolder(dir)
+	return n, nil
+}
+
+// syncFolder flushes a folder's entries, so a rename into it survives a
+// crash. It is best effort: an export already reported as written is not
+// failed afterwards.
+func syncFolder(dir string) {
+	d, err := os.Open(dir) //nolint:gosec // the folder the user picked in the save dialog
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	_ = d.Close()
+}
+
+// syncOnClose flushes a file to disk before closing it, so a renamed export
+// is complete even after a crash.
+type syncOnClose struct{ *os.File }
+
+// Close syncs and closes the file; it closes it even if the sync fails.
+func (f syncOnClose) Close() error {
+	if err := f.Sync(); err != nil {
+		_ = f.File.Close()
+		return fmt.Errorf("sync: %w", err)
+	}
+	return f.File.Close()
 }
 
 // writeExport writes data to w and closes it, then wipes data. A failed
