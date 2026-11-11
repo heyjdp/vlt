@@ -162,7 +162,7 @@ Three secret types share this structure:
 
 ## Requirements
 
-- **Go 1.26.1+** — [install instructions](https://go.dev/doc/install), or `brew install go` on macOS. `go.mod` also names a patched toolchain (`toolchain go1.27.3`), which the `go` command downloads automatically if yours is older; it fixes standard-library vulnerabilities that `govulncheck` reports
+- **Go 1.26.1+** — [install instructions](https://go.dev/doc/install), or `brew install go` on macOS. `go.mod` also names a patched toolchain (`toolchain go1.27.4`), which the `go` command downloads automatically if yours is older; it fixes standard-library vulnerabilities that `govulncheck` reports
 - **A C compiler** — Fyne's desktop driver uses cgo (Xcode command-line tools on macOS, gcc on Linux, MinGW-w64 on Windows)
 - **OpenGL/Metal** — required by Fyne for rendering (system libraries, no manual install needed on macOS/Windows; on Linux install `libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev`; the last is needed from Fyne 2.8, whose GLFW 3.4 also builds a Wayland backend)
 - **OpenBSD** — install `mesa-dri` via `pkg_add` for OpenGL support
@@ -273,6 +273,7 @@ The test suite covers:
   - *Lock file*: unlocking takes it, and locking or quitting releases it; a vault open elsewhere asks first, *Open Anyway* takes over, *Cancel* closes the waiting vault and leaves the other lock alone, and an unanswered question closes it after the auto-lock timeout
   - *Background work*: unlock and create run off the UI thread with progress; stale results after a vault switch or lock are dropped; lock cancels the initial list load
   - *List and detail*: saves, deletes and imports update rows in place (also under a search filter and during the first load); forms save every field, mask secrets, and copy the right value; group suggestions show one spelling per group, a new or imported secret typed into a differently spelled group uses the existing one, and search matches a group by either spelling
+  - *Session*: the session module alone, with real temporary stores, a stand-in for a server store that releases its lock late, and hand-fired timers: begin and end (store closed, context cancelled, earlier work sees the end; beginning again ends the open session), the warning (only with room for it) and auto-lock, the key zeroed before the main goroutine runs and a late timeout notice dropped, activity restarting the countdown and silencing timers already firing, no countdown while locked or with auto-lock off, a waiting store closed when the timeout passes, kept once taken, or closed when another replaces it, and quitting closing both stores and waiting, within a deadline, for their locks to be released
   - *Auto-lock*: activity resets the countdown, idleness locks, the warning and its buttons work, timeout changes apply, zero disables it
   - *Clipboard*: cleared after the TTL, each copy gets its full TTL, unrelated content is left alone, cleared on lock and quit
   - *Import and export*: read errors and oversized files save nothing; the SHA-256 is reported; failed writes and closes are reported
@@ -301,7 +302,7 @@ govulncheck ./...
 make check
 ```
 
-Use golangci-lint v2.14 or later: earlier releases cannot read the export data of the Go 1.27.3 standard library this module's toolchain uses, and fail with "export data version" errors.
+Use golangci-lint v2.14 or later: earlier releases cannot read the export data of the Go 1.27 standard library this module's toolchain uses, and fail with "export data version" errors.
 
 The linter set (`.golangci.yml`) is golangci-lint's `standard` set plus `bodyclose`, `dupl`, `errorlint`, `gocritic`, `gosec`, `misspell`, `nilerr`, `revive`, `unconvert` and `unparam`. Two gosec rule groups are excluded for `internal/store`, with the reasons recorded in the config: file paths there are slugified names inside the user's vault directory, and the secret envelope's `password` field exists to be encrypted.
 
@@ -378,7 +379,8 @@ internal/
 ├── update/
 │   └── update.go            Asks GitHub for the latest release; compares versions
 ├── ui/
-│   ├── app.go               Lock/unlock state machine, header bar, layout
+│   ├── app.go               Screen switching (unlock, create, main view), header bar, layout
+│   ├── session.go           Vault session: the open or waiting store, auto-lock countdown and warning
 │   ├── about.go             About dialog: build details, Copy Details, Report a Bug
 │   ├── updates.go           Check for Updates: on request, and at start-up if turned on
 │   ├── totp.go              A record's one-time code panel (code, countdown, Copy Code)

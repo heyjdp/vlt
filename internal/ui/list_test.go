@@ -169,7 +169,7 @@ func TestApp_ImportReplacingOpenSecretRefreshesItsForm(t *testing.T) {
 
 	app.secretList.list.Select(0)
 	replacement := testutil.FileSecret("token", "token", "eA==", "keys")
-	if err := app.store.Update(context.Background(), replacement); err != nil {
+	if err := app.session.Store().Update(context.Background(), replacement); err != nil {
 		t.Fatal(err)
 	}
 	dv.fileOps.importDone(replacement, importedFile{size: 1})

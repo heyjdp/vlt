@@ -52,7 +52,7 @@ jobs:
 
       # Formatting (gofumpt, goimports) is checked here too, as configured in
       # .golangci.yml. golangci-lint releases before v2.14 cannot read the
-      # Go 1.27.3 standard library's export data, hence the pinned version.
+      # Go 1.27 standard library's export data, hence the pinned version.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}

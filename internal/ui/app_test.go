@@ -42,7 +42,7 @@ func TestApp_UnlockRunsOffTheMainGoroutine(t *testing.T) {
 
 	unlock(app)
 
-	if app.store != nil {
+	if app.session.Store() != nil {
 		t.Fatal("unlock must not open the vault synchronously in the tap handler")
 	}
 	if !app.unlockScreen.unlockBtn.Disabled() || app.unlockScreen.progress.Hidden {
@@ -50,7 +50,7 @@ func TestApp_UnlockRunsOffTheMainGoroutine(t *testing.T) {
 	}
 
 	q.flush()
-	if app.store == nil || app.secretList == nil {
+	if app.session.Store() == nil || app.secretList == nil {
 		t.Fatal("expected the vault to be open once background work completes")
 	}
 	app.Lock()
@@ -71,7 +71,7 @@ func TestApp_StaleUnlockIsDiscardedAfterVaultSwitch(t *testing.T) {
 	app.Lock()
 	q.flush()
 
-	if app.store != nil {
+	if app.session.Store() != nil {
 		t.Fatal("an unlock result for a superseded screen must be discarded")
 	}
 	if app.createScreen == nil {

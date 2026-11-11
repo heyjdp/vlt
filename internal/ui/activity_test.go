@@ -45,7 +45,7 @@ func TestAutoLock_TypingInAFormResetsTheCountdown(t *testing.T) {
 
 	// Once typing stops, the restarted countdown still locks.
 	clock.active(testTimeout).f()
-	if app.store != nil {
+	if app.session.Store() != nil {
 		t.Fatal("the vault should lock once the restarted countdown expires")
 	}
 }
@@ -71,7 +71,7 @@ func TestAutoLock_IdlenessLocks(t *testing.T) {
 
 	clock.active(testTimeout).f()
 
-	if app.store != nil {
+	if app.session.Store() != nil {
 		t.Fatal("the vault should lock when the timer fires")
 	}
 	if app.unlockScreen == nil {
@@ -163,7 +163,7 @@ func TestAutoLock_StayUnlockedRestartsTheCountdown(t *testing.T) {
 	clock.active(warnDelay(testTimeout)).f()
 	app.lockWarning.Confirm() // "Stay unlocked"
 
-	if app.store == nil {
+	if app.session.Store() == nil {
 		t.Fatal("Stay unlocked must not lock")
 	}
 	if !lock.stopped || clock.active(testTimeout) == nil {
@@ -178,7 +178,7 @@ func TestAutoLock_LockNowLocksImmediately(t *testing.T) {
 	clock.active(warnDelay(testTimeout)).f()
 	app.lockWarning.Hide() // the user pressing "Lock now" dismisses the dialog
 
-	if app.store != nil {
+	if app.session.Store() != nil {
 		t.Fatal("Lock now should lock the vault")
 	}
 }
@@ -196,7 +196,7 @@ func TestAutoLock_StaleTimersAreIgnoredAfterActivity(t *testing.T) {
 		t.Fatal("a warning from a replaced timer must not be shown")
 	}
 	oldLock.f()
-	if app.store == nil {
+	if app.session.Store() == nil {
 		t.Fatal("a lock from a replaced timer must not lock the vault")
 	}
 	app.Lock()

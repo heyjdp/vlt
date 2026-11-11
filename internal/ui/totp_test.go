@@ -196,7 +196,7 @@ func TestTOTP_AnInvalidSecretIsNotSaved(t *testing.T) {
 	if top := app.window.Canvas().Overlays().Top(); top == nil || !hasLabel(top, "TOTP secret: the TOTP secret is not valid base32 (letters A–Z and digits 2–7)") {
 		t.Fatal("saving an invalid TOTP secret should explain why it was refused")
 	}
-	got, err := app.store.Get(context.Background(), "bank", "work")
+	got, err := app.session.Store().Get(context.Background(), "bank", "work")
 	if err != nil || got.TOTPSecret != rfcSecret {
 		t.Fatalf("the stored secret changed: %q, %v", got.TOTPSecret, err)
 	}
@@ -209,7 +209,7 @@ func TestTOTP_ALinkIsSavedTrimmedAndShowsItsCode(t *testing.T) {
 	formEntries(app.detailView)[4].SetText("  " + link + "\n")
 	test.Tap(findButton(app.detailView.Content(), "Save"))
 
-	got, err := app.store.Get(context.Background(), "bank", "work")
+	got, err := app.session.Store().Get(context.Background(), "bank", "work")
 	if err != nil || got.TOTPSecret != link {
 		t.Fatalf("stored %q, %v; want the trimmed link", got.TOTPSecret, err)
 	}
@@ -258,7 +258,7 @@ func TestTOTP_AnUnchangedUnreadableSecretDoesNotBlockSaving(t *testing.T) {
 	formEntries(app.detailView)[3].SetText("new password")
 	test.Tap(findButton(app.detailView.Content(), "Save"))
 
-	got, err := app.store.Get(context.Background(), "bank", "work")
+	got, err := app.session.Store().Get(context.Background(), "bank", "work")
 	if err != nil || got.Password != "new password" || got.TOTPSecret != "on my phone!" {
 		t.Fatalf("stored %+v, %v; the other fields should save", got, err)
 	}

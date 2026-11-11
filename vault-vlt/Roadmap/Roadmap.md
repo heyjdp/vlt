@@ -9,7 +9,7 @@ source: "[[2026-10-27 Code Review]]"
 
 # Roadmap
 
-The fix plan from the [[2026-10-27 Code Review]], in five phases, plus a sixth release phase, a seventh for vaults on a server, and an eighth for updates and TOTP. Earlier phases unblock or de-risk later ones. Each fix is its own note in `Roadmap/Fixes/`, and its `status` property drives the tracker below.
+The fix plan from the [[2026-10-27 Code Review]], in five phases, plus a sixth release phase, a seventh for vaults on a server, an eighth for updates and TOTP, and a ninth for architecture. Earlier phases unblock or de-risk later ones. Each fix is its own note in `Roadmap/Fixes/`, and its `status` property drives the tracker below.
 
 > [!important] Why storage goes first
 > [[F01 Scrypt-wrapped identity]] changes the on-disk format. Doing it before anyone has real vaults avoids writing a migration under pressure, and it removes the root cause of two critical findings.
@@ -55,7 +55,7 @@ flowchart LR
     class F04,F05,F07,F12,F15 internal-link;
 ```
 
-Phase colours: <span style="color:#e5484d">■</span> 1 storage · <span style="color:#f76b15">■</span> 2 UI · <span style="color:#ffc53d">■</span> 3 memory · <span style="color:#0090ff">■</span> 4 CI · <span style="color:#30a46c">■</span> 5 tests · <span style="color:#8e4ec6">■</span> 6 release · <span style="color:#0f766e">■</span> 7 server · <span style="color:#d6409f">■</span> 8 updates and TOTP. An arrow `A → B` means *do A before B*. Click a node to open its note.
+Phase colours: <span style="color:#e5484d">■</span> 1 storage · <span style="color:#f76b15">■</span> 2 UI · <span style="color:#ffc53d">■</span> 3 memory · <span style="color:#0090ff">■</span> 4 CI · <span style="color:#30a46c">■</span> 5 tests · <span style="color:#8e4ec6">■</span> 6 release · <span style="color:#0f766e">■</span> 7 server · <span style="color:#d6409f">■</span> 8 updates and TOTP · 9 architecture. An arrow `A → B` means *do A before B*. Click a node to open its note.
 
 The other fixes have no ordering constraints and can be picked up at any point within their phase: [[F03 Prevent silent overwrites]], [[F06 Persist settings]], [[F08 Correct clipboard clearing]], [[F09 Fail import on read errors]], [[F13 Project hygiene]], [[F14 Remove reinvented stdlib and dead code]].
 
@@ -145,6 +145,10 @@ flowchart LR
     class F29,F30,F31,F32 p8
     class F29,F30,F31,F32 internal-link;
 ```
+
+### Phase 9: Architecture
+Added 2026-11-11, from an architecture review (deepening opportunities in the churn hot spots). Goal: deep modules with small interfaces, so changes and tests concentrate in one place.
+- [[F33 Vault session module]]
 
 ## Tracker
 

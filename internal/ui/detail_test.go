@@ -91,7 +91,7 @@ func TestDetailView_RecordFormMasksSecretsAndSavesEveryField(t *testing.T) {
 	notes.SetText("rotated")
 	test.Tap(findButton(app.detailView.Content(), "Save"))
 
-	got, err := app.store.Get(t.Context(), "bank", "work")
+	got, err := app.session.Store().Get(t.Context(), "bank", "work")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestDetailView_PasswordFormMasksAndSavesValue(t *testing.T) {
 	value.SetText("ghp_new")
 	test.Tap(findButton(app.detailView.Content(), "Save"))
 
-	got, err := app.store.Get(t.Context(), "gh", "work")
+	got, err := app.session.Store().Get(t.Context(), "gh", "work")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestDetailView_NewSecretUsesTheExistingGroupSpelling(t *testing.T) {
 	findType[*widget.SelectEntry](form).SetText("personal finance")
 	test.Tap(findButton(form, "Save"))
 
-	got, err := app.store.Get(t.Context(), "bank", "personal-finance")
+	got, err := app.session.Store().Get(t.Context(), "bank", "personal-finance")
 	if err != nil {
 		t.Fatal(err)
 	}

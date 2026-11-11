@@ -114,9 +114,7 @@ func (a *App) aboutDetails() buildDetails {
 			d.Vault = "on a server"
 		}
 	}
-	a.mu.Lock()
-	d.Locked = a.store == nil
-	a.mu.Unlock()
+	d.Locked = a.session.Store() == nil
 	return d
 }
 

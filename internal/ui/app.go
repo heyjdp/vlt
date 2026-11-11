@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -27,7 +26,6 @@ import (
 
 // App is the main application controller managing lock/unlock state.
 type App struct {
-	mu      sync.Mutex
 	fyneApp fyne.App
 	window  fyne.Window
 	// version is the build's version (main.version), shown in About.
@@ -37,9 +35,6 @@ type App struct {
 	// latest fetches the newest release; NewApp sets the real checker, and
 	// other constructors leave one that never reaches the network.
 	latest latestRelease
-	// lockGen counts locks (guarded by mu); an update check started before
-	// a lock drops its result.
-	lockGen int
 	// checkingUpdates is true while a check the user asked for runs;
 	// checkedManually records that one has run since start-up, so the
 	// start-up check announces nothing more; pendingRelease is a release the
@@ -50,30 +45,13 @@ type App struct {
 	pendingRelease  *update.Release
 	config          Config
 	log             *slog.Logger
-	store           *store.Store
-	lockTimer       stoppableTimer
-	// warnTimer fires lockWarningLead before lockTimer.
-	warnTimer stoppableTimer
-	// timerGen identifies the current pair of auto-lock timers; callbacks
-	// from stopped timers that already started running check it and do
-	// nothing.
-	timerGen int
+	// session holds the open (or waiting) store and runs the auto-lock.
+	session  *session[*store.Store]
 	newTimer timerFactory
 	// storeOpts are passed to store.Open and store.Create. Tests use them
 	// to lower the scrypt work factor; production passes none.
 	storeOpts []store.Option
-	cancelCtx context.CancelFunc
 	run       runner
-	// closing is closed once the last locked store has released its lock
-	// and connection (a remote store does that in the background); quit
-	// waits for it, briefly, so vlt.lock is not left behind.
-	closing <-chan struct{}
-	// pending is a store that has been opened but not shown, while the user
-	// decides whether to open a vault that is open elsewhere. Its key is in
-	// memory, so it is closed on Cancel, on quit, and when the auto-lock
-	// timeout passes without an answer (pendingTimer).
-	pending      *store.Store
-	pendingTimer stoppableTimer
 	// screenGen identifies the latest showUnlockScreen call; older vault
 	// checks that complete late are ignored.
 	screenGen int
@@ -140,6 +118,15 @@ func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, confi
 		),
 	))
 
+	app.session = newSession[*store.Store](timers, fyne.Do, app.lockTimeout, sessionCallbacks{
+		Warn: app.showLockWarning,
+		// The session has already closed the store (zeroing its key);
+		// Lock returns to the unlock screen.
+		TimedOut: func() {
+			app.log.Info("auto-lock triggered")
+			app.Lock()
+		},
+	})
 	app.statusBar = caption("Locked")
 	app.clipboard = newClipboardClearer(fyneApp.Clipboard(), app.statusBar,
 		func() time.Duration { return time.Duration(app.config.ClipboardTTLs) * time.Second }, timers)
@@ -474,26 +461,16 @@ func (a *App) unlockedOrAsk(r openResult, setBusy func(bool), current func() boo
 		return
 	}
 	s := r.store
-	a.mu.Lock()
-	a.pending = s
-	a.mu.Unlock()
-	if timeout := a.lockTimeout(); timeout > 0 {
-		// No answer within the auto-lock timeout: lock, as an unlocked
-		// vault would.
-		a.pendingTimer = a.newTimer(timeout, func() {
-			fyne.Do(func() {
-				if a.takePending(s) {
-					s.Close()
-					a.dismissDialogs()
-					setBusy(false)
-				}
-			})
-		})
-	}
+	// No answer within the auto-lock timeout: the session closes s, as it
+	// would lock an unlocked vault.
+	a.session.Hold(s, func() {
+		a.dismissDialogs()
+		setBusy(false)
+	})
 	dialog.ShowCustomConfirm("Vault Already Open", "Open Anyway", "Cancel",
 		widget.NewLabel(inUseMessage(r.inUse)),
 		func(openAnyway bool) {
-			if !a.takePending(s) {
+			if !a.session.Take(s) {
 				return // already closed (timed out, or quitting)
 			}
 			if !openAnyway || !current() {
@@ -517,22 +494,6 @@ func (a *App) unlockedOrAsk(r openResult, setBusy func(bool), current func() boo
 		}, a.window)
 }
 
-// takePending clears the pending store if it is still s, stopping its
-// timer, and reports whether it was.
-func (a *App) takePending(s *store.Store) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.pending != s {
-		return false
-	}
-	a.pending = nil
-	if a.pendingTimer != nil {
-		a.pendingTimer.Stop()
-		a.pendingTimer = nil
-	}
-	return true
-}
-
 // inUseMessage explains a lock held by another copy of vlt.
 func inUseMessage(e *store.InUseError) string {
 	who := "Another copy of vlt"
@@ -547,14 +508,9 @@ func inUseMessage(e *store.InUseError) string {
 // unlocked switches to the main view for an opened or newly created vault.
 // It runs on the main goroutine.
 func (a *App) unlocked(s *store.Store) {
-	// The session context is registered before the auto-lock timer starts,
-	// so a Lock firing at any point after this cancels the whole session.
-	ctx, cancel := context.WithCancel(context.Background())
-	a.mu.Lock()
-	a.store = s
-	a.cancelCtx = cancel
-	a.startLockTimer()
-	a.mu.Unlock()
+	// Work started with the session's context has its result dropped once
+	// the vault locks.
+	ctx := a.session.Begin(s)
 	a.unlockScreen, a.createScreen = nil, nil
 	a.log.Info("vault unlocked", "dir", a.config.VaultDir)
 	if !a.config.FromEnv.VaultDir {
@@ -581,13 +537,13 @@ func (a *App) unlocked(s *store.Store) {
 }
 
 // showMainView displays the main secret browser for the unlocked store s.
-// It takes s explicitly rather than reading a.store, which the auto-lock
-// timer may clear concurrently. session is bound to the session context:
+// It takes s explicitly rather than calling a.session.Store(), which the
+// auto-lock may clear concurrently. work is bound to the session context:
 // work still in flight when the vault locks has its result dropped.
-func (a *App) showMainView(s *store.Store, session runner) {
-	a.detailView = NewDetailView(a.window, s, a.clipboard.Copy, a.statusBar, a.log, session)
+func (a *App) showMainView(s *store.Store, work runner) {
+	a.detailView = NewDetailView(a.window, s, a.clipboard.Copy, a.statusBar, a.log, work)
 	a.detailView.newTimer = a.newTimer
-	a.secretList = NewSecretList(a.window, s, a.detailView, a.log, session)
+	a.secretList = NewSecretList(a.window, s, a.detailView, a.log, work)
 
 	// Every save, delete and import updates the list in place, whether the
 	// secret is new or was selected from the list.
@@ -598,7 +554,7 @@ func (a *App) showMainView(s *store.Store, session runner) {
 		a.secretList.Upsert(sec)
 		a.detailView.RefreshIfShowing(sec)
 	}
-	fileOps := NewFileOps(a.window, s, a.log, session, a.secretList.Groups, onImported)
+	fileOps := NewFileOps(a.window, s, a.log, work, a.secretList.Groups, onImported)
 	a.detailView.SetFileOps(fileOps)
 
 	toolButton := func(label string, icon fyne.Resource, tapped func()) *widget.Button {
@@ -616,7 +572,7 @@ func (a *App) showMainView(s *store.Store, session runner) {
 				toolButton("Add Password", keyIcon, a.detailView.ShowNewPassword),
 				toolButton("Add Record", theme.AccountIcon(), a.detailView.ShowNewRecord),
 				toolButton("Import File", theme.UploadIcon(), fileOps.ImportFile),
-				toolButton("Settings", theme.SettingsIcon(), func() { a.openSettings(s, session) }),
+				toolButton("Settings", theme.SettingsIcon(), func() { a.openSettings(s, work) }),
 				lockBtn,
 			)), 4),
 		widget.NewSeparator(),
@@ -663,26 +619,14 @@ func (a *App) showMainView(s *store.Store, session runner) {
 
 // Lock zeros the vault key, cancels the session, clears any secret vlt copied
 // to the clipboard, and returns to the unlock screen. It may be called from
-// any goroutine (the auto-lock timer calls it).
+// any goroutine; when the auto-lock calls it (on the main goroutine), the
+// session has already ended.
 func (a *App) Lock() {
-	a.mu.Lock()
-	if a.store != nil {
-		a.closing = a.store.Closed()
-		a.store.Close()
-	}
-	if a.cancelCtx != nil {
-		a.cancelCtx()
-		a.cancelCtx = nil
-	}
-	a.stopLockTimers()
-
-	a.store = nil
-	a.lockGen++
-	a.mu.Unlock()
+	a.session.End()
 	a.log.Info("vault locked")
 
-	// UI work runs without a.mu held: widget callbacks may call back into
-	// the app (for example resetLockTimer), and fyne.Do can run inline.
+	// fyne.Do can run inline; the session's lock is not held here, so
+	// widget callbacks may call back into the app (resetLockTimer).
 	fyne.Do(func() {
 		a.hideLockWarning()
 		a.dismissDialogs()
@@ -695,8 +639,8 @@ func (a *App) Lock() {
 
 // openSettings shows the Settings screen in the detail panel, wired to save
 // changes and relock when needed.
-func (a *App) openSettings(s *store.Store, session runner) *SettingsScreen {
-	settings := NewSettingsScreen(a.window, &a.config, s, a.statusBar, a.log, session, a.Lock)
+func (a *App) openSettings(s *store.Store, work runner) *SettingsScreen {
+	settings := NewSettingsScreen(a.window, &a.config, s, a.statusBar, a.log, work, a.Lock)
 	settings.activity = a.resetLockTimer
 	settings.save = a.saveSetting
 	settings.checkUpdates = a.checkForUpdates
@@ -754,41 +698,15 @@ func (a *App) dismissDialogs() {
 // main goroutine (window close intercept or the Quit menu item).
 func (a *App) quit() {
 	a.clipboard.Clear()
-	a.closeStores(quitWait)
+	if !a.session.Close(quitWait) {
+		a.log.Warn("quitting before the vault released its lock")
+	}
 	a.fyneApp.Quit()
 }
 
 // quitWait bounds how long quitting waits for a vault on a server to
 // release its lock; a dead network must not stop vlt from quitting.
 const quitWait = 3 * time.Second
-
-// closeStores closes the open (or pending) store, then waits up to wait for
-// every closed store to release its lock and connection.
-func (a *App) closeStores(wait time.Duration) {
-	a.mu.Lock()
-	var done []<-chan struct{}
-	for _, s := range []*store.Store{a.store, a.pending} {
-		if s != nil {
-			done = append(done, s.Closed())
-			s.Close()
-		}
-	}
-	a.store, a.pending = nil, nil
-	if a.closing != nil {
-		done = append(done, a.closing)
-	}
-	a.mu.Unlock()
-
-	deadline := time.After(wait)
-	for _, ch := range done {
-		select {
-		case <-ch:
-		case <-deadline:
-			a.log.Warn("quitting before the vault released its lock")
-			return
-		}
-	}
-}
 
 // lockTimeout returns the configured auto-lock timeout; 0 disables it.
 func (a *App) lockTimeout() time.Duration {
@@ -798,81 +716,22 @@ func (a *App) lockTimeout() time.Duration {
 	return time.Duration(a.config.LockTimeoutMs) * time.Millisecond
 }
 
-// warnDelay returns when to warn before locking, or 0 for no warning (the
-// timeout is too short to leave room for one).
-func warnDelay(timeout time.Duration) time.Duration {
-	if timeout < 2*lockWarningLead {
-		return 0
-	}
-	return timeout - lockWarningLead
-}
-
-// startLockTimer starts the auto-lock inactivity timer, and the warning
-// timer that fires lockWarningLead earlier. The caller holds a.mu.
-func (a *App) startLockTimer() {
-	d := a.lockTimeout()
-	if d == 0 {
-		return
-	}
-	a.timerGen++
-	gen := a.timerGen
-	a.lockTimer = a.newTimer(d, func() { a.lockIfCurrent(gen) })
-	if w := warnDelay(d); w > 0 {
-		a.warnTimer = a.newTimer(w, func() {
-			fyne.Do(func() { a.showLockWarning(gen) })
-		})
-	}
-}
-
-// lockIfCurrent locks for inactivity unless the timer that fired has since
-// been replaced (activity arrived just as it fired).
-func (a *App) lockIfCurrent(gen int) {
-	a.mu.Lock()
-	current := gen == a.timerGen && a.lockTimer != nil
-	a.mu.Unlock()
-	if current {
-		a.log.Info("auto-lock triggered")
-		a.Lock()
-	}
-}
-
-// stopLockTimers stops both auto-lock timers. The caller holds a.mu.
-func (a *App) stopLockTimers() {
-	a.timerGen++
-	if a.lockTimer != nil {
-		a.lockTimer.Stop()
-		a.lockTimer = nil
-	}
-	if a.warnTimer != nil {
-		a.warnTimer.Stop()
-		a.warnTimer = nil
-	}
-}
-
 // resetLockTimer restarts the inactivity countdown. It is called on every
 // user input (see activityTracker) on the main goroutine, and re-reads the
 // timeout, so a change in Settings applies immediately.
 func (a *App) resetLockTimer() {
-	a.mu.Lock()
-	if a.store != nil {
-		// Unlocked: restart, which also arms the timer if auto-lock was just
-		// re-enabled in Settings, or disarms it if it was turned off.
-		a.stopLockTimers()
-		a.startLockTimer()
-	}
-	a.mu.Unlock()
+	// Unlocked: restart, which also arms the timer if auto-lock was just
+	// re-enabled in Settings, or disarms it if it was turned off.
+	a.session.Activity()
 	a.hideLockWarning()
 }
 
-// showLockWarning tells the user the vault is about to lock for inactivity,
-// unless the warning timer that fired (generation gen) has since been
-// replaced by fresh activity. "Stay unlocked" (or any other input) restarts
-// the countdown; "Lock now" locks immediately.
-func (a *App) showLockWarning(gen int) {
-	a.mu.Lock()
-	current := gen == a.timerGen && a.store != nil
-	a.mu.Unlock()
-	if !current || a.lockWarning != nil {
+// showLockWarning tells the user the vault is about to lock for inactivity
+// (the session calls it only while its countdown is current). "Stay
+// unlocked" (or any other input) restarts the countdown; "Lock now" locks
+// immediately.
+func (a *App) showLockWarning() {
+	if a.lockWarning != nil {
 		return
 	}
 	var d *dialog.ConfirmDialog

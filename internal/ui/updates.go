@@ -45,9 +45,7 @@ func (a *App) checkForUpdates() {
 	}
 	a.checkingUpdates = true
 	a.checkedManually = true // the start-up check has nothing left to announce
-	a.mu.Lock()
-	gen := a.lockGen
-	a.mu.Unlock()
+	gen := a.session.Gen()
 
 	progress := dialog.NewCustomWithoutButtons("Checking for Updates",
 		container.NewVBox(muted("Asking GitHub for the latest release…"), widget.NewProgressBarInfinite()), a.window)
@@ -55,10 +53,7 @@ func (a *App) checkForUpdates() {
 	background(a.run, a.latest, func(rel update.Release, err error) {
 		a.checkingUpdates = false
 		progress.Hide()
-		a.mu.Lock()
-		locked := a.lockGen != gen
-		a.mu.Unlock()
-		if locked {
+		if !a.session.Current(gen) { // the vault locked meanwhile
 			return
 		}
 		a.showUpdateResult(rel, err)

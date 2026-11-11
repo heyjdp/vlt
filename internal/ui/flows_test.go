@@ -33,7 +33,7 @@ func TestFlow_WrongPassphraseShowsError(t *testing.T) {
 	test.Type(app.unlockScreen.entry, "not the passphrase")
 	test.Tap(app.unlockScreen.unlockBtn)
 
-	if app.store != nil {
+	if app.session.Store() != nil {
 		t.Fatal("a wrong passphrase must not unlock the vault")
 	}
 	if !app.unlockScreen.errorLabel.Visible() || app.unlockScreen.errorLabel.Text != "Incorrect passphrase" {
@@ -60,7 +60,7 @@ func TestFlow_DeleteAsksForConfirmation(t *testing.T) {
 	if len(app.secretList.secrets) != 0 {
 		t.Fatal("answering Yes should delete the secret")
 	}
-	if _, err := app.store.Get(context.Background(), "gh", "work"); err == nil {
+	if _, err := app.session.Store().Get(context.Background(), "gh", "work"); err == nil {
 		t.Fatal("the secret should be gone from the vault")
 	}
 	app.Lock()
@@ -76,7 +76,7 @@ func TestFlow_ImportAsksForGroupThenConfirmsReplace(t *testing.T) {
 	test.Tap(dialogButton(t, w, "Import"))
 	test.Tap(dialogButton(t, w, "OK")) // the completion message
 
-	got, err := app.store.Get(context.Background(), "id_rsa", "keys")
+	got, err := app.session.Store().Get(context.Background(), "id_rsa", "keys")
 	if err != nil {
 		t.Fatalf("imported file not saved in the chosen group: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestFlow_ImportAsksForGroupThenConfirmsReplace(t *testing.T) {
 	test.Type(dialogEntry(t, w), "keys")
 	test.Tap(dialogButton(t, w, "Import"))
 	test.Tap(dialogButton(t, w, "No"))
-	if got, _ := app.store.Get(context.Background(), "id_rsa", "keys"); got.Value != "djE=" {
+	if got, _ := app.session.Store().Get(context.Background(), "id_rsa", "keys"); got.Value != "djE=" {
 		t.Fatalf("answering No must keep the original file, got %q", got.Value)
 	}
 
@@ -99,7 +99,7 @@ func TestFlow_ImportAsksForGroupThenConfirmsReplace(t *testing.T) {
 	test.Tap(dialogButton(t, w, "Import"))
 	test.Tap(dialogButton(t, w, "Yes")) // replace
 
-	got, err = app.store.Get(context.Background(), "id_rsa", "keys")
+	got, err = app.session.Store().Get(context.Background(), "id_rsa", "keys")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestFlow_ImportUsesTheExistingGroupSpelling(t *testing.T) {
 	test.Tap(dialogButton(t, w, "Import"))
 	test.Tap(dialogButton(t, w, "OK")) // the completion message
 
-	got, err := app.store.Get(context.Background(), "id_ed25519", "ssh-keys")
+	got, err := app.session.Store().Get(context.Background(), "id_ed25519", "ssh-keys")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestFlow_ImportUsesTheExistingGroupSpelling(t *testing.T) {
 func TestFlow_ChangePassphraseThroughSettings(t *testing.T) {
 	app, w := newFlowApp(t, testutil.PasswordSecret("gh", "x", "work"))
 	unlock(app)
-	ss := app.openSettings(app.store, app.run)
+	ss := app.openSettings(app.session.Store(), app.run)
 	box := ss.buildChangePassphrase()
 	current := entryWithPlaceholder(t, box, "Current passphrase")
 	newPass := entryWithPlaceholder(t, box, "New passphrase")
@@ -142,19 +142,19 @@ func TestFlow_ChangePassphraseThroughSettings(t *testing.T) {
 	test.Type(confirm, "an even better passphrase")
 	test.Tap(findButton(box, "Change Passphrase"))
 
-	if app.store != nil || app.unlockScreen == nil {
+	if app.session.Store() != nil || app.unlockScreen == nil {
 		t.Fatal("a passphrase change should relock the vault")
 	}
 	test.Tap(dialogButton(t, w, "OK")) // "Passphrase Changed"
 
 	test.Type(app.unlockScreen.entry, "correct horse battery")
 	test.Tap(app.unlockScreen.unlockBtn)
-	if app.store != nil {
+	if app.session.Store() != nil {
 		t.Fatal("the old passphrase must no longer unlock the vault")
 	}
 	test.Type(app.unlockScreen.entry, "an even better passphrase")
 	test.Tap(app.unlockScreen.unlockBtn)
-	if app.store == nil {
+	if app.session.Store() == nil {
 		t.Fatal("the new passphrase should unlock the vault")
 	}
 	app.Lock()
@@ -163,7 +163,7 @@ func TestFlow_ChangePassphraseThroughSettings(t *testing.T) {
 func TestFlow_SwitchVaultThroughSettings(t *testing.T) {
 	app, w := newFlowApp(t)
 	unlock(app)
-	ss := app.openSettings(app.store, app.run)
+	ss := app.openSettings(app.session.Store(), app.run)
 	box := ss.buildVaultLocation()
 	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")
 	newDir := filepath.Join(t.TempDir(), "other")

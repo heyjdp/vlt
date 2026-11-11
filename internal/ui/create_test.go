@@ -233,7 +233,7 @@ func TestApp_OpenExistingVaultUnlocksAndRemembersIt(t *testing.T) {
 		t.Fatal("the location must not be saved before the vault is unlocked")
 	}
 	unlock(app)
-	if app.store == nil {
+	if app.session.Store() == nil {
 		t.Fatal("the opened vault should unlock with its passphrase")
 	}
 	if got := prefs.String(prefVaultDir); got != other {
