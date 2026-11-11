@@ -12,6 +12,12 @@ All notable changes to vlt are documented here. The format follows
 ### Changed
 - Built with Fyne 2.8.2 (was 2.7.3) and age 1.3.2 (was 1.3.1). Building on Linux now also needs `libwayland-dev`.
 
+### Fixed
+- A server vault whose folder has `#`, `?` or `%` in its name, given as an `ssh://` location (with a port or a one-letter host), was saved unescaped, so vlt could not open it again. Locations are now saved in a form that reads back as themselves, including folders with leading or trailing spaces, `@[` in the path, or a folder named `~` at the server's root.
+- A host that isn't an IPv6 address but holds a colon (`[:]:vault`), or a stray `]` in a host name, was accepted; both are now refused, as is a server folder name with a control character (a NUL would make the server use another folder).
+- `host:~//vault` and `ssh://host/~//vault` named `/vault` at the server's root instead of `vault` in your home directory. `SSH://` is now read like `ssh://`.
+- Settings no longer offers to switch to, or move to, the current vault when its location is written another way (an unescaped space in an `ssh://` location saved by an older version, say).
+
 ## [0.2.0] - 2026-11-02
 
 ### Added
