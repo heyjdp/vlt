@@ -180,10 +180,10 @@ func lookupName(name string) (string, error) {
 	return name, nil
 }
 
-// path returns <group>/<slug>.age, relative to the vault, for a (trimmed)
-// name. Slugs only hold [a-z0-9-], so the path cannot leave the vault.
+// path returns the vault-relative path of the secret named name in group;
+// see SecretID.
 func (s *Store) path(name, group string) string {
-	return path.Join(NormalizeGroup(group), Slugify(name)+".age")
+	return secretID(name, group).file()
 }
 
 // Get decrypts and returns a secret by name and group.

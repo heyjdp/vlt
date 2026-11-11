@@ -129,7 +129,7 @@ func (dv *DetailView) setObjects(objs ...fyne.CanvasObject) {
 // the same path as secret, so a form never edits a stale copy (for example
 // after an import replaced it).
 func (dv *DetailView) RefreshIfShowing(secret *store.Secret) {
-	if dv.current != nil && sameSecret(dv.current, secret) {
+	if dv.current != nil && dv.current.ID() == secret.ID() {
 		dv.ShowSecret(secret)
 	}
 }
@@ -506,7 +506,7 @@ func (dv *DetailView) deleteSecret(secret *store.Secret) {
 			dv.statusBar.SetText("Deleted: " + deleted.Name)
 			// Only clear the panel if it still shows the deleted secret; the
 			// user may have moved on while the delete ran.
-			if dv.current != nil && sameSecret(dv.current, deleted) {
+			if dv.current != nil && dv.current.ID() == deleted.ID() {
 				dv.current = nil
 				dv.setObjects(emptyState(theme.DeleteIcon(), "Secret deleted",
 					"Choose another secret from the list."))

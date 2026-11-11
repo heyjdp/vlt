@@ -17,7 +17,7 @@ What the person chooses when creating a vault and types to unlock it; vlt never 
 _Avoid_: password (that is a kind of secret), master password
 
 **Secret**:
-One named, encrypted item in a vault: a password, a record or a file.
+One named, encrypted item in a vault: a password, a record or a file. Within a group, names that differ only in case or punctuation ("GitHub Key", "github-key") belong to the same secret, so a second one can't be added beside it.
 _Avoid_: entry, item, credential
 
 **Record**:
@@ -25,7 +25,7 @@ A secret for signing in to a site: URL, username, password and, optionally, a TO
 _Avoid_: login, account
 
 **Group**:
-A named collection of secrets inside a vault, such as "Work" or "Personal".
+A named collection of secrets inside a vault, such as "Work" or "Personal". Its name is kept as typed; names that differ only in case or punctuation ("Personal Finance", "personal-finance") are the same group.
 _Avoid_: category, folder (for the group itself; it is stored as one)
 
 **One-time code**:
