@@ -38,6 +38,10 @@ type sessionCallbacks struct {
 // timer that was already firing when activity arrived or the session ended
 // does nothing, and neither does a waiting store's timer once the store
 // has been taken.
+//
+// An operation that must not be cut off for want of input (moving the
+// vault, changing its passphrase) pauses the auto-lock (Pause) while it
+// runs; End still ends a paused session at once.
 type session[S sessionStore] struct {
 	newTimer timerFactory
 	post     func(func())
@@ -61,7 +65,17 @@ type session[S sessionStore] struct {
 	// closing is the last ended store's Closed channel, which Close waits
 	// for.
 	closing <-chan struct{}
+	// paused counts the pauses of this session not yet resumed (see Pause).
+	paused int
 }
+
+// pausedLockAfter is how long the auto-lock waits without input while the
+// session is paused (or the timeout, if longer). Moving a vault or changing
+// its passphrase relies on its own failure to end: a server that stops
+// answering is noticed within about 45 seconds (ServerAlive: 15 s, 3 times). This bound is
+// for what nothing else ends, such as a hung network folder, so that it
+// cannot keep the vault key in memory for ever.
+const pausedLockAfter = time.Hour
 
 // newSession returns a session with no vault open. timeout returns the
 // auto-lock timeout (0 = off); post runs a callback on the main goroutine.
@@ -122,6 +136,37 @@ func (ss *session[S]) Activity() {
 	var none S
 	if ss.store != none {
 		ss.restartLocked()
+	}
+}
+
+// Pause keeps the auto-lock from ending the session while an operation that
+// must not be cut off runs (moving the vault, changing its passphrase), and
+// returns what resumes it. Until every pause is resumed there is no warning,
+// and the vault locks only after pausedLockAfter without input; then the
+// countdown restarts in full. Resuming again, or after the session has
+// ended, does nothing. End (a lock by hand, quitting) still ends a paused
+// session at once. Pausing while locked does nothing.
+func (ss *session[S]) Pause() (resume func()) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	var none S
+	if ss.store == none {
+		return func() {}
+	}
+	ss.paused++
+	ss.restartLocked()
+	gen := ss.gen
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			ss.mu.Lock()
+			defer ss.mu.Unlock()
+			if gen != ss.gen {
+				return // that session has ended; its pauses went with it
+			}
+			ss.paused--
+			ss.restartLocked()
+		})
 	}
 }
 
@@ -210,6 +255,7 @@ func (ss *session[S]) endLocked() {
 		ss.cancel = nil
 	}
 	ss.stopLocked()
+	ss.paused = 0
 	ss.gen++
 }
 
@@ -234,8 +280,9 @@ func (ss *session[S]) stopPendingTimerLocked() {
 }
 
 // restartLocked starts a fresh countdown: the auto-lock after the timeout,
-// and the warning lockWarningLead earlier when there is room for it. The
-// caller holds ss.mu.
+// and the warning lockWarningLead earlier when there is room for it; or,
+// while paused, only the auto-lock after pausedLockAfter. The caller holds
+// ss.mu.
 func (ss *session[S]) restartLocked() {
 	ss.stopLocked()
 	d := ss.timeout()
@@ -243,6 +290,10 @@ func (ss *session[S]) restartLocked() {
 		return
 	}
 	gen := ss.timerGen
+	if ss.paused > 0 {
+		ss.lockTimer = ss.newTimer(max(d, pausedLockAfter), func() { ss.expire(gen) })
+		return
+	}
 	ss.lockTimer = ss.newTimer(d, func() { ss.expire(gen) })
 	if w := warnDelay(d); w > 0 {
 		ss.warnTimer = ss.newTimer(w, func() {

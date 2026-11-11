@@ -103,7 +103,7 @@ func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, setti
 		storeOpts: storeOpts,
 		pick:      fynePicker{window: window},
 	}
-	app.ops = newOperations(window, run, nil, app.resetLockTimer, app.pick)
+	app.ops = newOperations(window, run, nil, app.resetLockTimer, nil, app.pick)
 
 	// Quitting is a lock-equivalent for the clipboard: the system clipboard
 	// outlives the process, so a copied secret is cleared first. Closing the
@@ -274,7 +274,7 @@ func (a *App) onUnlock(passphrase string) {
 				// The vault disappeared since the screen was chosen; offer to create one.
 				a.showUnlockScreen()
 			case errors.Is(err, store.ErrKeyMissing):
-				screen.ShowError("This vault's key file (vlt.age) is missing, so its secrets cannot be decrypted. Restore vlt.age from a backup.")
+				screen.ShowError("This vault's key file (vlt.age) is missing, so its secrets cannot be decrypted. If moving the vault here was cut short, switch back to the original vault and move it here again (if that vault changed since, delete this folder first); otherwise restore vlt.age from a backup.")
 			case isServerError(err):
 				screen.ShowError(errorMessage("", err))
 			case err != nil:
@@ -526,7 +526,7 @@ func (a *App) unlocked(s *store.Store) {
 // auto-lock may clear concurrently. work is bound to the session context:
 // work still in flight when the vault locks has its result dropped.
 func (a *App) showMainView(s *store.Store, work runner) {
-	a.sessionOps = newOperations(a.window, work, a.statusBar, a.resetLockTimer, a.pick)
+	a.sessionOps = newOperations(a.window, work, a.statusBar, a.resetLockTimer, a.session.Pause, a.pick)
 	ops := a.sessionOps
 	a.detailView = NewDetailView(a.window, s, a.clipboard.Copy, a.statusBar, a.log, ops)
 	a.detailView.newTimer = a.newTimer

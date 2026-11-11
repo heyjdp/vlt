@@ -2,6 +2,9 @@ package ui
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -416,6 +419,39 @@ func TestSettings_BrowseFillsInTheChosenFolder(t *testing.T) {
 	app.Lock()
 }
 
+// A move to an unfinished copy made before the vault last changed says
+// what is there and what to do, rather than that a vault exists.
+func TestSettings_AMoveToAnOutdatedUnfinishedCopySaysToDeleteIt(t *testing.T) {
+	app, ss := settingsApp(t, noTimers)
+	box := ss.buildVaultLocation()
+	files, err := filepath.Glob(filepath.Join(app.settings.Vault().Path, "work", "*.age"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("the vault's secret file: %v, %v", files, err)
+	}
+	stale := t.TempDir() // an unfinished copy: one secret, no vlt.age
+	if err := os.Mkdir(filepath.Join(stale, "work"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "work", filepath.Base(files[0])), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.session.Store().Update(context.Background(), testutil.PasswordSecret("gh", "changed since", "work")); err != nil {
+		t.Fatal(err)
+	}
+
+	entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server").SetText(stale)
+	tapAndConfirm(t, app.window, box, "Move Vault")
+
+	if !visibleText(box, "unfinished copy of this vault") || !visibleText(box, "Delete that folder, then move the vault again") {
+		t.Fatal("a move to an outdated unfinished copy should say to delete it, then move again")
+	}
+	app.Lock()
+}
+
 func TestSettings_FailedMoveSaysWhyUnderTheLocation(t *testing.T) {
 	app, ss := settingsApp(t, noTimers)
 	box := ss.buildVaultLocation()
@@ -642,12 +678,19 @@ func TestMigratePreferences_AnEmptyOldLocationIsNotCopied(t *testing.T) {
 // Settings open and its vault location card built.
 func queuedSettings(t *testing.T) (*App, fyne.Window, *queue, fyne.CanvasObject) {
 	t.Helper()
+	return queuedSettingsWith(t, noTimers)
+}
+
+// queuedSettingsWith is queuedSettings with the app's timers from timers
+// and opts applied to its settings.
+func queuedSettingsWith(t *testing.T, timers timerFactory, opts ...func(*Settings)) (*App, fyne.Window, *queue, fyne.CanvasObject) {
+	t.Helper()
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "x", "work"))
 	w := test.NewTempWindow(t, nil)
 	q := &queue{}
-	app := newApp(a, w, settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(a, w, settingsAt(a, dir, opts...), quietLog(), q.runner(), timers, testKDF)
 	q.flush()
 	unlockQueued(t, app, q)
 	q.flush() // the first load of the list
@@ -722,4 +765,198 @@ func TestSettings_PassphraseChangeWaitsForAMoveToFinish(t *testing.T) {
 	}
 	q.flush()
 	app.Lock()
+}
+
+// The auto-lock waits while the vault is moved or its passphrase changed,
+// however long that takes without input, and counts down in full after.
+// (Each fails here, so the vault stays unlocked afterwards.)
+func TestSettings_TheAutoLockWaitsForAMoveOrPassphraseChange(t *testing.T) {
+	tests := []struct {
+		name  string
+		start func(t *testing.T, app *App, w fyne.Window, box fyne.CanvasObject)
+	}{
+		{"move", func(t *testing.T, _ *App, w fyne.Window, box fyne.CanvasObject) {
+			taken := t.TempDir()
+			newVaultWith(t, taken)
+			entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server").SetText(taken)
+			tapAndConfirm(t, w, box, "Move Vault")
+		}},
+		{"passphrase change", func(t *testing.T, app *App, _ fyne.Window, _ fyne.CanvasObject) {
+			card := app.openSettings(app.session.Store(), app.sessionOps).buildChangePassphrase()
+			test.Type(entryWithPlaceholder(t, card, "Current passphrase"), "not the passphrase")
+			test.Type(entryWithPlaceholder(t, card, "New passphrase"), "an even better passphrase")
+			test.Type(entryWithPlaceholder(t, card, "Confirm new passphrase"), "an even better passphrase")
+			test.Tap(findButton(card, "Change Passphrase"))
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clock := &fakeClock{}
+			app, w, q, box := queuedSettingsWith(t, clock.factory, withLockTimeoutMs(DefaultLockTimeoutMs))
+			timeout := app.settings.LockTimeout()
+			tt.start(t, app, w, box)
+			if len(q.pending) != 1 {
+				t.Fatalf("%d operations running, want 1", len(q.pending))
+			}
+
+			if clock.active(timeout) != nil || clock.active(timeout-lockWarningLead) != nil {
+				t.Fatal("no auto-lock countdown while the operation runs")
+			}
+			if clock.active(pausedLockAfter) == nil {
+				t.Fatal("the vault should still lock after a long wait without input")
+			}
+			q.flush()
+			if app.session.Store() == nil {
+				t.Fatal("the failed operation must not lock the vault")
+			}
+			clock.active(timeout).f()
+			if app.session.Store() != nil {
+				t.Fatal("once the operation ends, the auto-lock should count down again")
+			}
+		})
+	}
+}
+
+// Locking by hand during a move still locks at once, stops the copy, and
+// leaves no key file at the destination.
+func TestSettings_LockingDuringAMoveStopsIt(t *testing.T) {
+	app, w, q, box := queuedSettings(t)
+	dir := app.settings.Vault()
+	dest := filepath.Join(t.TempDir(), "moved")
+	entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server").SetText(dest)
+	tapAndConfirm(t, w, box, "Move Vault")
+
+	app.Lock()
+	if app.session.Store() != nil {
+		t.Fatal("Lock must end the session during a move")
+	}
+	q.flush()
+
+	if _, err := os.Stat(filepath.Join(dest, "vlt.age")); !os.IsNotExist(err) {
+		t.Fatalf("a move stopped by a lock left vlt.age at the destination (stat: %v)", err)
+	}
+	if app.settings.Vault() != dir || w.Canvas().Overlays().Top() != nil {
+		t.Fatal("a stopped move must neither change the location nor report a move")
+	}
+}
+
+// A passphrase change the vault locked in the middle of is still reported,
+// on the unlock screen: here the lock came first, so nothing changed.
+func TestSettings_APassphraseChangeCutOffByALockIsReported(t *testing.T) {
+	app, w, q, _ := queuedSettings(t)
+	card := app.openSettings(app.session.Store(), app.sessionOps).buildChangePassphrase()
+	test.Type(entryWithPlaceholder(t, card, "Current passphrase"), testPassphrase)
+	test.Type(entryWithPlaceholder(t, card, "New passphrase"), "an even better passphrase")
+	test.Type(entryWithPlaceholder(t, card, "Confirm new passphrase"), "an even better passphrase")
+	test.Tap(findButton(card, "Change Passphrase"))
+
+	app.Lock()
+	q.flush()
+
+	if text := dialogText(t, w); !strings.Contains(text, "passphrase was not changed") {
+		t.Fatalf("after the lock the dialog says %q; want it to say the passphrase was not changed", text)
+	}
+	unlockQueued(t, app, q)
+	if app.session.Store() == nil {
+		t.Fatal("the old passphrase should still unlock the vault")
+	}
+	app.Lock()
+}
+
+// When the change was saved but the vault locked before it could say so,
+// the report says the new passphrase now unlocks it. (Driving that order
+// through the app would need a lock between the write and its delivery.)
+func TestSettings_APassphraseChangeFinishedAfterTheLockIsReported(t *testing.T) {
+	app, ss := settingsApp(t, noTimers)
+	app.Lock()
+
+	ss.passphraseChangeOutlived(nil)
+
+	if text := dialogText(t, app.window); !strings.Contains(text, "unlock it with the new passphrase") {
+		t.Fatalf("the report says %q; want it to say the new passphrase applies", text)
+	}
+}
+
+// A passphrase change the vault locked during reports how it ended: not
+// saved when the lock stopped it; possibly saved when the server's reply
+// was lost (the rename of vlt.age may have happened); otherwise the error.
+func TestSettings_APassphraseChangeEndedByALockReportsItsOutcome(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     error
+		want    []string
+		notWant string
+	}{
+		{
+			"stopped by the lock", fmt.Errorf("store.ChangePassphrase: %w", context.Canceled),
+			[]string{"the passphrase was not changed", "Unlock with your current passphrase"},
+			"may or may not",
+		},
+		{
+			"connection lost", fmt.Errorf("store.ChangePassphrase: %w", store.ErrConnectionLost),
+			[]string{"may or may not have been saved", "try the new one"},
+			"was not changed",
+		},
+		{
+			"server unreachable", fmt.Errorf("store.ChangePassphrase: %w", store.ErrUnreachable),
+			[]string{"may or may not have been saved", "try the new one"},
+			"was not changed",
+		},
+		{
+			"another error", fmt.Errorf("store.ChangePassphrase: %w", errors.New("disk full")),
+			[]string{"Couldn't change the passphrase: disk full"},
+			"may or may not",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, ss := settingsApp(t, noTimers)
+			app.Lock()
+
+			ss.passphraseChangeOutlived(tt.err)
+
+			text := dialogText(t, app.window)
+			for _, want := range tt.want {
+				if !strings.Contains(text, want) {
+					t.Fatalf("the report says %q; want it to say %q", text, want)
+				}
+			}
+			if strings.Contains(text, tt.notWant) {
+				t.Fatalf("the report says %q; it must not say %q", text, tt.notWant)
+			}
+		})
+	}
+}
+
+// A passphrase change that fails while the vault stays unlocked says why
+// under the form; when the server's reply was lost, that the change may
+// still have been saved.
+func TestPassphraseChangeFailure(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			"wrong passphrase", fmt.Errorf("store.ChangePassphrase: %w", store.ErrWrongPassphrase),
+			"Current passphrase is incorrect",
+		},
+		{
+			"connection lost", fmt.Errorf("store.ChangePassphrase: %w", store.ErrConnectionLost),
+			"The change may or may not have been saved",
+		},
+		{
+			"another error", fmt.Errorf("store.ChangePassphrase: %w", errors.New("disk full")),
+			"Couldn't change the passphrase: disk full",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := passphraseChangeFailure(tt.err); !strings.Contains(got, tt.want) {
+				t.Fatalf("passphraseChangeFailure = %q; want it to say %q", got, tt.want)
+			}
+		})
+	}
 }

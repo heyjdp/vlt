@@ -15,6 +15,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/heyjdp/vlt/internal/crypto"
 	"github.com/heyjdp/vlt/internal/store"
 )
 
@@ -125,19 +126,18 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 		}
 
 		// Only vlt.age (the wrapped vault key) is rewritten; secrets are
-		// untouched. Two scrypt derivations, so it runs in the background.
+		// untouched. Two scrypt derivations, so it runs in the background,
+		// with the auto-lock paused so it can't cut off the write.
 		start(ss.ops, &operation{
-			kind:     opVault,
-			progress: "Changing passphrase…",
-			control:  changeBtn,
+			kind:         opVault,
+			progress:     "Changing passphrase…",
+			control:      changeBtn,
+			keepUnlocked: true,
 			failed: func(err error) {
-				if errors.Is(err, store.ErrWrongPassphrase) {
-					errorLabel.SetText("Current passphrase is incorrect")
-				} else {
-					errorLabel.SetText(errorMessage("Couldn't change the passphrase", err))
-				}
+				errorLabel.SetText(passphraseChangeFailure(err))
 				errorLabel.Show()
 			},
+			afterEnd: ss.passphraseChangeOutlived,
 		},
 			func(ctx context.Context) (none, error) {
 				return none{}, ss.store.ChangePassphrase(ctx, current, newPass)
@@ -161,6 +161,46 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 		errorLabel,
 		container.NewHBox(changeBtn),
 	)
+}
+
+// passphraseChangeOutlived tells the user, over the unlock screen, how a
+// passphrase change ended when the vault locked (by hand, or after the
+// paused auto-lock's long wait) before it could say so. Lock dismisses
+// dialogs from a queued fyne.Do, so the message is queued after it.
+func (ss *SettingsScreen) passphraseChangeOutlived(err error) {
+	window := ss.window
+	switch {
+	case err == nil:
+		fyne.Do(func() {
+			dialog.ShowInformation("Passphrase Changed",
+				"The vault locked as the passphrase change finished.\nYour vault key is now protected by the new passphrase; unlock it with the new passphrase.", window)
+		})
+	case errors.Is(err, context.Canceled) || errors.Is(err, crypto.ErrIdentityZeroed):
+		// Stopped before vlt.age was written: the lock came first.
+		fyne.Do(func() {
+			dialog.ShowInformation("Passphrase Not Changed",
+				"The vault locked before the change was saved, so the passphrase was not changed.\nUnlock with your current passphrase.", window)
+		})
+	default:
+		text := passphraseChangeFailure(err)
+		fyne.Do(func() { dialog.ShowError(errors.New(text), window) })
+	}
+}
+
+// passphraseChangeFailure says why a passphrase change failed. When the
+// server's reply was lost, vlt.age may have been renamed into place on the
+// server all the same, so the user is told the change may have been saved
+// and which passphrase to try.
+func passphraseChangeFailure(err error) string {
+	switch {
+	case errors.Is(err, store.ErrWrongPassphrase):
+		return "Current passphrase is incorrect"
+	case isServerError(err):
+		return errorMessage("Couldn't confirm the passphrase change", err) +
+			". The change may or may not have been saved: the server may have made it though its reply was lost. " +
+			"If your current passphrase is refused next time you unlock, try the new one."
+	}
+	return errorMessage("Couldn't change the passphrase", err)
 }
 
 func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
@@ -257,19 +297,31 @@ func (ss *SettingsScreen) targetLocation(text string, errorLabel *widget.Label, 
 }
 
 // moveVault copies the vault to newDir in the background, with moveBtn
-// disabled meanwhile; while it runs, no other vault-wide change starts.
+// disabled meanwhile; while it runs, no other vault-wide change starts, and
+// the auto-lock waits (a copy to a server can outlast its timeout).
 func (ss *SettingsScreen) moveVault(newDir store.Location, moveBtn fyne.Disableable, errorLabel, currentLabel *widget.Label) {
 	start(ss.ops, &operation{
-		kind:     opVault,
-		progress: "Copying vault…",
-		control:  moveBtn,
+		kind:         opVault,
+		progress:     "Copying vault…",
+		control:      moveBtn,
+		keepUnlocked: true,
 		failed: func(err error) {
-			errorLabel.SetText(errorMessage("Couldn't move the vault", err))
+			errorLabel.SetText(moveFailure(err))
 			errorLabel.Show()
 		},
 	},
 		func(ctx context.Context) (none, error) { return none{}, ss.store.CopyTo(ctx, newDir.String()) },
 		func(none) { ss.vaultMoved(newDir, currentLabel) })
+}
+
+// moveFailure is what a failed move says under the location.
+func moveFailure(err error) string {
+	if errors.Is(err, store.ErrStaleCopy) {
+		// A move cut short, then the vault changed: finishing that copy
+		// would leave it out of date, and what is there is safe to delete.
+		return "Couldn't move the vault: that folder holds an unfinished copy of this vault, made before the vault last changed. Delete that folder, then move the vault again."
+	}
+	return errorMessage("Couldn't move the vault", err)
 }
 
 // vaultMoved proposes newDir after a successful copy and relocks so the

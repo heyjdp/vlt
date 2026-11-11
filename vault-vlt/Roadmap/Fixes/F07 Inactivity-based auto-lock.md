@@ -64,3 +64,4 @@ Known limit: scrolling and pointer movement don't count as activity.
 
 ## Related
 - [[Security Model]]
+- [[F44 Auto-lock during long operations]]
