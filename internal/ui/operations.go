@@ -126,6 +126,12 @@ type operation struct {
 	// passphrase), which would leave a half-made copy or an unreported
 	// change. Locking by hand still ends the session, and the work with it.
 	keepUnlocked bool
+	// afterEnd, if set, is told the outcome (nil for success) when the
+	// session ended before it arrived, instead of it being dropped: for
+	// work whose effect the user must hear of even after a lock, such as a
+	// passphrase change that may have rewritten vlt.age. It runs on the
+	// main goroutine and must touch nothing of the ended session.
+	afterEnd func(error)
 }
 
 // start runs work in the background and calls done with its result on the
@@ -133,7 +139,8 @@ type operation struct {
 // of the same kind is running; the status bar then asks the user to wait.
 // While work runs, op's control is disabled and its progress shown; both
 // are undone before done or failed is called. If the session ends first,
-// the result is dropped and neither is called.
+// the result is dropped and neither is called (op's afterEnd, if set, is
+// told the outcome instead).
 func start[T any](o *operations, op *operation, work func(context.Context) (T, error), done func(T)) bool {
 	return startOwned(o, op, work, done, nil)
 }
@@ -151,10 +158,13 @@ func startOwned[T any](o *operations, op *operation, work func(context.Context) 
 	}
 	hide := o.showProgress(op)
 	resume := o.pauseAutoLock(op)
-	dropped := func(v T, _ error) {
+	dropped := func(v T, err error) {
 		resume()
 		if release != nil {
 			release(v)
+		}
+		if op.afterEnd != nil {
+			op.afterEnd(err)
 		}
 	}
 	backgroundOwned(o.run, work, func(v T, err error) {

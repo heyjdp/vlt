@@ -15,6 +15,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/heyjdp/vlt/internal/crypto"
 	"github.com/heyjdp/vlt/internal/store"
 )
 
@@ -140,6 +141,7 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 				}
 				errorLabel.Show()
 			},
+			afterEnd: ss.passphraseChangeOutlived,
 		},
 			func(ctx context.Context) (none, error) {
 				return none{}, ss.store.ChangePassphrase(ctx, current, newPass)
@@ -163,6 +165,29 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 		errorLabel,
 		container.NewHBox(changeBtn),
 	)
+}
+
+// passphraseChangeOutlived tells the user, over the unlock screen, how a
+// passphrase change ended when the vault locked (by hand, or after the
+// paused auto-lock's long wait) before it could say so. Lock dismisses
+// dialogs from a queued fyne.Do, so the message is queued after it.
+func (ss *SettingsScreen) passphraseChangeOutlived(err error) {
+	window := ss.window
+	switch {
+	case err == nil:
+		fyne.Do(func() {
+			dialog.ShowInformation("Passphrase Changed",
+				"The vault locked as the passphrase change finished.\nYour vault key is now protected by the new passphrase; unlock it with the new passphrase.", window)
+		})
+	case errors.Is(err, context.Canceled) || errors.Is(err, crypto.ErrIdentityZeroed):
+		// Stopped before vlt.age was written: the lock came first.
+		fyne.Do(func() {
+			dialog.ShowInformation("Passphrase Not Changed",
+				"The vault locked before the change was saved, so the passphrase was not changed.\nUnlock with your current passphrase.", window)
+		})
+	default:
+		fyne.Do(func() { showError(window, "Couldn't change the passphrase", err) })
+	}
 }
 
 func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {

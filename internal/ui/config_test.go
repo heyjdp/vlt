@@ -803,3 +803,40 @@ func TestSettings_LockingDuringAMoveStopsIt(t *testing.T) {
 		t.Fatal("a stopped move must neither change the location nor report a move")
 	}
 }
+
+// A passphrase change the vault locked in the middle of is still reported,
+// on the unlock screen: here the lock came first, so nothing changed.
+func TestSettings_APassphraseChangeCutOffByALockIsReported(t *testing.T) {
+	app, w, q, _ := queuedSettings(t)
+	card := app.openSettings(app.session.Store(), app.sessionOps).buildChangePassphrase()
+	test.Type(entryWithPlaceholder(t, card, "Current passphrase"), testPassphrase)
+	test.Type(entryWithPlaceholder(t, card, "New passphrase"), "an even better passphrase")
+	test.Type(entryWithPlaceholder(t, card, "Confirm new passphrase"), "an even better passphrase")
+	test.Tap(findButton(card, "Change Passphrase"))
+
+	app.Lock()
+	q.flush()
+
+	if text := dialogText(t, w); !strings.Contains(text, "passphrase was not changed") {
+		t.Fatalf("after the lock the dialog says %q; want it to say the passphrase was not changed", text)
+	}
+	unlockQueued(t, app, q)
+	if app.session.Store() == nil {
+		t.Fatal("the old passphrase should still unlock the vault")
+	}
+	app.Lock()
+}
+
+// When the change was saved but the vault locked before it could say so,
+// the report says the new passphrase now unlocks it. (Driving that order
+// through the app would need a lock between the write and its delivery.)
+func TestSettings_APassphraseChangeFinishedAfterTheLockIsReported(t *testing.T) {
+	app, ss := settingsApp(t, noTimers)
+	app.Lock()
+
+	ss.passphraseChangeOutlived(nil)
+
+	if text := dialogText(t, app.window); !strings.Contains(text, "unlock it with the new passphrase") {
+		t.Fatalf("the report says %q; want it to say the new passphrase applies", text)
+	}
+}

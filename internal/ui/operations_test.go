@@ -219,6 +219,44 @@ func TestOperations_Start_PausesTheAutoLockWhileAnOperationThatKeepsUnlockedRuns
 	}
 }
 
+// Work whose outcome the user must hear of even after a lock (a passphrase
+// change that may have rewritten vlt.age) reports it through afterEnd.
+func TestOperations_Start_ReportsAnOutcomeDroppedAtTheLockToAfterEnd(t *testing.T) {
+	boom := errors.New("boom")
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"succeeded", nil},
+		{"failed", boom},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newOpsHarness(t)
+			var reports []error
+			work := func(context.Context) (none, error) {
+				h.end() // the vault locks after the work, before its delivery
+				return none{}, tt.err
+			}
+			start(h.ops, &operation{
+				doing:    "Couldn't",
+				failed:   func(error) { t.Fatal("failed must not run after the lock") },
+				afterEnd: func(err error) { reports = append(reports, err) },
+			}, work, func(none) { t.Fatal("done must not run after the lock") })
+			h.q.flush()
+
+			if len(reports) != 1 || !errors.Is(reports[0], tt.err) || (tt.err == nil && reports[0] != nil) {
+				t.Fatalf("afterEnd got %v; want once, with %v", reports, tt.err)
+			}
+		})
+	}
+
+	h := newOpsHarness(t)
+	start(h.ops, &operation{afterEnd: func(error) { t.Fatal("a delivered outcome is not reported again") }},
+		succeed(none{}), func(none) {})
+	h.q.flush()
+}
+
 func TestOperations_Start_ShowsProgressInADialogWhenTitled(t *testing.T) {
 	h := newOpsHarness(t)
 	start(h.ops, &operation{title: "Checking", progress: "Asking…"}, succeed(none{}), func(none) {})
