@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -82,6 +83,7 @@ func (s *slowStore) release()                { close(s.done) }
 type stuckStore struct {
 	zeroed  atomic.Bool
 	unstuck chan struct{}
+	once    sync.Once
 	done    chan struct{}
 }
 
@@ -91,7 +93,9 @@ func newStuckStore() *stuckStore {
 func (s *stuckStore) ZeroKey()                { s.zeroed.Store(true) }
 func (s *stuckStore) Close()                  { <-s.unstuck; s.ZeroKey(); close(s.done) }
 func (s *stuckStore) Closed() <-chan struct{} { return s.done }
-func (s *stuckStore) unstick()                { close(s.unstuck) }
+
+// unstick lets Close finish; calling it again does nothing.
+func (s *stuckStore) unstick() { s.once.Do(func() { close(s.unstuck) }) }
 
 // returnsPromptly reports whether f returns within a few seconds.
 func returnsPromptly(f func()) bool {
@@ -541,13 +545,8 @@ func TestSession_EndingZeroesTheKeyAtOnceAndReleasesTheLockInTheBackground(t *te
 				func() time.Duration { return sessionTimeout }, sessionCallbacks{Warn: func() {}, TimedOut: func() {}})
 			st, next := newStuckStore(), newStuckStore()
 			next.unstick() // a store that follows st releases at once
-			defer func() {
-				select {
-				case <-st.unstuck:
-				default:
-					st.unstick() // let the background Close end
-				}
-			}()
+			// Let the background Close end, however the test ends.
+			t.Cleanup(st.unstick)
 			var end func()
 			switch how {
 			case "lock":
