@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 )
@@ -239,5 +242,179 @@ func TestStore_CopyTo_DoesNotReplaceAKeyFileWrittenMeanwhile(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(dest, keyFile)); err != nil || string(got) != "another vault's key" {
 		t.Fatalf("the other vault's key file was replaced: %q, %v", got, err)
+	}
+}
+
+// recordingFS records the files read from and written to it, and cancels
+// (if cancel is set) once a secret file has been read.
+type recordingFS struct {
+	vaultFS
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	reads  []string
+	writes []string
+}
+
+func (f *recordingFS) ReadFile(name string) ([]byte, error) {
+	f.mu.Lock()
+	f.reads = append(f.reads, name)
+	f.mu.Unlock()
+	if f.cancel != nil && path.Dir(name) != "." {
+		f.cancel()
+	}
+	return f.vaultFS.ReadFile(name)
+}
+
+func (f *recordingFS) WriteFileAtomic(name string, data []byte) error {
+	f.wrote(name)
+	return f.vaultFS.WriteFileAtomic(name, data)
+}
+
+func (f *recordingFS) WriteFileExclusive(name string, data []byte) error {
+	f.wrote(name)
+	return f.vaultFS.WriteFileExclusive(name, data)
+}
+
+func (f *recordingFS) wrote(name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.writes = append(f.writes, name)
+}
+
+// copiedUpToTheKey copies s to a new folder, cancelling after its last
+// secret is read, so every secret but not vlt.age is copied; it returns
+// the folder.
+func copiedUpToTheKey(t *testing.T, s *Store) string {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	orig := s.fs
+	s.fs = cancelOnReadOf{vaultFS: orig, name: "work/b.age", cancel: cancel}
+	defer func() { s.fs = orig }()
+	dest := filepath.Join(t.TempDir(), "dest")
+	if err := s.CopyTo(ctx, dest); !errors.Is(err, context.Canceled) {
+		t.Fatalf("CopyTo = %v; want context.Canceled", err)
+	}
+	return dest
+}
+
+// cancelOnReadOf cancels a context once the file name has been read.
+type cancelOnReadOf struct {
+	vaultFS
+	name   string
+	cancel context.CancelFunc
+}
+
+func (f cancelOnReadOf) ReadFile(name string) ([]byte, error) {
+	data, err := f.vaultFS.ReadFile(name)
+	if name == f.name {
+		f.cancel()
+	}
+	return data, err
+}
+
+// A cancel after the last secret is copied still stops the copy before
+// vlt.age, so the copy does not look whole; moving again finishes it.
+func TestStore_CopyTo_ACancelAfterTheLastSecretLeavesOutTheKey(t *testing.T) {
+	t.Parallel()
+	s := copySource(t)
+	dest := copiedUpToTheKey(t, s)
+
+	if _, err := os.Stat(filepath.Join(dest, "work", "b.age")); err != nil {
+		t.Fatalf("the last secret was not copied: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, keyFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a copy cancelled before vlt.age wrote it (stat: %v)", err)
+	}
+	if err := s.CopyTo(context.Background(), dest); err != nil {
+		t.Fatalf("moving again: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, keyFile)); err != nil {
+		t.Fatalf("the finished copy has no %s: %v", keyFile, err)
+	}
+}
+
+// Cancelling (a lock) while an unfinished copy is compared with the vault
+// stops the comparison: over a slow connection it reads every file.
+func TestStore_CopyTo_StopsWhenCancelledWhileComparing(t *testing.T) {
+	t.Parallel()
+	s := copySource(t)
+	dest := copiedUpToTheKey(t, s)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dst := &recordingFS{vaultFS: localFS{root: dest}, cancel: cancel}
+
+	err := s.copyTo(ctx, dst)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("copyTo = %v; want context.Canceled", err)
+	}
+	var secrets []string
+	for _, name := range dst.reads {
+		if path.Dir(name) != "." {
+			secrets = append(secrets, name)
+		}
+	}
+	if len(secrets) != 1 {
+		t.Fatalf("read %v at the destination after the cancel; want only the first secret", secrets)
+	}
+	if len(dst.writes) != 0 {
+		t.Fatalf("a cancelled copy wrote %v", dst.writes)
+	}
+}
+
+// Finishing an unfinished copy writes only what it lacks: over a slow
+// connection, writing files already there again would double the time.
+func TestStore_CopyTo_FinishingACopyDoesNotRewriteFilesAlreadyThere(t *testing.T) {
+	t.Parallel()
+	s := copySource(t)
+	dest := interruptedCopy(t, s) // holds the marker and work/a.age
+	dst := &recordingFS{vaultFS: localFS{root: dest}}
+
+	if err := s.copyTo(context.Background(), dst); err != nil {
+		t.Fatalf("copyTo: %v", err)
+	}
+
+	if want := []string{"work/b.age", keyFile}; !slices.Equal(dst.writes, want) {
+		t.Fatalf("finishing the copy wrote %v; want only %v", dst.writes, want)
+	}
+}
+
+// An unfinished copy that lacks the format marker (lost with the
+// connection, say) is finished, marker included.
+func TestStore_CopyTo_FinishesACopyWithoutAFormatMarker(t *testing.T) {
+	t.Parallel()
+	s := copySource(t)
+	dest := interruptedCopy(t, s)
+	if err := os.Remove(filepath.Join(dest, formatFile)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.CopyTo(context.Background(), dest); err != nil {
+		t.Fatalf("CopyTo: %v", err)
+	}
+	moved, err := Open(context.Background(), dest, internalPass, quiet())
+	if err != nil {
+		t.Fatalf("Open the finished copy: %v", err)
+	}
+	moved.Close()
+}
+
+// A folder whose format marker is not this vault's is not this vault's
+// unfinished copy, even if its secret files are.
+func TestStore_CopyTo_RefusesACopyWithAnotherFormatMarker(t *testing.T) {
+	t.Parallel()
+	s := copySource(t)
+	dest := interruptedCopy(t, s)
+	marker := filepath.Join(dest, formatFile)
+	if err := os.WriteFile(marker, []byte(`{"version":99}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.CopyTo(context.Background(), dest); !errors.Is(err, ErrVaultExists) {
+		t.Fatalf("CopyTo = %v; want ErrVaultExists", err)
+	}
+	if got, err := os.ReadFile(marker); err != nil || string(got) != `{"version":99}` {
+		t.Fatalf("the destination's marker was overwritten: %q, %v", got, err)
 	}
 }

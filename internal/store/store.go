@@ -446,79 +446,97 @@ func (s *Store) CopyTo(ctx context.Context, dest string) error {
 
 // copyTo does CopyTo's work on the opened destination dst.
 func (s *Store) copyTo(ctx context.Context, dst vaultFS) error {
-	if err := s.checkCopyTarget(dst); err != nil {
+	done, err := s.checkCopyTarget(ctx, dst)
+	if err != nil {
 		return err
 	}
 	if err := dst.MkdirAll("."); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
-	if err := s.copyFile(ctx, dst, formatFile); err != nil {
-		return err
+	if !done[formatFile] {
+		if err := s.copyFile(ctx, dst, formatFile); err != nil {
+			return err
+		}
 	}
-	if err := s.copySecrets(ctx, dst); err != nil {
+	if err := s.copySecrets(ctx, dst, done); err != nil {
 		return err
 	}
 	return s.copyKey(ctx, dst)
 }
 
 // checkCopyTarget returns ErrVaultExists if dst holds a vault or secret
-// files, unless it is an unfinished copy of this vault.
-func (s *Store) checkCopyTarget(dst vaultFS) error {
+// files, unless it is an unfinished copy of this vault (see resumable); it
+// then returns the files already copied, which need not be written again.
+func (s *Store) checkCopyTarget(ctx context.Context, dst vaultFS) (done map[string]bool, err error) {
 	exists, err := existsIn(dst)
 	if err != nil || !exists {
-		return err
+		return nil, err
 	}
-	ok, err := s.resumable(dst)
+	done, err = s.resumable(ctx, dst)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if !ok {
-		return ErrVaultExists
+	if done == nil {
+		return nil, ErrVaultExists
 	}
-	return nil
+	return done, nil
 }
 
 // resumable reports whether dst holds only an unfinished copy of this
 // vault: no vlt.age and no migration, a format marker (if any) the same as
 // this vault's, and every secret file byte for byte one of this vault's.
-// Finishing such a copy overwrites nothing that isn't already here.
-func (s *Store) resumable(dst vaultFS) (bool, error) {
+// Finishing such a copy overwrites nothing that isn't already here. For
+// such a copy it returns the files found the same (non-nil, if empty);
+// otherwise nil. It stops when ctx is cancelled, since over a slow
+// connection it reads every file.
+func (s *Store) resumable(ctx context.Context, dst vaultFS) (map[string]bool, error) {
 	for _, name := range []string{keyFile, migratingFile} {
 		if _, err := dst.Stat(name); !errors.Is(err, fs.ErrNotExist) {
-			return false, err
+			return nil, err
 		}
 	}
 	paths, err := secretFiles(dst)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return false, err
+		return nil, err
 	}
+	done := make(map[string]bool, len(paths)+1)
 	for _, name := range append(paths, formatFile) {
-		same, err := s.sameFile(dst, name)
-		if err != nil || !same {
-			return false, err
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
+		same, missing, err := s.sameFile(dst, name)
+		if err != nil {
+			return nil, err
+		}
+		if missing && name == formatFile {
+			continue
+		}
+		if !same {
+			return nil, nil
+		}
+		done[name] = true
 	}
-	return true, nil
+	return done, nil
 }
 
-// sameFile reports whether dst's file name is missing (only allowed for the
-// format marker) or holds the same bytes as this vault's.
-func (s *Store) sameFile(dst vaultFS, name string) (bool, error) {
+// sameFile reports whether dst's file name holds the same bytes as this
+// vault's, or is missing from dst.
+func (s *Store) sameFile(dst vaultFS, name string) (same, missing bool, err error) {
 	theirs, err := dst.ReadFile(name)
-	if errors.Is(err, fs.ErrNotExist) && name == formatFile {
-		return true, nil
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, true, nil
 	}
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	ours, err := s.fs.ReadFile(name)
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil
+		return false, false, nil
 	}
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	return bytes.Equal(ours, theirs), nil
+	return bytes.Equal(ours, theirs), false, nil
 }
 
 // copyFile copies the vault-level file name to dst, if this vault has it.
@@ -565,8 +583,9 @@ func (s *Store) copyKey(ctx context.Context, dst vaultFS) error {
 }
 
 // copySecrets copies the group folders and their secret files to dst,
-// stopping before the next file once ctx is cancelled.
-func (s *Store) copySecrets(ctx context.Context, dst vaultFS) error {
+// except the files done (already there), stopping before the next file
+// once ctx is cancelled.
+func (s *Store) copySecrets(ctx context.Context, dst vaultFS, done map[string]bool) error {
 	groups, err := groupFolders(s.fs)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -582,6 +601,9 @@ func (s *Store) copySecrets(ctx context.Context, dst vaultFS) error {
 			return fmt.Errorf("mkdir %q: %w", g.name, err)
 		}
 		for _, name := range g.files {
+			if done[name] {
+				continue
+			}
 			if err := ctx.Err(); err != nil {
 				return err
 			}
