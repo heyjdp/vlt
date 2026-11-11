@@ -22,7 +22,9 @@ type opsHarness struct {
 	status   *widget.Label
 	pick     *scriptedPicker
 	activity int
-	end      context.CancelFunc
+	// pauses and resumes count the auto-lock pauses taken and resumed.
+	pauses, resumes int
+	end             context.CancelFunc
 }
 
 func newOpsHarness(t *testing.T) *opsHarness {
@@ -33,7 +35,11 @@ func newOpsHarness(t *testing.T) *opsHarness {
 	t.Cleanup(cancel)
 	h.end = cancel
 	h.pick = &scriptedPicker{}
-	h.ops = newOperations(h.w, h.q.runner().withContext(ctx), h.status, func() { h.activity++ }, h.pick)
+	pause := func() func() {
+		h.pauses++
+		return func() { h.resumes++ }
+	}
+	h.ops = newOperations(h.w, h.q.runner().withContext(ctx), h.status, func() { h.activity++ }, pause, h.pick)
 	return h
 }
 
@@ -173,6 +179,43 @@ func TestOperations_StartOwned_DeliversWithoutReleasing(t *testing.T) {
 	h.q.flush()
 	if string(got) != "x" {
 		t.Fatalf("done got %q", got)
+	}
+}
+
+// Moving the vault and changing its passphrase pause the auto-lock until
+// they end, however they end; other work leaves it running.
+func TestOperations_Start_PausesTheAutoLockWhileAnOperationThatKeepsUnlockedRuns(t *testing.T) {
+	tests := []struct {
+		name string
+		work func(context.Context) (none, error)
+		lock bool // the session ends before the outcome arrives
+	}{
+		{"succeeds", succeed(none{}), false},
+		{"fails", fail(errors.New("boom")), false},
+		{"outlives the session", succeed(none{}), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newOpsHarness(t)
+			start(h.ops, &operation{kind: opVault, keepUnlocked: true, failed: func(error) {}}, tt.work, func(none) {})
+			if h.pauses != 1 || h.resumes != 0 {
+				t.Fatalf("while running: %d pauses, %d resumed; want the auto-lock paused", h.pauses, h.resumes)
+			}
+			if tt.lock {
+				h.end()
+			}
+			h.q.flush()
+			if h.resumes != 1 {
+				t.Fatalf("after: %d resumes, want 1", h.resumes)
+			}
+		})
+	}
+
+	h := newOpsHarness(t)
+	start(h.ops, &operation{kind: opSecretChange}, succeed(none{}), func(none) {})
+	h.q.flush()
+	if h.pauses != 0 {
+		t.Fatal("other operations must leave the auto-lock running")
 	}
 }
 

@@ -125,11 +125,13 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 		}
 
 		// Only vlt.age (the wrapped vault key) is rewritten; secrets are
-		// untouched. Two scrypt derivations, so it runs in the background.
+		// untouched. Two scrypt derivations, so it runs in the background,
+		// with the auto-lock paused so it can't cut off the write.
 		start(ss.ops, &operation{
-			kind:     opVault,
-			progress: "Changing passphrase…",
-			control:  changeBtn,
+			kind:         opVault,
+			progress:     "Changing passphrase…",
+			control:      changeBtn,
+			keepUnlocked: true,
 			failed: func(err error) {
 				if errors.Is(err, store.ErrWrongPassphrase) {
 					errorLabel.SetText("Current passphrase is incorrect")
@@ -257,12 +259,14 @@ func (ss *SettingsScreen) targetLocation(text string, errorLabel *widget.Label, 
 }
 
 // moveVault copies the vault to newDir in the background, with moveBtn
-// disabled meanwhile; while it runs, no other vault-wide change starts.
+// disabled meanwhile; while it runs, no other vault-wide change starts, and
+// the auto-lock waits (a copy to a server can outlast its timeout).
 func (ss *SettingsScreen) moveVault(newDir store.Location, moveBtn fyne.Disableable, errorLabel, currentLabel *widget.Label) {
 	start(ss.ops, &operation{
-		kind:     opVault,
-		progress: "Copying vault…",
-		control:  moveBtn,
+		kind:         opVault,
+		progress:     "Copying vault…",
+		control:      moveBtn,
+		keepUnlocked: true,
 		failed: func(err error) {
 			errorLabel.SetText(errorMessage("Couldn't move the vault", err))
 			errorLabel.Show()

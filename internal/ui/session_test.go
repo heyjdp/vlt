@@ -206,6 +206,124 @@ func TestSession_EndStopsTheCountdown(t *testing.T) {
 	}
 }
 
+func TestSession_PauseHoldsOffTheAutoLockUntilResumed(t *testing.T) {
+	t.Parallel()
+	sess, clock, ev := newTestSession(sessionTimeout)
+	st := openTestStore(t)
+	sess.Begin(st)
+	warn, timeout := clock.active(sessionTimeout-lockWarningLead), clock.active(sessionTimeout)
+
+	resume := sess.Pause()
+	warn.f() // already firing when the pause came
+	timeout.f()
+	if !warn.stopped || !timeout.stopped || ev.warned != 0 || ev.timedOut != 0 || isClosed(st) {
+		t.Fatalf("a pause must stop the countdown and silence its timers: %+v", *ev)
+	}
+	if clock.active(sessionTimeout) != nil || clock.active(sessionTimeout-lockWarningLead) != nil {
+		t.Fatal("no countdown while paused")
+	}
+
+	resume()
+	if clock.active(sessionTimeout-lockWarningLead) == nil {
+		t.Fatal("resuming should warn again before locking")
+	}
+	clock.active(sessionTimeout).f()
+	if ev.timedOut != 1 || !isClosed(st) {
+		t.Fatal("after the pause the full countdown should run and lock")
+	}
+}
+
+func TestSession_ActivityWhilePausedKeepsThePause(t *testing.T) {
+	t.Parallel()
+	sess, clock, _ := newTestSession(sessionTimeout)
+	sess.Begin(openTestStore(t))
+	sess.Pause()
+
+	sess.Activity()
+	if clock.active(sessionTimeout) != nil {
+		t.Fatal("input during a pause must not restart the short countdown")
+	}
+}
+
+func TestSession_PausesNestAndResumeCountsOnce(t *testing.T) {
+	t.Parallel()
+	sess, clock, _ := newTestSession(sessionTimeout)
+	sess.Begin(openTestStore(t))
+	first, second := sess.Pause(), sess.Pause()
+
+	first()
+	first() // resuming twice is resuming once
+	if clock.active(sessionTimeout) != nil {
+		t.Fatal("the auto-lock must wait while another pause is held")
+	}
+	second()
+	if clock.active(sessionTimeout) == nil {
+		t.Fatal("the countdown should restart once every pause is resumed")
+	}
+}
+
+// An operation stuck for good (a hung network folder) must not keep the
+// key in memory for ever: a pause only lengthens the wait to pausedLockAfter.
+func TestSession_APausedSessionStillLocksAfterLongWithoutInput(t *testing.T) {
+	t.Parallel()
+	sess, clock, ev := newTestSession(sessionTimeout)
+	st := openTestStore(t)
+	sess.Begin(st)
+	sess.Pause()
+
+	live := clock.running()
+	if len(live) != 1 || live[0].d != pausedLockAfter {
+		t.Fatalf("a pause arms %d timers; want only the auto-lock after %v", len(live), pausedLockAfter)
+	}
+	live[0].f()
+	if ev.timedOut != 1 || !isClosed(st) {
+		t.Fatal("the long wait should still lock the vault")
+	}
+
+	off, offClock, _ := newTestSession(0)
+	off.Begin(openTestStore(t))
+	off.Pause()
+	if len(offClock.running()) != 0 {
+		t.Fatal("with auto-lock off a pause arms nothing")
+	}
+}
+
+// Locking by hand (or quitting) during an operation still ends the session
+// at once, and the operation's resume, coming late, changes nothing.
+func TestSession_EndDuringAPauseLocksAndALateResumeDoesNothing(t *testing.T) {
+	t.Parallel()
+	sess, clock, _ := newTestSession(sessionTimeout)
+	st := openTestStore(t)
+	ctx := sess.Begin(st)
+	stale := sess.Pause()
+
+	sess.End()
+	if !isClosed(st) || ctx.Err() == nil || len(clock.running()) != 0 {
+		t.Fatal("ending a paused session must close the store, cancel its work and stop every timer")
+	}
+	stale()
+	if len(clock.running()) != 0 {
+		t.Fatal("a resume after the lock must not start a countdown")
+	}
+
+	sess.Begin(openTestStore(t))
+	resume := sess.Pause()
+	stale()
+	if clock.active(sessionTimeout) != nil {
+		t.Fatal("a resume from an ended session must not end a pause in the next")
+	}
+	resume()
+	if clock.active(sessionTimeout) == nil {
+		t.Fatal("the next session's own resume should restart its countdown")
+	}
+
+	sess.End()
+	sess.Pause()() // pausing while locked does nothing
+	if len(clock.running()) != 0 {
+		t.Fatal("no countdown while locked")
+	}
+}
+
 func TestSession_APendingStoreIsClosedWhenTheTimeoutPasses(t *testing.T) {
 	t.Parallel()
 	sess, clock, _, posted := queuedSession(sessionTimeout)

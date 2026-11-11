@@ -37,7 +37,10 @@ type operations struct {
 	status *widget.Label
 	// activity reports the user's answer to a dialog to the auto-lock.
 	activity func()
-	pick     picker
+	// pause pauses the auto-lock and returns what resumes it; nil where
+	// there is no session to keep unlocked.
+	pause func() (resume func())
+	pick  picker
 	// running holds the kinds of operation in flight.
 	running map[opKind]bool
 	// saving holds, by request, how to cancel each save request still open:
@@ -49,14 +52,15 @@ type operations struct {
 }
 
 // newOperations returns operations that run work on run, show progress in
-// status (which may be nil), ask for files through pick and report answers
-// to activity.
-func newOperations(window fyne.Window, run runner, status *widget.Label, activity func(), pick picker) *operations {
+// status (which may be nil), ask for files through pick, report answers to
+// activity and pause the auto-lock through pause (which may be nil).
+func newOperations(window fyne.Window, run runner, status *widget.Label, activity func(), pause func() (resume func()), pick picker) *operations {
 	return &operations{
 		window:   window,
 		run:      run,
 		status:   status,
 		activity: activity,
+		pause:    pause,
 		pick:     pick,
 		running:  make(map[opKind]bool),
 		saving:   make(map[int]func()),
@@ -117,6 +121,11 @@ type operation struct {
 	control fyne.Disableable
 	// failed, if set, shows a failure instead of the error dialog.
 	failed func(error)
+	// keepUnlocked pauses the auto-lock until the work ends: for work that
+	// must not be cut off for want of input (moving the vault, changing its
+	// passphrase), which would leave a half-made copy or an unreported
+	// change. Locking by hand still ends the session, and the work with it.
+	keepUnlocked bool
 }
 
 // start runs work in the background and calls done with its result on the
@@ -141,11 +150,15 @@ func startOwned[T any](o *operations, op *operation, work func(context.Context) 
 		op.control.Disable()
 	}
 	hide := o.showProgress(op)
-	var dropped func(T, error)
-	if release != nil {
-		dropped = func(v T, _ error) { release(v) }
+	resume := o.pauseAutoLock(op)
+	dropped := func(v T, _ error) {
+		resume()
+		if release != nil {
+			release(v)
+		}
 	}
 	backgroundOwned(o.run, work, func(v T, err error) {
+		resume()
 		if op.kind != "" {
 			delete(o.running, op.kind)
 		}
@@ -192,6 +205,15 @@ func (o *operations) claim(kind opKind) bool {
 	}
 	o.running[kind] = true
 	return true
+}
+
+// pauseAutoLock pauses the auto-lock if op keeps the vault unlocked, and
+// returns what resumes it.
+func (o *operations) pauseAutoLock(op *operation) (resume func()) {
+	if !op.keepUnlocked || o.pause == nil {
+		return func() {}
+	}
+	return o.pause()
 }
 
 // showProgress shows op's progress and returns what hides it again.

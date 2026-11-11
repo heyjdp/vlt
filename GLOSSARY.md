@@ -47,7 +47,7 @@ To choose a vault to use, or, of another copy of vlt, to have it unlocked ("open
 _Avoid_: using it to mean unlock
 
 **Auto-lock**:
-Locking that happens by itself after a period without input, usually preceded by a warning.
+Locking that happens by itself after a period without input, usually preceded by a warning. It waits while the vault is being moved or its passphrase changed.
 _Avoid_: timeout (on its own), sleep
 
 **Open elsewhere**:
