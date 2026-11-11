@@ -42,7 +42,7 @@ func inlineRunner() runner {
 // testOps returns operations on run for a component built without an App:
 // progress goes to a label nobody reads, and answers report no activity.
 func testOps(t *testing.T, run runner) *operations {
-	return newOperations(test.NewTempWindow(t, nil), run, widget.NewLabel(""), noActivity)
+	return newOperations(test.NewTempWindow(t, nil), run, widget.NewLabel(""), func() {}, &scriptedPicker{})
 }
 
 // queue is a runner that holds work until flush, so tests can observe the
@@ -306,4 +306,91 @@ func dialogEntry(t *testing.T, w fyne.Window) *widget.SelectEntry {
 		t.Fatal("the open dialog has no entry")
 	}
 	return e
+}
+
+// scriptedPicker is the tests' picker: it records each request, and the
+// test answers it as the user would, or leaves it open, as a lock does.
+type scriptedPicker struct {
+	files   []func(fyne.URIReadCloser, error)
+	folders []func(fyne.ListableURI, error)
+	saves   []saveRequest
+}
+
+// saveRequest is an open request for where to save a file.
+type saveRequest struct {
+	name   string
+	answer func(fyne.URIWriteCloser, error)
+}
+
+var _ picker = (*scriptedPicker)(nil)
+
+func (p *scriptedPicker) openFile(answer func(fyne.URIReadCloser, error)) {
+	p.files = append(p.files, answer)
+}
+
+func (p *scriptedPicker) openFolder(answer func(fyne.ListableURI, error)) {
+	p.folders = append(p.folders, answer)
+}
+
+func (p *scriptedPicker) saveFile(name string, answer func(fyne.URIWriteCloser, error)) {
+	p.saves = append(p.saves, saveRequest{name: name, answer: answer})
+}
+
+// answerFile answers the oldest open request for a file (r nil: cancel).
+func (p *scriptedPicker) answerFile(t *testing.T, r fyne.URIReadCloser, err error) {
+	t.Helper()
+	if len(p.files) == 0 {
+		t.Fatal("no file chooser is open")
+	}
+	answer := p.files[0]
+	p.files = p.files[1:]
+	answer(r, err)
+}
+
+// answerFolder answers the oldest open request for a folder (uri nil:
+// cancel).
+func (p *scriptedPicker) answerFolder(t *testing.T, uri fyne.ListableURI, err error) {
+	t.Helper()
+	if len(p.folders) == 0 {
+		t.Fatal("no folder chooser is open")
+	}
+	answer := p.folders[0]
+	p.folders = p.folders[1:]
+	answer(uri, err)
+}
+
+// answerSave answers the oldest open save request (w nil: cancel) and
+// returns the file name it suggested.
+func (p *scriptedPicker) answerSave(t *testing.T, w fyne.URIWriteCloser, err error) string {
+	t.Helper()
+	if len(p.saves) == 0 {
+		t.Fatal("no save dialog is open")
+	}
+	req := p.saves[0]
+	p.saves = p.saves[1:]
+	req.answer(w, err)
+	return req.name
+}
+
+// pickerOf returns app's scripted picker, giving it one (for the app and
+// any open session) the first time.
+func pickerOf(app *App) *scriptedPicker {
+	if p, ok := app.pick.(*scriptedPicker); ok {
+		return p
+	}
+	p := &scriptedPicker{}
+	app.pick, app.ops.pick = p, p
+	if app.sessionOps != nil {
+		app.sessionOps.pick = p
+	}
+	return p
+}
+
+// importFile imports r through the main view's Import File button and the
+// file chooser.
+func importFile(t *testing.T, app *App, r fyne.URIReadCloser) {
+	t.Helper()
+	p := pickerOf(app)
+	test.Tap(findButton(app.mainContent, "Import File"))
+	p.answerFile(t, r, nil)
 }

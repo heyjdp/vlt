@@ -49,6 +49,9 @@ type App struct {
 	// to lower the scrypt work factor; production passes none.
 	storeOpts []store.Option
 	run       runner
+	// pick shows the file and folder choosers (Fyne's dialogs; tests
+	// answer them).
+	pick picker
 	// ops runs what is asked of the app itself (update checks) and
 	// sessionOps what is done to the open vault (nil while locked).
 	ops        *operations
@@ -98,8 +101,9 @@ func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, confi
 		run:       run,
 		newTimer:  timers,
 		storeOpts: storeOpts,
+		pick:      fynePicker{window: window},
 	}
-	app.ops = newOperations(window, run, nil, app.resetLockTimer)
+	app.ops = newOperations(window, run, nil, app.resetLockTimer, app.pick)
 
 	// Quitting is a lock-equivalent for the clipboard: the system clipboard
 	// outlives the process, so a copied secret is cleared first. Closing the
@@ -315,16 +319,7 @@ func (a *App) chooseServerVault() {
 
 // chooseExistingVault asks for a folder that already holds a vault.
 func (a *App) chooseExistingVault() {
-	fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
-		if err != nil {
-			showError(a.window, "Couldn't choose a folder", err)
-			return
-		}
-		if uri != nil {
-			a.openExistingVault(uri.Path())
-		}
-	}, a.window)
-	fd.Show()
+	a.ops.pickFolder(a.openExistingVault)
 }
 
 // openExistingVault switches to the vault in dir and shows its unlock
@@ -528,7 +523,7 @@ func (a *App) unlocked(s *store.Store) {
 // auto-lock may clear concurrently. work is bound to the session context:
 // work still in flight when the vault locks has its result dropped.
 func (a *App) showMainView(s *store.Store, work runner) {
-	a.sessionOps = newOperations(a.window, work, a.statusBar, a.resetLockTimer)
+	a.sessionOps = newOperations(a.window, work, a.statusBar, a.resetLockTimer, a.pick)
 	ops := a.sessionOps
 	a.detailView = NewDetailView(a.window, s, a.clipboard.Copy, a.statusBar, a.log, ops)
 	a.detailView.newTimer = a.newTimer
@@ -596,9 +591,7 @@ func (a *App) showMainView(s *store.Store, work runner) {
 		}
 	}
 	// Dialogs and file pickers are not part of the instrumented tree; the
-	// session's operations report answers to confirmations, and the file
-	// pickers' callbacks report their own.
-	fileOps.activity = a.resetLockTimer
+	// session's operations report the answers to them.
 	a.window.Canvas().SetOnTypedKey(func(*fyne.KeyEvent) { a.resetLockTimer() })
 	a.window.Canvas().SetOnTypedRune(func(rune) { a.resetLockTimer() })
 
@@ -630,7 +623,6 @@ func (a *App) Lock() {
 // changes and relock when needed.
 func (a *App) openSettings(s *store.Store, ops *operations) *SettingsScreen {
 	settings := NewSettingsScreen(a.window, &a.config, s, a.statusBar, a.log, ops, a.Lock)
-	settings.activity = a.resetLockTimer
 	settings.save = a.saveSetting
 	settings.checkUpdates = a.checkForUpdates
 	a.detailView.ShowContent(settings.Content())
@@ -660,6 +652,9 @@ func (a *App) saveSetting(setting string) {
 // its own copy until it completes and its result is dropped. It runs on the
 // main goroutine.
 func (a *App) dropSession() {
+	if a.sessionOps != nil {
+		a.sessionOps.end() // wipes an export waiting on its save dialog
+	}
 	if a.detailView != nil {
 		a.detailView.clear()
 	}

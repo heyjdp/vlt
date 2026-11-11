@@ -37,12 +37,6 @@ type FileOps struct {
 	ops        *operations
 	groups     func() []string
 	onSaved    func(*store.Secret)
-	// activity reports the user's answer in the file dialogs, which are
-	// outside the instrumented widget tree.
-	activity func()
-	// pending is decoded file content waiting for the user to pick an export
-	// path; dropPending wipes it if the dialog is dismissed by a lock.
-	pending []byte
 }
 
 // NewFileOps creates a file operations handler. groups supplies group
@@ -55,27 +49,15 @@ func NewFileOps(window fyne.Window, s *store.Store, log *slog.Logger, ops *opera
 		ops:        ops,
 		groups:     groups,
 		onSaved:    onSaved,
-		activity:   noActivity,
 	}
 }
 
 // errFileTooLarge is returned for imports over maxFileSize.
 var errFileTooLarge = errors.New("file exceeds the maximum size of 10 MiB")
 
-// ImportFile opens a file picker and imports the selected file as a file secret.
+// ImportFile asks for a file and imports it as a file secret.
 func (fo *FileOps) ImportFile() {
-	fd := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
-		fo.activity()
-		if err != nil {
-			showError(fo.window, "Couldn't choose a file", err)
-			return
-		}
-		if reader == nil {
-			return // user cancelled
-		}
-		fo.processImport(reader)
-	}, fo.window)
-	fd.Show()
+	fo.ops.pickFile(fo.processImport)
 }
 
 // importedFile is a file read for import, ready to become a file secret.
@@ -231,7 +213,7 @@ func (fo *FileOps) importDone(secret *store.Secret, f importedFile) {
 }
 
 // ExportFile decodes a file secret in the background, then asks where to
-// save it and writes it in the background.
+// save it and writes it there (see exportDecoded).
 func (fo *FileOps) ExportFile(secret *store.Secret) {
 	if secret.Type != store.TypeFile {
 		showError(fo.window, fmt.Sprintf("Couldn't export %q", secret.Name), errors.New("it is not a file secret"))
@@ -245,82 +227,59 @@ func (fo *FileOps) ExportFile(secret *store.Secret) {
 		func(ctx context.Context) ([]byte, error) {
 			data, err := base64.StdEncoding.DecodeString(encoded)
 			if err == nil && ctx.Err() != nil {
-				// The vault locked meanwhile; the result will be dropped.
+				// The vault locked meanwhile, so the result will be dropped
+				// before exportDecoded can own it.
 				crypto.Wipe(data)
 				return nil, ctx.Err()
 			}
 			return data, err
 		},
-		func(data []byte) { fo.askExportPath(name, filename, data) })
+		func(data []byte) { fo.exportDecoded(name, filename, data) })
 }
 
-// askExportPath shows the save dialog and writes data to the chosen file.
-func (fo *FileOps) askExportPath(name, filename string, data []byte) {
-	fo.dropPending()
-	fo.pending = data
-	fd := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
-		fo.saveExport(writer, err, name, filename, data)
-	}, fo.window)
-
-	fd.SetFileName(filename)
-	if ext := filepath.Ext(filename); ext != "" {
-		fd.SetFilter(storage.NewExtensionFileFilter([]string{ext}))
-	}
-	fd.Show()
-}
-
-// saveExport handles the save dialog's result: it writes data to writer in
-// the background and reports the outcome. If the vault locked while the
-// dialog was open, nothing is written. A failed write removes the partial
-// file where possible, because the destination was already truncated.
-func (fo *FileOps) saveExport(writer fyne.URIWriteCloser, err error, name, filename string, data []byte) {
-	fo.pending = nil // the dialog completed; data is handled (or wiped) below
-	fo.activity()
-	if fo.ops.run.context().Err() != nil {
-		crypto.Wipe(data)
-		if writer != nil {
-			_ = writer.Close()
+// exportDecoded asks where to save data, the decoded file of the secret
+// name, and writes it there in the background, suggesting filename. It
+// owns data and wipes it, here and nowhere else, whichever way the export
+// ends: cancelled, the save dialog failing, the vault locking while the
+// dialog is open (nothing is written after a lock), or the write finishing
+// or failing.
+func (fo *FileOps) exportDecoded(name, filename string, data []byte) {
+	doing := fmt.Sprintf("Couldn't export %q", name)
+	fo.ops.pickSave(filename, doing, func(w fyne.URIWriteCloser) {
+		if w == nil {
+			crypto.Wipe(data)
+			return
 		}
-		return // the session ended; never write plaintext after a lock
-	}
+		start(fo.ops, &operation{doing: doing},
+			func(context.Context) (int, error) {
+				defer crypto.Wipe(data)
+				return fo.writeFile(w, data)
+			},
+			func(n int) {
+				fo.log.Info("file exported", "name", name, "size", n)
+				dialog.ShowInformation("Export Complete",
+					fmt.Sprintf("Exported %q (%d bytes)", filename, n),
+					fo.window,
+				)
+			})
+	})
+}
+
+// writeFile writes data to the file w names (see writePrivateExport). A
+// failed write removes the partial file where possible, because the
+// destination was already truncated.
+func (fo *FileOps) writeFile(w fyne.URIWriteCloser, data []byte) (int, error) {
+	n, err := fo.writePrivateExport(w, data)
 	if err != nil {
-		crypto.Wipe(data)
-		showError(fo.window, fmt.Sprintf("Couldn't export %q", name), err)
-		return
+		if delErr := storage.Delete(w.URI()); delErr != nil && !errors.Is(delErr, fs.ErrNotExist) {
+			return 0, fmt.Errorf("%w (the file at %s may be incomplete)", err, w.URI().Path())
+		}
 	}
-	if writer == nil {
-		crypto.Wipe(data)
-		return // user cancelled
-	}
-	start(fo.ops, &operation{doing: fmt.Sprintf("Couldn't export %q", name)},
-		func(context.Context) (int, error) {
-			n, err := fo.writePrivateExport(writer, data)
-			if err != nil {
-				if delErr := storage.Delete(writer.URI()); delErr != nil && !errors.Is(delErr, fs.ErrNotExist) {
-					return 0, fmt.Errorf("%w (the file at %s may be incomplete)", err, writer.URI().Path())
-				}
-			}
-			return n, err
-		},
-		func(n int) {
-			fo.log.Info("file exported", "name", name, "size", n)
-			dialog.ShowInformation("Export Complete",
-				fmt.Sprintf("Exported %q (%d bytes)", filename, n),
-				fo.window,
-			)
-		})
+	return n, err
 }
 
-// dropPending wipes decoded export content whose save dialog never
-// completed (for example because a lock dismissed it).
-func (fo *FileOps) dropPending() {
-	if fo.pending != nil {
-		crypto.Wipe(fo.pending)
-		fo.pending = nil
-	}
-}
-
-// writePrivateExport writes data to the file w names and wipes data. A
+// writePrivateExport writes data to the file w names; the caller wipes
+// data afterwards. A
 // local file on Unix is written so only the user can read it: the save
 // dialog has already created it with the user's umask (often readable by
 // everyone), and anyone who opened it since could read through that
@@ -346,12 +305,10 @@ func (fo *FileOps) writePrivateExport(w fyne.URIWriteCloser, data []byte) (int, 
 				return writeExport(w, data)
 			}
 		}
-		crypto.Wipe(data)
 		_ = w.Close()
 		return 0, fmt.Errorf("write privately: %w", err)
 	}
 	if err := w.Close(); err != nil {
-		crypto.Wipe(data)
 		_ = tmp.Close()
 		_ = os.Remove(tmp.Name())
 		return 0, fmt.Errorf("close: %w", err)
@@ -393,10 +350,9 @@ func (f syncOnClose) Close() error {
 	return f.File.Close()
 }
 
-// writeExport writes data to w and closes it, then wipes data. A failed
-// close is reported, since it can mean the data never reached the disk.
+// writeExport writes data to w and closes it. A failed close is reported,
+// since it can mean the data never reached the disk.
 func writeExport(w io.WriteCloser, data []byte) (int, error) {
-	defer crypto.Wipe(data)
 	_, writeErr := w.Write(data)
 	closeErr := w.Close()
 	if writeErr != nil {

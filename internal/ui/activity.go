@@ -129,6 +129,3 @@ func (t *activityTracker) instrument(obj fyne.CanvasObject) {
 	}
 	t.seen[obj] = true
 }
-
-// noActivity is the default activity hook (auto-lock disabled or unset).
-func noActivity() {}

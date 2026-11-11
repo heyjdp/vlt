@@ -136,11 +136,12 @@ func TestApp_LockWipesPendingExport(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	pickerOf(app) // its save dialog is never answered
 	unlock(app)
 
 	data := []byte("decoded file content")
-	app.detailView.fileOps.askExportPath("n", "out.txt", data) // save dialog left open
-	app.Lock()                                                 // dismisses it without a callback
+	app.detailView.fileOps.exportDecoded("n", "out.txt", data) // save dialog left open
+	app.Lock()                                                 // dismisses it without an answer
 
 	if !bytes.Equal(data, make([]byte, len(data))) {
 		t.Fatal("decoded export content must be wiped when the lock dismisses its dialog")

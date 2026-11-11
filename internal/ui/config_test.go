@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
@@ -196,6 +197,25 @@ func TestSettings_MovedVaultIsRememberedAfterUnlock(t *testing.T) {
 
 	if got := LoadConfig(prefs, env(nil), "/default", quietLog()).VaultDir; got != newDir {
 		t.Fatalf("after moving and unlocking, the vault dir should be saved as %q, got %q", newDir, got)
+	}
+	app.Lock()
+}
+
+func TestSettings_BrowseFillsInTheChosenFolder(t *testing.T) {
+	app, ss := settingsApp(t, Config{VaultDir: t.TempDir()}, noTimers)
+	p := pickerOf(app)
+	box := ss.buildVaultLocation()
+	dir := t.TempDir()
+	folder, err := storage.ListerForURI(storage.NewFileURI(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	test.Tap(findButton(box, "Browse…"))
+	p.answerFolder(t, folder, nil)
+
+	if got := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server").Text; got != dir {
+		t.Fatalf("the location entry holds %q, want the chosen folder %q", got, dir)
 	}
 	app.Lock()
 }

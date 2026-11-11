@@ -72,9 +72,8 @@ func TestFlow_DeleteAsksForConfirmation(t *testing.T) {
 func TestFlow_ImportAsksForGroupThenConfirmsReplace(t *testing.T) {
 	app, w := newFlowApp(t)
 	unlock(app)
-	fo := app.detailView.fileOps
 
-	fo.processImport(&fakeURIReader{Reader: strings.NewReader("v1"), uri: storage.NewFileURI("/tmp/id_rsa")})
+	importFile(t, app, &fakeURIReader{Reader: strings.NewReader("v1"), uri: storage.NewFileURI("/tmp/id_rsa")})
 	test.Type(dialogEntry(t, w), "keys")
 	test.Tap(dialogButton(t, w, "Import"))
 	test.Tap(dialogButton(t, w, "OK")) // the completion message
@@ -89,7 +88,7 @@ func TestFlow_ImportAsksForGroupThenConfirmsReplace(t *testing.T) {
 
 	// Importing a file with the same name asks before replacing it; "No"
 	// keeps the original.
-	fo.processImport(&fakeURIReader{Reader: strings.NewReader("v2"), uri: storage.NewFileURI("/tmp/id_rsa")})
+	importFile(t, app, &fakeURIReader{Reader: strings.NewReader("v2"), uri: storage.NewFileURI("/tmp/id_rsa")})
 	test.Type(dialogEntry(t, w), "keys")
 	test.Tap(dialogButton(t, w, "Import"))
 	test.Tap(dialogButton(t, w, "No"))
@@ -97,7 +96,7 @@ func TestFlow_ImportAsksForGroupThenConfirmsReplace(t *testing.T) {
 		t.Fatalf("answering No must keep the original file, got %q", got.Value)
 	}
 
-	fo.processImport(&fakeURIReader{Reader: strings.NewReader("v2"), uri: storage.NewFileURI("/tmp/id_rsa")})
+	importFile(t, app, &fakeURIReader{Reader: strings.NewReader("v2"), uri: storage.NewFileURI("/tmp/id_rsa")})
 	test.Type(dialogEntry(t, w), "keys")
 	test.Tap(dialogButton(t, w, "Import"))
 	test.Tap(dialogButton(t, w, "Yes")) // replace
@@ -118,7 +117,7 @@ func TestFlow_ImportOverADifferentlyNamedSecretIsRefused(t *testing.T) {
 	app, w := newFlowApp(t, testutil.PasswordSecret("GitHub Key", "pw", "keys"))
 	unlock(app)
 
-	app.detailView.fileOps.processImport(&fakeURIReader{Reader: strings.NewReader("k"), uri: storage.NewFileURI("/tmp/github-key")})
+	importFile(t, app, &fakeURIReader{Reader: strings.NewReader("k"), uri: storage.NewFileURI("/tmp/github-key")})
 	test.Type(dialogEntry(t, w), "keys")
 	test.Tap(dialogButton(t, w, "Import"))
 
@@ -144,7 +143,7 @@ func TestFlow_ImportOverAnUnreadableFileIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.detailView.fileOps.processImport(&fakeURIReader{Reader: strings.NewReader("k"), uri: storage.NewFileURI("/tmp/id_rsa")})
+	importFile(t, app, &fakeURIReader{Reader: strings.NewReader("k"), uri: storage.NewFileURI("/tmp/id_rsa")})
 	test.Type(dialogEntry(t, w), "keys")
 	test.Tap(dialogButton(t, w, "Import"))
 
@@ -161,7 +160,7 @@ func TestFlow_ImportUsesTheExistingGroupSpelling(t *testing.T) {
 	app, w := newFlowApp(t, testutil.PasswordSecret("gh", "x", "SSH Keys"))
 	unlock(app)
 
-	app.detailView.fileOps.processImport(&fakeURIReader{Reader: strings.NewReader("k"), uri: storage.NewFileURI("/tmp/id_ed25519")})
+	importFile(t, app, &fakeURIReader{Reader: strings.NewReader("k"), uri: storage.NewFileURI("/tmp/id_ed25519")})
 	test.Type(dialogEntry(t, w), "ssh keys")
 	test.Tap(dialogButton(t, w, "Import"))
 	test.Tap(dialogButton(t, w, "OK")) // the completion message
@@ -229,22 +228,9 @@ func TestFlow_SwitchVaultThroughSettings(t *testing.T) {
 func TestFlow_ExportWritesTheFile(t *testing.T) {
 	app, _ := newFlowApp(t, testutil.FileSecret("notes", "notes.txt", "aGVsbG8=", "docs")) // "hello"
 	unlock(app)
-	fo := app.detailView.fileOps
-
-	fo.ExportFile(app.secretList.secrets[0]) // decodes, then shows the save dialog
-	if fo.pending == nil {
-		t.Fatal("decoded content should be pending until a path is chosen")
-	}
 	out := storage.NewFileURI(filepath.Join(t.TempDir(), "notes.txt"))
-	writer, err := storage.Writer(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// What the save dialog's callback does once the user picks a path.
-	fo.saveExport(writer, nil, "notes", "notes.txt", fo.pending)
-	if fo.pending != nil {
-		t.Fatal("saving should consume the pending buffer")
-	}
+
+	exportTo(t, app, out.Path())
 
 	r, err := storage.Reader(out)
 	if err != nil {
@@ -261,18 +247,19 @@ func TestFlow_ExportWritesTheFile(t *testing.T) {
 	app.Lock()
 }
 
-// exportTo runs the export of the app's first secret to path, as the save
-// dialog does once a path is picked: Fyne has already created (or
-// truncated) the file with os.Create.
+// exportTo exports the app's first secret to path through Export File and
+// the save dialog. As Fyne's dialog does once a path is picked, the file
+// has already been created (or truncated) with os.Create.
 func exportTo(t *testing.T, app *App, path string) {
 	t.Helper()
-	fo := app.detailView.fileOps
-	fo.ExportFile(app.secretList.secrets[0])
+	p := pickerOf(app)
+	app.secretList.list.Select(0)
+	test.Tap(findButton(app.detailView.Content(), "Export File"))
 	writer, err := storage.Writer(storage.NewFileURI(path))
 	if err != nil {
 		t.Fatal(err)
 	}
-	fo.saveExport(writer, nil, "notes", filepath.Base(path), fo.pending)
+	p.answerSave(t, writer, nil)
 }
 
 func TestFlow_ExportIsReadableOnlyByTheUser(t *testing.T) {

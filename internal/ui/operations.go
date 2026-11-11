@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"io"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -17,10 +18,13 @@ import (
 //     refuses to start an operation whose kind is already running, and
 //     shows a failure in words (errorMessage) unless the caller handles it.
 //   - confirm asks before an action.
+//   - pickFile, pickFolder and pickSave ask for a file, a folder or where to
+//     save, through a picker (Fyne's dialogs, or a test's fake).
 //
 // Answering one of its dialogs counts as activity for the auto-lock, and so
 // does input in a dialog's content: dialogs are outside the widget tree the
-// app's activity tracker watches.
+// app's activity tracker watches. Once the session has ended (end, or its
+// context cancelled), a late answer is dropped and a chosen file closed.
 //
 // The app keeps one for its whole life (update checks, which also run while
 // locked) and makes one per session (everything done to the open vault).
@@ -33,20 +37,47 @@ type operations struct {
 	status *widget.Label
 	// activity reports the user's answer to a dialog to the auto-lock.
 	activity func()
+	pick     picker
 	// running holds the kinds of operation in flight.
 	running map[opKind]bool
+	// saving holds, by request, how to cancel each save request still open:
+	// end answers them as cancelled, since the lock dismisses the dialog
+	// without an answer. ended is set by end.
+	saving   map[int]func()
+	nextSave int
+	ended    bool
 }
 
 // newOperations returns operations that run work on run, show progress in
-// status (which may be nil) and report answers to activity.
-func newOperations(window fyne.Window, run runner, status *widget.Label, activity func()) *operations {
+// status (which may be nil), ask for files through pick and report answers
+// to activity.
+func newOperations(window fyne.Window, run runner, status *widget.Label, activity func(), pick picker) *operations {
 	return &operations{
 		window:   window,
 		run:      run,
 		status:   status,
 		activity: activity,
+		pick:     pick,
 		running:  make(map[opKind]bool),
+		saving:   make(map[int]func()),
 	}
+}
+
+// end ends the session's operations (the app calls it when the vault
+// locks): a save request still open is answered as cancelled, so whoever
+// asked can wipe what it meant to write, and later answers are dropped.
+// Work in flight already has its result dropped (see start).
+func (o *operations) end() {
+	o.ended = true
+	for id, cancel := range o.saving {
+		delete(o.saving, id)
+		cancel()
+	}
+}
+
+// over reports whether the session has ended.
+func (o *operations) over() bool {
+	return o.ended || o.run.context().Err() != nil
 }
 
 // opKind names operations that must not overlap: while one of a kind runs,
@@ -167,4 +198,86 @@ func (o *operations) confirm(q *question, yes func()) {
 	// A tracker of its own: the dialog's widgets are not the app's to forget.
 	newActivityTracker(o.activity).instrument(q.content)
 	dialog.ShowCustomConfirm(q.title, q.confirm, q.dismiss, q.content, answered, o.window)
+}
+
+// pickFile asks for a file to open and calls use with it, on the main
+// goroutine; use must close it. Nothing happens if the user cancels, and a
+// failure is shown.
+func (o *operations) pickFile(use func(fyne.URIReadCloser)) {
+	o.pick.openFile(func(r fyne.URIReadCloser, err error) {
+		if o.over() {
+			closeChosen(r)
+			return
+		}
+		o.activity()
+		switch {
+		case err != nil:
+			showError(o.window, "Couldn't choose a file", err)
+		case r != nil:
+			use(r)
+		}
+	})
+}
+
+// pickFolder asks for a folder and calls use with its path, on the main
+// goroutine. Nothing happens if the user cancels, and a failure is shown.
+func (o *operations) pickFolder(use func(path string)) {
+	o.pick.openFolder(func(uri fyne.ListableURI, err error) {
+		if o.over() {
+			return
+		}
+		o.activity()
+		switch {
+		case err != nil:
+			showError(o.window, "Couldn't choose a folder", err)
+		case uri != nil:
+			use(uri.Path())
+		}
+	})
+}
+
+// pickSave asks where to save a file, suggesting name, and calls use
+// exactly once, on the main goroutine: with the chosen file (use must
+// close it), or with nil when nothing is to be written there: the user
+// cancelled, choosing failed (shown, led by doing), or the session ended
+// before an answer (then a file chosen late is closed).
+func (o *operations) pickSave(name, doing string, use func(fyne.URIWriteCloser)) {
+	if o.over() {
+		use(nil)
+		return
+	}
+	id := o.nextSave
+	o.nextSave++
+	o.saving[id] = func() { use(nil) }
+	o.pick.saveFile(name, func(w fyne.URIWriteCloser, err error) {
+		cancel, open := o.saving[id]
+		if !open {
+			closeChosen(w) // answered as cancelled at the lock
+			return
+		}
+		delete(o.saving, id)
+		if o.over() {
+			closeChosen(w)
+			cancel()
+			return
+		}
+		o.activity()
+		switch {
+		case err != nil:
+			showError(o.window, doing, err)
+			use(nil)
+		case w == nil:
+			use(nil)
+		default:
+			use(w)
+		}
+	})
+}
+
+// closeChosen closes a file chosen too late to be used. Nothing was
+// written, so a failure to close loses nothing.
+func closeChosen(f io.Closer) {
+	if f != nil {
+		_ = f.Close()
+	}
 }

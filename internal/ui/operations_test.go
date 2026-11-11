@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 )
@@ -19,6 +20,7 @@ type opsHarness struct {
 	q        *queue
 	w        fyne.Window
 	status   *widget.Label
+	pick     *scriptedPicker
 	activity int
 	end      context.CancelFunc
 }
@@ -30,7 +32,8 @@ func newOpsHarness(t *testing.T) *opsHarness {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	h.end = cancel
-	h.ops = newOperations(h.w, h.q.runner().withContext(ctx), h.status, func() { h.activity++ })
+	h.pick = &scriptedPicker{}
+	h.ops = newOperations(h.w, h.q.runner().withContext(ctx), h.status, func() { h.activity++ }, h.pick)
 	return h
 }
 
@@ -184,5 +187,123 @@ func TestOperations_Confirm_InputInTheContentCountsAsActivity(t *testing.T) {
 	test.Tap(dialogButton(t, h.w, "Import"))
 	if h.activity != 2 {
 		t.Fatalf("answering reported %d activity in all, want 2", h.activity)
+	}
+}
+
+func TestOperations_PickFile_UsesTheChoiceAndCountsTheAnswer(t *testing.T) {
+	h := newOpsHarness(t)
+	var got []fyne.URIReadCloser
+	use := func(r fyne.URIReadCloser) { got = append(got, r) }
+	chosen := &fakeURIReader{Reader: strings.NewReader("x"), uri: storage.NewFileURI("/tmp/x")}
+
+	h.ops.pickFile(use)
+	h.pick.answerFile(t, chosen, nil)
+	h.ops.pickFile(use)
+	h.pick.answerFile(t, nil, nil) // cancelled
+
+	if len(got) != 1 || got[0] != chosen || h.activity != 2 {
+		t.Fatalf("used %d files, activity %d; want the one chosen and both answers counted", len(got), h.activity)
+	}
+}
+
+func TestOperations_PickFile_ShowsAFailure(t *testing.T) {
+	h := newOpsHarness(t)
+	h.ops.pickFile(func(fyne.URIReadCloser) { t.Fatal("nothing was chosen") })
+	h.pick.answerFile(t, nil, errors.New("no such folder"))
+	if text := dialogText(t, h.w); !strings.Contains(text, "Couldn't choose a file: no such folder") {
+		t.Fatalf("error dialog says %q", text)
+	}
+}
+
+func TestOperations_PickFile_ClosesAFileChosenAfterTheSessionEnded(t *testing.T) {
+	h := newOpsHarness(t)
+	chosen := &fakeURIReader{Reader: strings.NewReader("x"), uri: storage.NewFileURI("/tmp/x")}
+
+	h.ops.pickFile(func(fyne.URIReadCloser) { t.Fatal("a file chosen after the lock must not be used") })
+	h.end()
+	h.pick.answerFile(t, chosen, nil)
+
+	if !chosen.closed || h.activity != 0 {
+		t.Fatalf("closed %v, activity %d; want the file closed and no activity", chosen.closed, h.activity)
+	}
+}
+
+func TestOperations_PickFolder_GivesThePath(t *testing.T) {
+	h := newOpsHarness(t)
+	dir := t.TempDir()
+	folder, err := storage.ListerForURI(storage.NewFileURI(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	h.ops.pickFolder(func(path string) { got = path })
+	h.pick.answerFolder(t, folder, nil)
+	h.ops.pickFolder(func(string) { t.Fatal("a cancelled chooser gives nothing") })
+	h.pick.answerFolder(t, nil, nil)
+
+	if got != dir || h.activity != 2 {
+		t.Fatalf("got %q, activity %d", got, h.activity)
+	}
+}
+
+// saveAnswers records what pickSave passed to use.
+type saveAnswers struct{ got []fyne.URIWriteCloser }
+
+func (a *saveAnswers) use(w fyne.URIWriteCloser) { a.got = append(a.got, w) }
+
+func TestOperations_PickSave_AnswersExactlyOnceWhicheverWayItEnds(t *testing.T) {
+	tests := []struct {
+		name      string
+		end       func(t *testing.T, h *opsHarness, w fyne.URIWriteCloser)
+		wantFile  bool
+		wantError bool
+		late      bool // a file is chosen after the end: it must be closed
+	}{
+		{"chosen", func(t *testing.T, h *opsHarness, w fyne.URIWriteCloser) { h.pick.answerSave(t, w, nil) }, true, false, false},
+		{"cancelled", func(t *testing.T, h *opsHarness, _ fyne.URIWriteCloser) { h.pick.answerSave(t, nil, nil) }, false, false, false},
+		{"failed", func(t *testing.T, h *opsHarness, _ fyne.URIWriteCloser) {
+			h.pick.answerSave(t, nil, errors.New("no such folder"))
+		}, false, true, false},
+		{"locked, then chosen late", func(t *testing.T, h *opsHarness, w fyne.URIWriteCloser) {
+			h.ops.end()
+			h.pick.answerSave(t, w, nil)
+		}, false, false, true},
+		{"session context ended, then chosen", func(t *testing.T, h *opsHarness, w fyne.URIWriteCloser) {
+			h.end()
+			h.pick.answerSave(t, w, nil)
+		}, false, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newOpsHarness(t)
+			answers := &saveAnswers{}
+			w := memWriter(t, "out.txt")
+
+			h.ops.pickSave("out.txt", "Couldn't export", answers.use)
+			tt.end(t, h, w)
+
+			if len(answers.got) != 1 {
+				t.Fatalf("use was called %d times, want once", len(answers.got))
+			}
+			if gotFile := answers.got[0] != nil; gotFile != tt.wantFile {
+				t.Fatalf("use got a file: %v, want %v", gotFile, tt.wantFile)
+			}
+			if tt.late && (!w.closed || w.Len() != 0) {
+				t.Fatal("a file chosen too late must be closed, with nothing written")
+			}
+			if shown := h.w.Canvas().Overlays().Top() != nil; shown != tt.wantError {
+				t.Fatalf("error dialog shown: %v, want %v", shown, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestOperations_PickSave_AfterTheEndAnswersAtOnce(t *testing.T) {
+	h := newOpsHarness(t)
+	h.ops.end()
+	answers := &saveAnswers{}
+	h.ops.pickSave("out.txt", "Couldn't export", answers.use)
+	if len(answers.got) != 1 || answers.got[0] != nil || len(h.pick.saves) != 0 {
+		t.Fatal("asking after the session ended should answer nil without a dialog")
 	}
 }

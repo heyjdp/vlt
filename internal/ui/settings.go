@@ -24,13 +24,10 @@ type SettingsScreen struct {
 	store     *store.Store
 	log       *slog.Logger
 	statusBar *widget.Label
-	// ops runs the passphrase change and the vault copy, and asks before
-	// moving or switching.
+	// ops runs the passphrase change and the vault copy, asks before moving
+	// or switching, and shows the folder picker.
 	ops      *operations
 	onRelock func()
-	// activity reports the user's answer in the folder picker, which is
-	// outside the instrumented widget tree.
-	activity func()
 	// save persists one setting (prefLockTimeout or prefClipboardTTL) after
 	// the user changes it; it is set by the app. A new vault location is
 	// saved by the app once a vault is opened or created there.
@@ -59,7 +56,6 @@ func NewSettingsScreen(
 		statusBar: statusBar,
 		ops:       ops,
 		onRelock:  onRelock,
-		activity:  noActivity,
 		save:      func(string) {},
 
 		checkUpdates: func() {},
@@ -178,18 +174,7 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 	errorLabel := errorText()
 
 	browseBtn := widget.NewButtonWithIcon("Browse…", theme.FolderOpenIcon(), func() {
-		fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
-			ss.activity()
-			if err != nil {
-				showError(ss.window, "Couldn't choose a folder", err)
-				return
-			}
-			if uri == nil {
-				return
-			}
-			pathEntry.SetText(uri.Path())
-		}, ss.window)
-		fd.Show()
+		ss.ops.pickFolder(pathEntry.SetText)
 	})
 
 	moveBtn := widget.NewButton("Move Vault", func() {

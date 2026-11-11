@@ -205,8 +205,10 @@ func TestAutoLock_StaleTimersAreIgnoredAfterActivity(t *testing.T) {
 func TestAutoLock_DialogCallbacksCountAsActivity(t *testing.T) {
 	app, clock := newLockingApp(t)
 
+	p := pickerOf(app)
+	test.Tap(findButton(app.mainContent, "Import File"))
 	before := clock.active(testTimeout)
-	app.detailView.fileOps.activity() // e.g. the file picker or group form returning
+	p.answerFile(t, nil, nil) // the file chooser, cancelled
 	if !before.stopped {
 		t.Fatal("dialog callbacks must reset the countdown")
 	}

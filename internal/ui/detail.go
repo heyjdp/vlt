@@ -521,9 +521,6 @@ func (dv *DetailView) clear() {
 	if dv.current != nil {
 		*dv.current = store.Secret{}
 	}
-	if dv.fileOps != nil {
-		dv.fileOps.dropPending()
-	}
 	dv.current = nil
 	dv.content.Objects = nil
 	dv.content.Refresh()

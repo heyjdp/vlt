@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -14,6 +13,8 @@ import (
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
+
+	"github.com/heyjdp/vlt/internal/testutil"
 )
 
 // failingReader yields n bytes, then fails.
@@ -106,7 +107,7 @@ func TestApp_FailingImportSavesNothing(t *testing.T) {
 	unlock(app)
 
 	r := &fakeURIReader{Reader: failingReader(4096), uri: storage.NewFileURI("/tmp/id_rsa")}
-	app.detailView.fileOps.processImport(r)
+	importFile(t, app, r)
 
 	secrets, err := app.session.Store().Contents(t.Context())
 	if err != nil {
@@ -118,13 +119,21 @@ func TestApp_FailingImportSavesNothing(t *testing.T) {
 	app.Lock()
 }
 
-// fakeWriter is an io.WriteCloser whose Close can fail.
+// fakeWriter is an io.WriteCloser whose Close can fail. It keeps the
+// slices it was given (not copies), so a test can see them wiped.
 type fakeWriter struct {
 	bytes.Buffer
 	closeErr error
+	closed   bool
+	given    [][]byte
 }
 
-func (w *fakeWriter) Close() error { return w.closeErr }
+func (w *fakeWriter) Write(p []byte) (int, error) {
+	w.given = append(w.given, p)
+	return w.Buffer.Write(p)
+}
+
+func (w *fakeWriter) Close() error { w.closed = true; return w.closeErr }
 
 func TestWriteExport(t *testing.T) {
 	t.Parallel()
@@ -132,11 +141,8 @@ func TestWriteExport(t *testing.T) {
 	ok := &fakeWriter{}
 	data := []byte("secret file")
 	n, err := writeExport(ok, data)
-	if err != nil || n != 11 || ok.String() != "secret file" {
-		t.Fatalf("writeExport = %d, %v; wrote %q", n, err, ok.String())
-	}
-	if !bytes.Equal(data, make([]byte, 11)) {
-		t.Fatal("exported plaintext should be wiped after writing")
+	if err != nil || n != 11 || ok.String() != "secret file" || !ok.closed {
+		t.Fatalf("writeExport = %d, %v; wrote %q, closed %v", n, err, ok.String(), ok.closed)
 	}
 
 	failing := &fakeWriter{closeErr: errors.New("disk full")}
@@ -153,7 +159,7 @@ func TestApp_FailingImportShowsErrorNotGroupForm(t *testing.T) {
 	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
-	app.detailView.fileOps.processImport(&fakeURIReader{Reader: failingReader(10), uri: storage.NewFileURI("/tmp/x")})
+	importFile(t, app, &fakeURIReader{Reader: failingReader(10), uri: storage.NewFileURI("/tmp/x")})
 
 	top := w.Canvas().Overlays().Top()
 	if top == nil {
@@ -178,23 +184,24 @@ func TestPrepareImport_CloseErrorFails(t *testing.T) {
 	}
 }
 
-// writeFailingWriter fails every write.
+// writeFailingWriter fails every write, after keeping what it was given.
 type writeFailingWriter struct{ fakeWriter }
 
-func (w *writeFailingWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
+func (w *writeFailingWriter) Write(p []byte) (int, error) {
+	w.given = append(w.given, p)
+	return 0, errors.New("disk full")
+}
 
-func TestWriteExport_WriteErrorIsReportedAndWipes(t *testing.T) {
+func TestWriteExport_WriteErrorIsReported(t *testing.T) {
 	t.Parallel()
-	data := []byte("secret")
-	if _, err := writeExport(&writeFailingWriter{}, data); err == nil {
-		t.Fatal("a failed write must be reported")
-	}
-	if !bytes.Equal(data, make([]byte, 6)) {
-		t.Fatal("plaintext must be wiped even when the write fails")
+	w := &writeFailingWriter{}
+	if _, err := writeExport(w, []byte("secret")); err == nil || !w.closed {
+		t.Fatalf("a failed write must be reported (got %v) and the file closed (%v)", err, w.closed)
 	}
 }
 
-// fakeURIWriter records whether anything was written.
+// fakeURIWriter is a file to export to that is not on the local disk (a
+// "mem" URI), so the export writes it directly and a test sees the bytes.
 type fakeURIWriter struct {
 	fakeWriter
 	uri fyne.URI
@@ -202,26 +209,107 @@ type fakeURIWriter struct {
 
 func (w *fakeURIWriter) URI() fyne.URI { return w.uri }
 
-func TestApp_ExportAfterLockWritesNothing(t *testing.T) {
+// memWriter returns a fakeURIWriter for a file named name.
+func memWriter(t *testing.T, name string) *fakeURIWriter {
+	t.Helper()
+	uri, err := storage.ParseURI("mem:///" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &fakeURIWriter{uri: uri}
+}
+
+// exportApp is an unlocked app whose vault holds one file secret, "notes"
+// (notes.txt, "hello"), with a scripted picker.
+func exportApp(t *testing.T) (*App, fyne.Window, *scriptedPicker) {
+	t.Helper()
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
-	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	newVaultWith(t, dir, testutil.FileSecret("notes", "notes.txt", "aGVsbG8=", "docs"))
+	w := test.NewTempWindow(t, nil)
+	app := newApp(a, w, Config{VaultDir: dir}, quietLog(), inlineRunner(), noTimers, testKDF)
+	p := pickerOf(app)
 	unlock(app)
-	fo := app.detailView.fileOps
+	return app, w, p
+}
+
+// startExport shows the secret and taps Export File, which leaves the save
+// dialog open.
+func startExport(t *testing.T, app *App) {
+	t.Helper()
+	app.secretList.list.Select(0)
+	test.Tap(findButton(app.detailView.Content(), "Export File"))
+}
+
+func TestApp_ExportAfterLockWritesNothing(t *testing.T) {
+	app, _, p := exportApp(t)
+	startExport(t, app)
 	app.Lock() // the save dialog was still open when the vault locked
 
-	data := []byte("plaintext")
-	w := &fakeURIWriter{uri: storage.NewFileURI(filepath.Join(t.TempDir(), "out"))}
-	fo.saveExport(w, nil, "n", "out", data)
+	w := memWriter(t, "notes.txt")
+	p.answerSave(t, w, nil) // a path chosen too late
 
-	if w.Len() != 0 {
-		t.Fatal("an export confirmed after lock must not write plaintext")
-	}
-	if !bytes.Equal(data, make([]byte, len(data))) {
-		t.Fatal("the export buffer must be wiped")
+	if w.Len() != 0 || !w.closed {
+		t.Fatalf("an export confirmed after lock must write nothing (wrote %d bytes) and close the file (%v)", w.Len(), w.closed)
 	}
 }
+
+func TestApp_ExportWipesWhatItWrote(t *testing.T) {
+	app, w, p := exportApp(t)
+	startExport(t, app)
+
+	out := memWriter(t, "notes.txt")
+	if name := p.answerSave(t, out, nil); name != "notes.txt" {
+		t.Fatalf("the save dialog suggested %q, want the original file name", name)
+	}
+
+	if out.String() != "hello" || !visibleText(w.Canvas().Overlays().Top(), "Exported \"notes.txt\" (5 bytes)") {
+		t.Fatalf("export wrote %q", out.String())
+	}
+	for _, p := range out.given {
+		if !bytes.Equal(p, make([]byte, len(p))) {
+			t.Fatal("the decoded file must be wiped once it is written")
+		}
+	}
+	app.Lock()
+}
+
+// The decoded file is wiped whichever way an export ends.
+func TestFileOps_ExportWipesThePlaintextWhicheverWayItEnds(t *testing.T) {
+	tests := []struct {
+		name string
+		end  func(t *testing.T, app *App, p *scriptedPicker)
+	}{
+		{"cancelled", func(t *testing.T, _ *App, p *scriptedPicker) { p.answerSave(t, nil, nil) }},
+		{"the save dialog fails", func(t *testing.T, _ *App, p *scriptedPicker) {
+			p.answerSave(t, nil, errors.New("no such folder"))
+		}},
+		{"locked with the dialog open", func(_ *testing.T, app *App, _ *scriptedPicker) { app.Lock() }},
+		{"the write fails", func(t *testing.T, _ *App, p *scriptedPicker) {
+			p.answerSave(t, &writeFailingURIWriter{fakeURIWriter: *memWriter(t, "out.txt")}, nil)
+		}},
+		{"written", func(t *testing.T, _ *App, p *scriptedPicker) { p.answerSave(t, memWriter(t, "out.txt"), nil) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, _, p := exportApp(t)
+			data := []byte("decoded file content")
+
+			app.detailView.fileOps.exportDecoded("n", "out.txt", data)
+			tt.end(t, app, p)
+
+			if !bytes.Equal(data, make([]byte, len(data))) {
+				t.Fatalf("%s: the decoded file must be wiped", tt.name)
+			}
+			app.Lock()
+		})
+	}
+}
+
+// writeFailingURIWriter is a fakeURIWriter whose writes fail.
+type writeFailingURIWriter struct{ fakeURIWriter }
+
+func (w *writeFailingURIWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
 
 func TestApp_LockDismissesOpenDialogs(t *testing.T) {
 	a := test.NewTempApp(t)
