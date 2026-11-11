@@ -238,10 +238,15 @@ func TestSession_ActivityWhilePausedKeepsThePause(t *testing.T) {
 	sess, clock, _ := newTestSession(sessionTimeout)
 	sess.Begin(openTestStore(t))
 	sess.Pause()
+	before := clock.active(pausedLockAfter)
 
 	sess.Activity()
 	if clock.active(sessionTimeout) != nil {
 		t.Fatal("input during a pause must not restart the short countdown")
+	}
+	after := clock.active(pausedLockAfter)
+	if after == nil || after == before || !before.stopped {
+		t.Fatal("input during a pause should restart the long wait in full")
 	}
 }
 
