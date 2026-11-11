@@ -291,3 +291,24 @@ func TestApp_QuitReleasesTheLock(t *testing.T) {
 		t.Fatalf("quitting while unlocked must remove vlt.lock, held by %q", got)
 	}
 }
+
+// A location saved by an older version, or typed by hand, may be written
+// differently from the one entered; it is still the same place.
+func TestSettings_SwitchToTheSameLocationWrittenDifferently(t *testing.T) {
+	app, _ := newFlowApp(t)
+	unlock(app)
+	app.config.VaultDir = "ssh://me@nas:2222/srv/my vault"
+	ss := app.openSettings(app.session.Store(), app.run)
+	box := ss.buildVaultLocation()
+	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")
+
+	path.SetText("ssh://me@nas:2222/srv/my%20vault")
+	test.Tap(findButton(box, "Switch Vault (no copy)"))
+	if findDeep(box, func(o fyne.CanvasObject) bool {
+		l, ok := o.(*widget.Label)
+		return ok && l.Visible() && l.Text == "Already using that vault directory"
+	}) == nil {
+		t.Fatal("an escaped form of the current location should count as the same")
+	}
+	app.Lock()
+}

@@ -200,7 +200,7 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 		if !ok {
 			return
 		}
-		if newDir == ss.config.VaultDir {
+		if sameLocation(newDir, ss.config.VaultDir) {
 			errorLabel.SetText("New location is the same as current")
 			errorLabel.Show()
 			return
@@ -228,7 +228,7 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 		if !ok {
 			return
 		}
-		if newDir == ss.config.VaultDir {
+		if sameLocation(newDir, ss.config.VaultDir) {
 			errorLabel.SetText("Already using that vault directory")
 			errorLabel.Show()
 			return
@@ -283,6 +283,18 @@ func (ss *SettingsScreen) targetLocation(text string, errorLabel *widget.Label, 
 		return "", false
 	}
 	return loc.String(), true
+}
+
+// sameLocation reports whether two saved locations name the same place.
+// The saved one may be in an older or typed form (ssh:// with spaces left
+// unescaped, say), so they are compared parsed when both parse.
+func sameLocation(a, b string) bool {
+	la, errA := store.ParseLocation(a)
+	lb, errB := store.ParseLocation(b)
+	if errA != nil || errB != nil {
+		return a == b
+	}
+	return la == lb
 }
 
 func (ss *SettingsScreen) moveVault(newDir string, errorLabel, currentLabel *widget.Label) {
