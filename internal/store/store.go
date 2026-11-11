@@ -159,7 +159,7 @@ func (s *Store) Update(ctx context.Context, secret *Secret) error {
 		return fmt.Errorf("store.Update: %w", err)
 	}
 	if strings.TrimSpace(existing.Name) != name {
-		return fmt.Errorf("store.Update %q: file is held by %q: %w", name, existing.Name, &ExistsError{Existing: existing})
+		return fmt.Errorf("store.Update %q: %w (its file is held by %q)", name, &ExistsError{Existing: existing}, existing.Name)
 	}
 	secret.Name = name
 	secret.CreatedAt = existing.CreatedAt

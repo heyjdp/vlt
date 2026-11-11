@@ -254,6 +254,29 @@ func TestApp_ExportAfterLockWritesNothing(t *testing.T) {
 	}
 }
 
+// A lock while the file is being decoded drops the export: no save dialog
+// is asked for and nothing is shown.
+func TestApp_LockDuringExportDecodeAsksNothing(t *testing.T) {
+	a := test.NewTempApp(t)
+	dir := t.TempDir()
+	newVaultWith(t, dir, testutil.FileSecret("notes", "notes.txt", "aGVsbG8=", "docs"))
+	w := test.NewTempWindow(t, nil)
+	q := &queue{}
+	app := newApp(a, w, settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
+	q.flush()
+	unlockQueued(t, app, q)
+	q.flush() // the list loads
+	p := pickerOf(app)
+	startExport(t, app)
+
+	app.Lock() // while the decode is in flight
+	q.flush()
+
+	if len(p.saves) != 0 || w.Canvas().Overlays().Top() != nil {
+		t.Fatalf("an export the lock overtook asked %d save dialogs and showed a dialog: %v", len(p.saves), w.Canvas().Overlays().Top() != nil)
+	}
+}
+
 func TestApp_ExportWipesWhatItWrote(t *testing.T) {
 	app, w, p := exportApp(t)
 	startExport(t, app)

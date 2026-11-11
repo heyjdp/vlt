@@ -440,7 +440,7 @@ func readFormat(fsys vaultFS) (int, error) {
 	}
 	var m formatMarker
 	if err := json.Unmarshal(data, &m); err != nil {
-		return 0, fmt.Errorf("parse %s: %w", formatFile, err)
+		return 0, fmt.Errorf("%w (in %s)", err, formatFile)
 	}
 	return m.Format, nil
 }

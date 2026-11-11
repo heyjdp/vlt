@@ -443,10 +443,13 @@ func (dv *DetailView) saveSecret(secret *store.Secret, isNew bool, btn *widget.B
 // saveFailed says why secret wasn't saved.
 func (dv *DetailView) saveFailed(secret *store.Secret, isNew bool, err error) {
 	const doing = "Couldn't save the secret"
+	var exists *store.ExistsError
 	switch {
 	case errors.Is(err, store.ErrSecretExists) && isNew:
 		showError(dv.window, doing, fmt.Errorf("a secret named %q (or one whose name differs only in case or punctuation) already exists in group %q; choose a different name",
 			secret.Name, secret.Group))
+	case errors.As(err, &exists) && exists.Existing != nil:
+		showError(dv.window, fmt.Sprintf("%s: its file is now held by the secret %q", doing, exists.Existing.Name), nil)
 	case errors.Is(err, store.ErrSecretExists):
 		showError(dv.window, doing+": its file is now held by a different secret", err)
 	default:

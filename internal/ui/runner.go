@@ -46,12 +46,26 @@ func (r runner) context() context.Context {
 // to done on the Fyne main goroutine, unless that context has been cancelled
 // meanwhile. done must not block.
 func background[T any](r runner, work func(context.Context) (T, error), done func(T, error)) {
+	backgroundOwned(r, work, done, nil)
+}
+
+// backgroundOwned is background for a result that must be released (such
+// as plaintext to wipe) when it is dropped: if the context has been
+// cancelled by the time the result reaches the main goroutine, release, if
+// not nil, is called with it there instead of done. The work may finish
+// after its last check of the context, so only this check can catch a lock
+// in between.
+func backgroundOwned[T any](r runner, work func(context.Context) (T, error), done func(T, error), release func(T)) {
 	ctx := r.context()
 	r.spawn(func() {
 		v, err := work(ctx)
 		fyne.Do(func() {
 			if ctx.Err() != nil {
-				return // the session ended (vault locked); drop the result
+				// The session ended (vault locked); drop the result.
+				if release != nil {
+					release(v)
+				}
+				return
 			}
 			done(v, err)
 		})

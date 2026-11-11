@@ -126,6 +126,14 @@ type operation struct {
 // are undone before done or failed is called. If the session ends first,
 // the result is dropped and neither is called.
 func start[T any](o *operations, op *operation, work func(context.Context) (T, error), done func(T)) bool {
+	return startOwned(o, op, work, done, nil)
+}
+
+// startOwned is start for a result that must be released when it is
+// dropped, such as decoded plaintext: if the session ends before the result
+// is delivered, release (if not nil) is called with it, on the main
+// goroutine, instead of done. Once done is called, the result is done's.
+func startOwned[T any](o *operations, op *operation, work func(context.Context) (T, error), done, release func(T)) bool {
 	if !o.claim(op.kind) {
 		return false
 	}
@@ -133,7 +141,7 @@ func start[T any](o *operations, op *operation, work func(context.Context) (T, e
 		op.control.Disable()
 	}
 	hide := o.showProgress(op)
-	background(o.run, work, func(v T, err error) {
+	backgroundOwned(o.run, work, func(v T, err error) {
 		if op.kind != "" {
 			delete(o.running, op.kind)
 		}
@@ -149,7 +157,7 @@ func start[T any](o *operations, op *operation, work func(context.Context) (T, e
 		default:
 			showError(o.window, op.doing, err)
 		}
-	})
+	}, release)
 	return true
 }
 

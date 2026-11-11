@@ -2,6 +2,7 @@ package ui
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"fyne.io/fyne/v2/test"
@@ -195,6 +196,31 @@ func TestDetailView_NewSecretUsesTheExistingGroupSpelling(t *testing.T) {
 	}
 	if got.Group != "Personal Finance" {
 		t.Fatalf("group = %q, want the existing spelling", got.Group)
+	}
+	app.Lock()
+}
+
+// Saving a secret whose file another copy of vlt has since given to a
+// differently named secret says which secret now holds it.
+func TestDetailView_SaveOverAFileNowHeldByAnotherSecretNamesIt(t *testing.T) {
+	app := openOnly(t, testutil.PasswordSecret("GitHub Key", "x", "work"))
+	other, err := store.Open(t.Context(), app.session.Store().Location().String(), testPassphrase, quietLog(), testKDF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	if err := other.Delete(t.Context(), "GitHub Key", "work"); err != nil {
+		t.Fatal(err)
+	}
+	if err := other.Create(t.Context(), testutil.PasswordSecret("github-key", "y", "work")); err != nil {
+		t.Fatal(err)
+	}
+
+	test.Tap(findButton(app.detailView.Content(), "Save"))
+
+	want := `Couldn't save the secret: its file is now held by the secret "github-key"`
+	if text := dialogText(t, app.window); !strings.Contains(text, want) {
+		t.Fatalf("error dialog says %q, want %q", text, want)
 	}
 	app.Lock()
 }

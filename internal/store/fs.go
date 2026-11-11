@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -114,7 +113,9 @@ func (l localFS) String() string { return l.root }
 // check fails if fsys is not a vaultFS (compile-time).
 var _ vaultFS = localFS{}
 
-// errorf wraps err with the operation and the name it was applied to.
+// errorf wraps err as a file error for the operation and the name it was
+// applied to, as the os package reports a local one, so that what was done
+// to which file is kept when the error is put in words for people.
 func errorf(op, name string, err error) error {
-	return fmt.Errorf("%s %s: %w", op, name, err)
+	return &fs.PathError{Op: op, Path: name, Err: err}
 }

@@ -176,6 +176,62 @@ func TestErrorMessage_DescribesRealErrorsInPlainWords(t *testing.T) {
 			want: `Couldn't export "key": can't write /tmp/key.pem: no space left on device (the file at /tmp/key.pem may be incomplete)`,
 		},
 		{
+			name:  "a server file error keeps the file",
+			doing: "Couldn't save the secret",
+			// As the server backend reports it: pkg/sftp gives a bare
+			// os.ErrPermission, which the backend puts in a PathError.
+			err: func(*testing.T) error {
+				return fmt.Errorf("store.Update: write: %w", &fs.PathError{Op: "write", Path: "work/x.age", Err: os.ErrPermission})
+			},
+			want: "Couldn't save the secret: can't write work/x.age: permission denied",
+		},
+		{
+			name:  "a temp folder that can't be made private keeps its mode",
+			doing: "Couldn't save the secret",
+			err: func(*testing.T) error {
+				private := fmt.Errorf("%w (%s has mode %v and cannot be made private)", os.ErrPermission, "/v/.vlt-tmp", fs.FileMode(0o777))
+				return fmt.Errorf("store.Update: write: %w", &fs.PathError{Op: "write", Path: "work/x.age", Err: private})
+			},
+			want: "Couldn't save the secret: can't write work/x.age: permission denied (/v/.vlt-tmp has mode -rwxrwxrwx and cannot be made private)",
+		},
+		{
+			name:  "a failed fallback after an unsupported link reads as two clauses",
+			doing: "Couldn't save the secret",
+			err: func(t *testing.T) error {
+				dir := t.TempDir()
+				link := &os.LinkError{Op: "link", Old: filepath.Join(dir, ".tmp-1"), New: filepath.Join(dir, "x.age"), Err: errors.New("operation not supported")}
+				create := &fs.PathError{Op: "open", Path: filepath.Join(dir, "x.age"), Err: os.ErrPermission}
+				// As the local backend words it (see writeFileExclusive).
+				return fmt.Errorf("store.Create: write: writeFileExclusive: %w; creating the file directly also failed: %w", link, create)
+			},
+			want: "Couldn't save the secret: can't link ",
+		},
+		{
+			name:  "an unreadable vlt.json is named",
+			doing: "Couldn't open the vault",
+			err: func(t *testing.T) error {
+				_, dir := openTestVault(t)
+				if err := os.WriteFile(filepath.Join(dir, "vlt.json"), []byte("{not json"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				_, err := store.Open(ctx, dir, testPassphrase, quietLog(), testKDF)
+				return err
+			},
+			want: "Couldn't open the vault: invalid character 'n' looking for beginning of object key string (in vlt.json)",
+		},
+		{
+			name:  "a file held by another secret names it",
+			doing: "Couldn't save the secret",
+			err: func(t *testing.T) error {
+				s, _ := openTestVault(t)
+				if err := s.Create(ctx, &store.Secret{Version: 1, Type: store.TypePassword, Name: "GitHub Key", Group: "work", Value: "x"}); err != nil {
+					t.Fatal(err)
+				}
+				return s.Update(ctx, &store.Secret{Version: 1, Type: store.TypePassword, Name: "github-key", Group: "work", Value: "y"})
+			},
+			want: `Couldn't save the secret: a secret with that name already exists (its file is held by "GitHub Key")`,
+		},
+		{
 			name:  "joined errors are each described",
 			doing: "",
 			err: func(*testing.T) error {
@@ -241,6 +297,8 @@ func TestErrorMessage_LeadsWithDoingOrStandsAlone(t *testing.T) {
 			&rewordedError{causes: []error{fmt.Errorf("store.A: %w", errors.New("base")), errors.New("unsaid")}, text: "store.A: base; reworded"},
 			"Base; reworded",
 		},
+		{"a prefix repeating its cause's text is dropped", "", fmt.Errorf("a: %w", errors.New("a")), "A"},
+		{"a cause wrapped twice in a file error keeps its words", "", &fs.PathError{Op: "write", Path: "x", Err: fmt.Errorf("store.A: %w (detail)", os.ErrNotExist)}, "Can't write x: file does not exist (detail)"},
 		{"a missing file is said plainly", "", missingFileError(t), "Can't open " + filepath.Join(os.TempDir(), "vlt-no-such-file") + ": it does not exist"},
 	}
 	for _, tt := range tests {

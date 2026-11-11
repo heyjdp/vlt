@@ -140,6 +140,42 @@ func TestOperations_Start_DropsAResultArrivingAfterTheSessionEnded(t *testing.T)
 	}
 }
 
+// A result the session ends for after the work last checked its context,
+// but before delivery, is handed to release rather than lost unwiped.
+func TestOperations_StartOwned_ReleasesAResultDroppedAtTheLock(t *testing.T) {
+	h := newOpsHarness(t)
+	plaintext := []byte("decoded secret")
+	var released [][]byte
+	work := func(ctx context.Context) ([]byte, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		h.end() // the vault locks between the work and its delivery
+		return plaintext, nil
+	}
+
+	startOwned(h.ops, &operation{doing: "Couldn't"}, work,
+		func([]byte) { t.Fatal("a result after the lock must be dropped") },
+		func(b []byte) { released = append(released, b) })
+	h.q.flush()
+
+	if len(released) != 1 || &released[0][0] != &plaintext[0] {
+		t.Fatalf("released %d results; want the dropped one, once", len(released))
+	}
+}
+
+func TestOperations_StartOwned_DeliversWithoutReleasing(t *testing.T) {
+	h := newOpsHarness(t)
+	var got []byte
+	startOwned(h.ops, &operation{doing: "Couldn't"}, succeed([]byte("x")),
+		func(b []byte) { got = b },
+		func([]byte) { t.Fatal("a delivered result is done's to release") })
+	h.q.flush()
+	if string(got) != "x" {
+		t.Fatalf("done got %q", got)
+	}
+}
+
 func TestOperations_Start_ShowsProgressInADialogWhenTitled(t *testing.T) {
 	h := newOpsHarness(t)
 	start(h.ops, &operation{title: "Checking", progress: "Asking…"}, succeed(none{}), func(none) {})

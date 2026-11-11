@@ -84,18 +84,24 @@ func withoutPrefixes(err error) string {
 	case *fs.PathError:
 		return fmt.Sprintf("can't %s %s: %s", fileOp(e.Op), e.Path, fileProblem(e.Err))
 	case *os.LinkError:
-		return fmt.Sprintf("can't move %s to %s: %s", e.Old, e.New, fileProblem(e.Err))
+		return fmt.Sprintf("can't %s %s to %s: %s", fileOp(e.Op), e.Old, e.New, fileProblem(e.Err))
 	}
 	text := err.Error()
 	causes := unwrap(err)
 	if len(causes) == 0 {
 		return text
 	}
+	// Several causes are found in order. A single cause is found from the
+	// end, since a prefix may repeat its text ("a: a").
+	find := strings.Index
+	if len(causes) == 1 {
+		find = strings.LastIndex
+	}
 	var b strings.Builder
 	rest, placed := text, false
 	for _, c := range causes {
 		raw := c.Error()
-		at := strings.Index(rest, raw)
+		at := find(rest, raw)
 		if at < 0 {
 			continue
 		}
@@ -133,6 +139,7 @@ var fileOps = map[string]string{
 	"remove":     "delete",
 	"unlinkat":   "delete",
 	"rename":     "move",
+	"link":       "link",
 	"stat":       "look at",
 	"lstat":      "look at",
 	"readdir":    "list",
@@ -148,8 +155,13 @@ func fileOp(op string) string {
 	return op
 }
 
-// fileProblem is why a file operation failed, in words.
+// fileProblem is why a file operation failed, in words. A cause that
+// wraps another carries words of its own (such as why a folder couldn't be
+// made private), so it is described rather than replaced.
 func fileProblem(err error) string {
+	if len(unwrap(err)) > 0 {
+		return withoutPrefixes(err)
+	}
 	switch {
 	case errors.Is(err, fs.ErrPermission):
 		return "permission denied"

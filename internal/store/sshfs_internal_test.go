@@ -555,3 +555,26 @@ func TestPlainEntryName(t *testing.T) {
 		}
 	}
 }
+
+// A failed operation on the server says which file and what was done to it,
+// as a local one does: pkg/sftp returns bare errors (os.ErrNotExist,
+// os.ErrPermission), which would otherwise reach people without the path.
+func TestRemoteFS_FailuresAreFileErrorsNamingTheFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pkg/sftp's server needs slash paths")
+	}
+	r, _ := newTestRemote(t)
+
+	err := r.WriteFileAtomic("missing-group/x.age", []byte("x"))
+
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) || pathErr.Op != "write" || pathErr.Path != "missing-group/x.age" {
+		t.Fatalf("WriteFileAtomic = %#v, want a *fs.PathError for write missing-group/x.age", err)
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("WriteFileAtomic = %v, want it to match fs.ErrNotExist", err)
+	}
+	if want := "write missing-group/x.age: "; !strings.HasPrefix(err.Error(), want) {
+		t.Fatalf("error text %q must still start %q for logs", err, want)
+	}
+}

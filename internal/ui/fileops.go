@@ -223,26 +223,21 @@ func (fo *FileOps) ExportFile(secret *store.Secret) {
 	// rewritten by a save on the main goroutine meanwhile.
 	encoded, name, filename := secret.Value, secret.Name, secret.OriginalFilename
 
-	start(fo.ops, &operation{doing: fmt.Sprintf("Couldn't export %q", name)},
-		func(ctx context.Context) ([]byte, error) {
-			data, err := base64.StdEncoding.DecodeString(encoded)
-			if err == nil && ctx.Err() != nil {
-				// The vault locked meanwhile, so the result will be dropped
-				// before exportDecoded can own it.
-				crypto.Wipe(data)
-				return nil, ctx.Err()
-			}
-			return data, err
-		},
-		func(data []byte) { fo.exportDecoded(name, filename, data) })
+	// If the vault locks before the decoded file is delivered, it is wiped
+	// there (crypto.Wipe as release); once delivered, exportDecoded owns it.
+	startOwned(fo.ops, &operation{doing: fmt.Sprintf("Couldn't export %q", name)},
+		func(context.Context) ([]byte, error) { return base64.StdEncoding.DecodeString(encoded) },
+		func(data []byte) { fo.exportDecoded(name, filename, data) },
+		crypto.Wipe)
 }
 
 // exportDecoded asks where to save data, the decoded file of the secret
-// name, and writes it there in the background, suggesting filename. It
-// owns data and wipes it, here and nowhere else, whichever way the export
-// ends: cancelled, the save dialog failing, the vault locking while the
-// dialog is open (nothing is written after a lock), or the write finishing
-// or failing.
+// name, and writes it there in the background, suggesting filename. It is
+// given data once decoding is delivered (a lock before that wipes it
+// instead, see ExportFile), owns it from then on and wipes it whichever way
+// the export ends: cancelled, the save dialog failing, the vault locking
+// while the dialog is open (nothing is written after a lock), or the write
+// finishing or failing.
 func (fo *FileOps) exportDecoded(name, filename string, data []byte) {
 	doing := fmt.Sprintf("Couldn't export %q", name)
 	fo.ops.pickSave(filename, doing, func(w fyne.URIWriteCloser) {
