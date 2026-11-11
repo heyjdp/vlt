@@ -126,16 +126,21 @@ func WrapIdentity(passphrase string, id *Identity, workFactor int) ([]byte, erro
 	}
 	r.SetWorkFactor(workFactor)
 
-	id.mu.Lock()
-	defer id.mu.Unlock()
-	if id.parsed == nil {
-		return nil, fmt.Errorf("crypto.WrapIdentity: %w", ErrIdentityZeroed)
-	}
-	out, err := encryptTo(r, id.buf.Bytes())
+	out, err := wrapTo(r, id)
 	if err != nil {
 		return nil, fmt.Errorf("crypto.WrapIdentity: %w", err)
 	}
 	return out, nil
+}
+
+// wrapTo encrypts the vault key to r.
+func wrapTo(r age.Recipient, id *Identity) ([]byte, error) {
+	id.mu.Lock()
+	defer id.mu.Unlock()
+	if id.parsed == nil {
+		return nil, ErrIdentityZeroed
+	}
+	return encryptTo(r, id.buf.Bytes())
 }
 
 // UnwrapIdentity decrypts a wrapped vault key with passphrase.
