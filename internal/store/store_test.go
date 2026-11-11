@@ -366,6 +366,73 @@ func TestStore_Update_RefusesSlugCollision(t *testing.T) {
 	}
 }
 
+// A refused Create says which secret holds the file, so a caller can offer
+// to replace it without reading the vault again.
+func TestStore_Create_ExistsErrorCarriesTheSecretThere(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.Create(ctx, testutil.PasswordSecret("GitHub Key", "original", "work")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.Create(ctx, testutil.FileSecret("github-key", "github-key", "eA==", "Work"))
+	var exists *store.ExistsError
+	if !errors.As(err, &exists) || !errors.Is(err, store.ErrSecretExists) {
+		t.Fatalf("Create = %v; want an *ExistsError that is ErrSecretExists", err)
+	}
+	if exists.Existing == nil || exists.Existing.Name != "GitHub Key" || exists.Existing.Type != store.TypePassword || exists.Existing.Value != "original" {
+		t.Fatalf("Existing = %+v; want the stored GitHub Key", exists.Existing)
+	}
+}
+
+// A file that is taken but can't be read still refuses Create; the error
+// carries no secret, and says why the file couldn't be read.
+func TestStore_Create_ExistsErrorWithoutAReadableSecret(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	ctx := context.Background()
+	taken := filepath.Join(s.Dir(), "work", "key.age")
+	if err := os.MkdirAll(filepath.Dir(taken), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(taken, []byte("damaged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.Create(ctx, testutil.PasswordSecret("key", "new", "work"))
+	var exists *store.ExistsError
+	if !errors.As(err, &exists) || !errors.Is(err, store.ErrSecretExists) {
+		t.Fatalf("Create = %v; want an *ExistsError that is ErrSecretExists", err)
+	}
+	if exists.Existing != nil || exists.ReadErr == nil {
+		t.Fatalf("Existing = %+v, ReadErr = %v; want no secret and the read error", exists.Existing, exists.ReadErr)
+	}
+	if data, _ := os.ReadFile(taken); string(data) != "damaged" {
+		t.Fatal("the file that was there was overwritten")
+	}
+}
+
+// An Update refused because another name holds the file says which secret
+// that is.
+func TestStore_Update_ExistsErrorCarriesTheSecretThere(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.Create(ctx, testutil.PasswordSecret("GitHub Key", "original", "work")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.Update(ctx, testutil.PasswordSecret("github-key", "intruder", "work"))
+	var exists *store.ExistsError
+	if !errors.As(err, &exists) || exists.Existing == nil || exists.Existing.Name != "GitHub Key" {
+		t.Fatalf("Update = %v; want an *ExistsError carrying GitHub Key", err)
+	}
+}
+
 func TestStore_Update_ReturnsErrNotFoundForMissing(t *testing.T) {
 	t.Parallel()
 

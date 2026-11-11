@@ -184,13 +184,15 @@ func (fo *FileOps) askGroup(f importedFile) {
 }
 
 // importSecret creates an imported file secret in the background, asking
-// before replacing an existing one.
+// before replacing an existing one. The store's refusal carries the secret
+// already there, so asking needs no second read of the vault.
 func (fo *FileOps) importSecret(secret *store.Secret, f importedFile) {
 	background(fo.run,
 		func(ctx context.Context) (none, error) { return none{}, fo.vaultStore.Create(ctx, secret) },
 		func(_ none, err error) {
-			if errors.Is(err, store.ErrSecretExists) {
-				fo.confirmReplace(secret, f)
+			var exists *store.ExistsError
+			if errors.As(err, &exists) {
+				fo.askReplace(secret, exists, f)
 				return
 			}
 			if err != nil {
@@ -201,26 +203,16 @@ func (fo *FileOps) importSecret(secret *store.Secret, f importedFile) {
 		})
 }
 
-// confirmReplace asks before overwriting an existing secret with an import.
-// If the file is held by a differently named secret (same slug), replacing
-// is impossible and the user is told to rename instead.
-func (fo *FileOps) confirmReplace(secret *store.Secret, f importedFile) {
-	background(fo.run,
-		func(ctx context.Context) (*store.Secret, error) {
-			return fo.vaultStore.Get(ctx, secret.Name, secret.Group)
-		},
-		func(existing *store.Secret, err error) {
-			if err != nil {
-				dialog.ShowError(fmt.Errorf("import failed: %w", err), fo.window)
-				return
-			}
-			fo.askReplace(secret, existing, f)
-		})
-}
-
-// askReplace shows the replace confirmation for an import whose name is
-// already taken by existing.
-func (fo *FileOps) askReplace(secret, existing *store.Secret, f importedFile) {
+// askReplace asks before overwriting the secret that holds an import's
+// file. If that file can't be read, or is held by a differently named
+// secret (same SecretID), replacing is refused and the user is told why.
+func (fo *FileOps) askReplace(secret *store.Secret, exists *store.ExistsError, f importedFile) {
+	existing := exists.Existing
+	if existing == nil {
+		dialog.ShowError(fmt.Errorf("cannot import %q: a file already stored under that name in group %q can't be read, so vlt leaves it alone; rename the file and import again (%w)",
+			secret.Name, secret.Group, exists.ReadErr), fo.window)
+		return
+	}
 	if existing.Name != secret.Name {
 		dialog.ShowError(fmt.Errorf("cannot import %q: its filename is already used by %q in group %q; rename the file and import again",
 			secret.Name, existing.Name, secret.Group), fo.window)

@@ -112,6 +112,51 @@ func TestFlow_ImportAsksForGroupThenConfirmsReplace(t *testing.T) {
 	app.Lock()
 }
 
+// An import whose file name is taken by a differently named secret (one
+// that differs only in case or punctuation) is refused, not replaced.
+func TestFlow_ImportOverADifferentlyNamedSecretIsRefused(t *testing.T) {
+	app, w := newFlowApp(t, testutil.PasswordSecret("GitHub Key", "pw", "keys"))
+	unlock(app)
+
+	app.detailView.fileOps.processImport(&fakeURIReader{Reader: strings.NewReader("k"), uri: storage.NewFileURI("/tmp/github-key")})
+	test.Type(dialogEntry(t, w), "keys")
+	test.Tap(dialogButton(t, w, "Import"))
+
+	if top := w.Canvas().Overlays().Top(); top == nil || !visibleText(top, "already used by \"GitHub Key\"") {
+		t.Fatal("the import should be refused, naming the secret that holds the file")
+	}
+	if got, err := app.session.Store().Get(context.Background(), "GitHub Key", "keys"); err != nil || got.Value != "pw" {
+		t.Fatalf("the existing secret must be kept: %+v, %v", got, err)
+	}
+	app.Lock()
+}
+
+// An import whose file is taken by a file that can't be read says so, and
+// leaves that file alone.
+func TestFlow_ImportOverAnUnreadableFileIsRefused(t *testing.T) {
+	app, w := newFlowApp(t)
+	unlock(app)
+	taken := filepath.Join(app.session.Store().Dir(), "keys", "id-rsa.age")
+	if err := os.MkdirAll(filepath.Dir(taken), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(taken, []byte("damaged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	app.detailView.fileOps.processImport(&fakeURIReader{Reader: strings.NewReader("k"), uri: storage.NewFileURI("/tmp/id_rsa")})
+	test.Type(dialogEntry(t, w), "keys")
+	test.Tap(dialogButton(t, w, "Import"))
+
+	if top := w.Canvas().Overlays().Top(); top == nil || !visibleText(top, "can't be read") {
+		t.Fatal("the import should be refused, saying the file there can't be read")
+	}
+	if data, _ := os.ReadFile(taken); string(data) != "damaged" {
+		t.Fatal("the unreadable file must be left alone")
+	}
+	app.Lock()
+}
+
 func TestFlow_ImportUsesTheExistingGroupSpelling(t *testing.T) {
 	app, w := newFlowApp(t, testutil.PasswordSecret("gh", "x", "SSH Keys"))
 	unlock(app)

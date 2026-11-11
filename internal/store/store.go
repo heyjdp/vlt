@@ -20,8 +20,39 @@ import (
 var ErrSecretNotFound = errors.New("secret not found")
 
 // ErrSecretExists is returned by Create when the secret's file is already
-// taken, and by Update when it is held by a differently named secret.
+// taken, and by Update when it is held by a differently named secret. Both
+// return it as an *ExistsError, which says what is there.
 var ErrSecretExists = errors.New("a secret with that name already exists")
+
+// ExistsError is the error Create and Update wrap when a secret's file is
+// taken (see ErrSecretExists, which it matches with errors.Is). It carries
+// what the file holds, so a caller can offer to replace that secret without
+// reading the vault again, and without the file changing in between unseen
+// (Update still refuses a file held by another name).
+type ExistsError struct {
+	// Existing is the secret stored in the file, or nil if the file
+	// couldn't be read, decrypted or placed (see ReadErr).
+	Existing *Secret
+	// ReadErr says why the file couldn't be read when Existing is nil.
+	ReadErr error
+}
+
+// Error returns ErrSecretExists's message, and why the file couldn't be
+// read if it couldn't.
+func (e *ExistsError) Error() string {
+	if e.ReadErr != nil {
+		return ErrSecretExists.Error() + "; its file can't be read: " + e.ReadErr.Error()
+	}
+	return ErrSecretExists.Error()
+}
+
+// Unwrap returns ErrSecretExists and, if the file couldn't be read, why.
+func (e *ExistsError) Unwrap() []error {
+	if e.ReadErr != nil {
+		return []error{ErrSecretExists, e.ReadErr}
+	}
+	return []error{ErrSecretExists}
+}
 
 // Store manages secrets in an age-encrypted vault, in a local directory or
 // on an SSH server. Secrets are stored at <group>/<slug>.age, encrypted to
@@ -69,9 +100,9 @@ func (s *Store) Location() Location {
 }
 
 // Create encrypts and writes a new secret to vault/<group>/<slug>.age. It
-// returns ErrSecretExists if any secret already occupies that path, including
-// a different name with the same slug (e.g. "GitHub Key" and "github-key"),
-// so it never overwrites. The name must pass NewSecretName. The secret's Name
+// returns an *ExistsError (ErrSecretExists) holding the secret already there
+// if any secret occupies that path, including a different name with the same
+// SecretID (e.g. "GitHub Key" and "github-key"), so it never overwrites. The name must pass NewSecretName. The secret's Name
 // is trimmed in place and its Group set to GroupLabel(Group).
 func (s *Store) Create(ctx context.Context, secret *Secret) error {
 	if err := ctx.Err(); err != nil {
@@ -94,7 +125,11 @@ func (s *Store) Create(ctx context.Context, secret *Secret) error {
 
 	err = s.fs.WriteFileExclusive(name, data)
 	if errors.Is(err, fs.ErrExist) {
-		return fmt.Errorf("store.Create %q in %q: %w", secret.Name, secret.Group, ErrSecretExists)
+		existing, readErr := s.readSecret(name)
+		if readErr != nil {
+			s.log.Warn("secret file is taken and can't be read", "path", name, "err", readErr)
+		}
+		return fmt.Errorf("store.Create %q in %q: %w", secret.Name, secret.Group, &ExistsError{Existing: existing, ReadErr: readErr})
 	}
 	if err != nil {
 		return fmt.Errorf("store.Create: write: %w", err)
@@ -107,8 +142,8 @@ func (s *Store) Create(ctx context.Context, secret *Secret) error {
 // Update re-encrypts an existing secret in place. The file at the secret's
 // path must exist and hold a secret with the same name (compared after
 // trimming, so names stored untrimmed by older versions still match);
-// otherwise it returns ErrSecretNotFound or ErrSecretExists (a slug collision
-// with a differently named secret). CreatedAt is preserved from the stored
+// otherwise it returns ErrSecretNotFound or an *ExistsError holding the
+// differently named secret that shares its SecretID. CreatedAt is preserved from the stored
 // copy, and Group is set to GroupLabel(Group). Names that predate
 // NewSecretName's rules are accepted here so legacy secrets stay editable.
 func (s *Store) Update(ctx context.Context, secret *Secret) error {
@@ -124,7 +159,7 @@ func (s *Store) Update(ctx context.Context, secret *Secret) error {
 		return fmt.Errorf("store.Update: %w", err)
 	}
 	if strings.TrimSpace(existing.Name) != name {
-		return fmt.Errorf("store.Update %q: file is held by %q: %w", name, existing.Name, ErrSecretExists)
+		return fmt.Errorf("store.Update %q: file is held by %q: %w", name, existing.Name, &ExistsError{Existing: existing})
 	}
 	secret.Name = name
 	secret.CreatedAt = existing.CreatedAt

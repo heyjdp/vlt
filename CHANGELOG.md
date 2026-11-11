@@ -22,6 +22,7 @@ All notable changes to vlt are documented here. The format follows
 - Settings no longer offers to switch to, or move to, the current vault when its location is written another way (an unescaped space in an `ssh://` location saved by an older version, say).
 - Moving a vault that has another vault in a folder inside it (a backup copy, say) copied that vault's key file into the new location without the rest of it, as if it were a secret. The vault inside is now left where it is.
 - A vault kept in a folder inside your vault is no longer counted under the list as a secret file that couldn't be read.
+- Importing a file whose name is taken by a secret file that can't be read now says so and suggests renaming the file; it showed a decryption error.
 
 ## [0.2.0] - 2026-11-02
 
