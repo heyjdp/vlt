@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/heyjdp/vlt/internal/crypto"
 	"github.com/heyjdp/vlt/internal/store"
 	"github.com/heyjdp/vlt/internal/testutil"
 )
@@ -20,13 +21,20 @@ func newTestStore(t *testing.T) *store.Store {
 // newTestStoreIn returns an initialised store over dir.
 func newTestStoreIn(t *testing.T, dir string) *store.Store {
 	t.Helper()
+	s, _ := newTestStoreAndKey(t, dir)
+	return s
+}
+
+// newTestStoreAndKey is newTestStoreIn, also returning the vault key.
+func newTestStoreAndKey(t *testing.T, dir string) (*store.Store, *crypto.Identity) {
+	t.Helper()
 	id := testutil.NewTestIdentity(t)
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	s := store.New(id, dir, log)
 	if err := s.Init(); err != nil {
 		t.Fatalf("store.Init: %v", err)
 	}
-	return s
+	return s, id
 }
 
 func TestStore_Init_CreatesVaultDir(t *testing.T) {
