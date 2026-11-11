@@ -205,7 +205,7 @@ func (a *App) vaultErrorContent(err error) fyne.CanvasObject {
 	retry.Importance = widget.HighImportance
 	icon := container.NewCenter(fixedHeight(fixedWidth(widget.NewIcon(theme.ErrorIcon()), 40), 40))
 	objects := []fyne.CanvasObject{icon, title, msg, retry}
-	if def := a.config.DefaultVaultDir; def != "" && def != a.config.VaultDir && !a.config.FromEnv.VaultDir {
+	if def := a.config.DefaultVaultDir; def != "" && !sameLocation(def, a.config.VaultDir) && !a.config.FromEnv.VaultDir {
 		local := widget.NewButtonWithIcon("Use the Vault on This Computer", theme.ComputerIcon(), func() {
 			a.log.Info("switching to the default vault location", "dir", def)
 			a.config.VaultDir = def

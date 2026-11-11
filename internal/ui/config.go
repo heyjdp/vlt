@@ -10,6 +10,8 @@ import (
 	"strconv"
 
 	"fyne.io/fyne/v2"
+
+	"github.com/heyjdp/vlt/internal/store"
 )
 
 // Config holds the user-adjustable settings.
@@ -85,6 +87,14 @@ func LoadConfig(prefs fyne.Preferences, getenv func(string) string, defaultVault
 	if v, ok := envInt(getenv, envClipboardTTL, log); ok {
 		cfg.ClipboardTTLs = v
 		cfg.FromEnv.ClipboardTTL = true
+	}
+
+	// A location is used in the form vlt writes, so it is shown and saved
+	// the same way however it was given (an ssh:// URL with a space left
+	// unescaped by an older version, say). One that does not parse is kept
+	// as given: opening it shows the error, with a way to the default vault.
+	if loc, err := store.ParseLocation(cfg.VaultDir); err == nil {
+		cfg.VaultDir = loc.String()
 	}
 
 	cfg.LockTimeoutMs = clampLockTimeout(cfg.LockTimeoutMs, log)

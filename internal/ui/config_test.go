@@ -67,6 +67,33 @@ func TestLoadConfig_EnvironmentOverridesSavedSettings(t *testing.T) {
 	}
 }
 
+// A location is used in the form vlt writes, however it was given; one that
+// does not parse is kept as given, so opening it shows why.
+func TestLoadConfig_ReadsTheLocationInTheFormVltWrites(t *testing.T) {
+	tests := []struct {
+		name, saved, env, want string
+	}{
+		{"saved by an older version", "ssh://me@nas:2222/srv/my vault", "", "ssh://me@nas:2222/srv/my%20vault"},
+		{"from the environment", "", "ssh://me@nas/srv/vault", "me@nas:/srv/vault"},
+		{"a local path", "/Users/me/vault", "", "/Users/me/vault"},
+		{"unparsable", "nas:", "", "nas:"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := test.NewTempApp(t)
+			if tt.saved != "" {
+				SaveVaultDir(a.Preferences(), tt.saved)
+			}
+
+			got := LoadConfig(a.Preferences(), env(map[string]string{envVaultDir: tt.env}), "/default", quietLog())
+
+			if got.VaultDir != tt.want {
+				t.Fatalf("VaultDir = %q, want %q", got.VaultDir, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadConfig_InvalidEnvironmentFallsBackToSavedValue(t *testing.T) {
 	a := test.NewTempApp(t)
 	SaveLockTimeout(a.Preferences(), 600_000)

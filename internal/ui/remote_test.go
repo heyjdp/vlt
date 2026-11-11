@@ -167,6 +167,25 @@ func TestApp_UnreachableServerOffersRetryAndTheLocalVault(t *testing.T) {
 	}
 }
 
+// The offer is for another vault: a current location that is the default,
+// written another way, is not offered again.
+func TestApp_UnreadableDefaultVaultIsNotOfferedAgain(t *testing.T) {
+	a := test.NewTempApp(t)
+	w := test.NewTempWindow(t, nil)
+	file := filepath.Join(t.TempDir(), "not-a-folder")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newApp(a, w, Config{VaultDir: "  " + file, DefaultVaultDir: file}, quietLog(), inlineRunner(), noTimers, testKDF)
+
+	if findButton(w.Content(), "Retry") == nil {
+		t.Fatal("expected the error screen")
+	}
+	if findButton(w.Content(), "Use the Vault on This Computer") != nil {
+		t.Fatal("the current location is the default; it must not be offered as another vault")
+	}
+}
+
 func TestApp_UnreachableServerFromTheEnvironmentOffersOnlyRetry(t *testing.T) {
 	fakeSSH(t)
 	a := test.NewTempApp(t)
