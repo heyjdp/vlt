@@ -317,3 +317,98 @@ func TestLock_AReleaseStillRunningLeavesTheNextSessionsLock(t *testing.T) {
 		})
 	}
 }
+
+// releaseFaults makes a release's steps fail after the lock was renamed
+// aside: reading the aside file, or putting another copy's lock back.
+type releaseFaults struct {
+	vaultFS
+	readAside error
+	putBack   error
+}
+
+func (f releaseFaults) ReadFile(name string) ([]byte, error) {
+	if f.readAside != nil && strings.HasPrefix(name, tmpPrefix+"lock-") {
+		return nil, f.readAside
+	}
+	return f.vaultFS.ReadFile(name)
+}
+
+func (f releaseFaults) WriteFileExclusive(name string, data []byte) error {
+	if f.putBack != nil && name == lockFile {
+		return f.putBack
+	}
+	return f.vaultFS.WriteFileExclusive(name, data)
+}
+
+// A late release (Close stuck on a slow folder) can find a newer lock: the
+// next session's, or another computer's after "Open Anyway". If the release
+// cannot tell whose lock it moved aside, or cannot put it back, that lock is
+// restored, never deleted.
+func TestLock_AReleaseThatFailsMidwayKeepsTheNewerLock(t *testing.T) {
+	t.Parallel()
+	ioErr := errors.New("input/output error")
+	for name, faults := range map[string]releaseFaults{
+		"the lock moved aside cannot be read": {readAside: ioErr},
+		"the newer lock cannot be put back":   {putBack: ioErr},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := openedVault(t)
+			if err := s.AcquireLock(context.Background(), false); err != nil {
+				t.Fatal(err)
+			}
+			plantLock(t, s, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
+			disk := s.fs
+			faults.vaultFS = disk
+			s.fs = faults
+
+			s.Close()
+			<-s.Closed()
+
+			data, err := disk.ReadFile(lockFile)
+			var held LockInfo
+			if err == nil {
+				err = json.Unmarshal(data, &held)
+			}
+			if err != nil || held.Token != "theirs" {
+				t.Fatalf("the newer lock was lost: %+v, %v", held, err)
+			}
+		})
+	}
+}
+
+// If a third copy locks the vault while a late release holds a newer lock
+// aside, the newer lock cannot go back; it is left aside, not deleted.
+func TestLock_AReleaseRacingAThirdCopyLeavesTheNewerLockAside(t *testing.T) {
+	t.Parallel()
+	s := openedVault(t)
+	if err := s.AcquireLock(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	aside := tmpPrefix + "lock-" + s.lockToken
+	plantLock(t, s, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
+	disk := s.fs
+	third, err := json.Marshal(LockInfo{Host: "desktop.local", PID: 9, Token: "third"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.fs = renameHook{vaultFS: disk, after: func() {
+		if err := disk.WriteFileExclusive(lockFile, third); err != nil {
+			t.Error(err)
+		}
+	}}
+
+	s.Close()
+	<-s.Closed()
+
+	for file, want := range map[string]string{lockFile: "third", aside: "theirs"} {
+		data, err := disk.ReadFile(file)
+		var held LockInfo
+		if err == nil {
+			err = json.Unmarshal(data, &held)
+		}
+		if err != nil || held.Token != want {
+			t.Errorf("%s = %+v, %v; want the lock %q", file, held, err, want)
+		}
+	}
+}

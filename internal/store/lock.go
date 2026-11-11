@@ -165,8 +165,12 @@ var errBadLock = errors.New("parse " + lockFile)
 // releaseLock removes vlt.lock if this Store still holds it. A lock taken
 // over by another copy of vlt is left alone. To make "check, then remove"
 // safe against another copy writing its lock in between, the lock is first
-// renamed aside atomically, then checked: if it turns out not to be ours, it
-// is put back, unless a newer lock has appeared meanwhile.
+// renamed aside atomically, then checked. The file moved aside is deleted
+// only once it is known to be ours: a release can run late (Close is slow on
+// a network folder), and by then the lock may be a newer one, this process's
+// next session's or another computer's. A lock that cannot be read is
+// renamed back; another copy's is put back unless a newer lock has appeared
+// meanwhile, in which case it is left aside rather than deleted.
 func (s *Store) releaseLock() {
 	s.lockMu.Lock()
 	token := s.lockToken
@@ -182,23 +186,42 @@ func (s *Store) releaseLock() {
 		}
 		return
 	}
-	defer func() {
-		if err := s.fs.Remove(aside); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			s.log.Warn("cannot remove the released vault lock", "err", err)
-		}
-	}()
 	data, err := s.fs.ReadFile(aside)
 	if err != nil {
-		s.log.Warn("cannot read the vault lock to release it", "err", err)
+		s.log.Warn("cannot read the vault lock to release it; putting it back", "err", err)
+		s.restoreLock(aside)
 		return
 	}
 	var held LockInfo
 	if json.Unmarshal(data, &held) == nil && held.Token == token {
+		s.removeAside(aside)
 		return
 	}
 	s.log.Info("vault lock was taken over; leaving it", "host", held.Host, "pid", held.PID)
-	if err := s.fs.WriteFileExclusive(lockFile, data); err != nil && !errors.Is(err, fs.ErrExist) {
+	switch err := s.fs.WriteFileExclusive(lockFile, data); {
+	case err == nil:
+		s.removeAside(aside)
+	case errors.Is(err, fs.ErrExist):
+		s.log.Warn("another copy locked the vault while its lock was set aside; leaving the earlier lock aside",
+			"host", held.Host, "pid", held.PID, "file", aside)
+	default:
 		s.log.Warn("cannot put back the other copy's vault lock", "err", err)
+		s.restoreLock(aside)
+	}
+}
+
+// restoreLock renames a lock set aside by releaseLock back into place, or
+// leaves it aside if that fails.
+func (s *Store) restoreLock(aside string) {
+	if err := s.fs.Rename(aside, lockFile); err != nil {
+		s.log.Warn("cannot put back the vault lock; leaving it aside", "file", aside, "err", err)
+	}
+}
+
+// removeAside deletes the lock file releaseLock set aside.
+func (s *Store) removeAside(aside string) {
+	if err := s.fs.Remove(aside); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		s.log.Warn("cannot remove the released vault lock", "err", err)
 	}
 }
 
