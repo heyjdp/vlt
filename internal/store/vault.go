@@ -40,7 +40,8 @@ var ErrWrongPassphrase = crypto.ErrWrongPassphrase
 var ErrVaultNotFound = errors.New("vault not found")
 
 // ErrVaultExists is returned by Create and CopyTo when the target location
-// already holds a vault or secret files.
+// already holds a vault or secret files, except, for CopyTo, an unfinished
+// copy of the same vault, which it finishes.
 var ErrVaultExists = errors.New("vault already exists")
 
 // ErrStaleCopy is returned by CopyTo when the target location holds an
@@ -59,8 +60,9 @@ func (staleCopyError) Error() string {
 // Is reports that a stale copy is also a vault that exists.
 func (staleCopyError) Is(target error) bool { return target == ErrVaultExists }
 
-// ErrKeyMissing is returned by Open when a format-2 vault has lost vlt.age.
-// Its secrets cannot be decrypted without restoring vlt.age from a backup.
+// ErrKeyMissing is returned by Open when a format-2 vault has lost vlt.age,
+// or is a move stopped before vlt.age was copied. Restore vlt.age from a
+// backup, or copy the vault there again.
 var ErrKeyMissing = errors.New("vault key file vlt.age is missing")
 
 // ErrUnsupportedFormat is returned by Open for a vault written by a newer

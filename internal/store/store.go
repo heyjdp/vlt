@@ -427,9 +427,11 @@ var errMisplaced = errors.New("file holds a secret from another place in the vau
 // vlt.age goes last so that a copy stopped part-way (cancelled, or a lost
 // connection) never looks like a whole vault: opening it reports
 // ErrKeyMissing rather than showing a vault with secrets missing. Copying
-// to dest again finishes such a copy (see resumable). Any other location
-// holding a vault or secret files is refused (ErrVaultExists), since
-// overwriting another vault's files would make its secrets unrecoverable.
+// to dest again finishes such a copy (see resumable), unless this vault
+// changed since (ErrStaleCopy). Any other location holding a vault or
+// secret files is refused (ErrVaultExists), since overwriting another
+// vault's files would make its secrets unrecoverable; so is one where
+// another vault's vlt.age appears during the copy.
 func (s *Store) CopyTo(ctx context.Context, dest string) error {
 	dst, loc, err := openLocation(ctx, dest, s.opts)
 	if err != nil {

@@ -72,7 +72,7 @@ type session[S sessionStore] struct {
 // pausedLockAfter is how long the auto-lock waits without input while the
 // session is paused (or the timeout, if longer). Moving a vault or changing
 // its passphrase relies on its own failure to end: a server that stops
-// answering is noticed within about a minute (ServerAlive). This bound is
+// answering is noticed within about 45 seconds (ServerAlive: 15 s, 3 times). This bound is
 // for what nothing else ends, such as a hung network folder, so that it
 // cannot keep the vault key in memory for ever.
 const pausedLockAfter = time.Hour
