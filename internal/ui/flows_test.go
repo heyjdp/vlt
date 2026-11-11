@@ -1,9 +1,12 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -209,6 +212,139 @@ func TestFlow_ExportWritesTheFile(t *testing.T) {
 	}
 	if string(got) != "hello" {
 		t.Fatalf("exported file holds %q", got)
+	}
+	app.Lock()
+}
+
+// exportTo runs the export of the app's first secret to path, as the save
+// dialog does once a path is picked: Fyne has already created (or
+// truncated) the file with os.Create.
+func exportTo(t *testing.T, app *App, path string) {
+	t.Helper()
+	fo := app.detailView.fileOps
+	fo.ExportFile(app.secretList.secrets[0])
+	writer, err := storage.Writer(storage.NewFileURI(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fo.saveExport(writer, nil, "notes", filepath.Base(path), fo.pending)
+}
+
+func TestFlow_ExportIsReadableOnlyByTheUser(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no Unix file modes")
+	}
+	app, _ := newFlowApp(t, testutil.FileSecret("key", "id_ed25519", "aGVsbG8=", "ssh")) // "hello"
+	unlock(app)
+	path := filepath.Join(t.TempDir(), "id_ed25519")
+
+	exportTo(t, app, path)
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Fatalf("exported file has mode %v; want 0600, like the vault's files", mode)
+	}
+	app.Lock()
+}
+
+// Fyne creates the file before vlt sees it, so another user could open it
+// then and keep reading through that handle; vlt writes a new file instead.
+func TestFlow_ExportReplacesAFileSomeoneElseHasOpen(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows writes in place; its folder's ACL decides who can read")
+	}
+	app, _ := newFlowApp(t, testutil.FileSecret("key", "id_ed25519", "aGVsbG8=", "ssh")) // "hello"
+	unlock(app)
+	path := filepath.Join(t.TempDir(), "id_ed25519")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snoop, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snoop.Close()
+
+	exportTo(t, app, path)
+
+	seen, err := io.ReadAll(snoop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(seen, []byte("hello")) {
+		t.Fatal("a handle opened before the export can read the exported secret")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "hello" {
+		t.Fatalf("exported file holds %q, %v", got, err)
+	}
+	app.Lock()
+}
+
+// A file planted at the path, say a symlink in a shared folder, is
+// replaced; the export never writes through it. (The save dialog itself has
+// already emptied the link's target: Fyne creates the file with os.Create.)
+func TestFlow_ExportReplacesASymlinkRatherThanFollowingIt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	app, _ := newFlowApp(t, testutil.FileSecret("key", "id_ed25519", "aGVsbG8=", "ssh")) // "hello"
+	unlock(app)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "elsewhere")
+	if err := os.WriteFile(target, []byte("theirs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "id_ed25519")
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+
+	exportTo(t, app, path)
+
+	if got, err := os.ReadFile(target); err != nil || bytes.Contains(got, []byte("hello")) {
+		t.Fatalf("the symlink's target holds %q, %v; the export must not write through it", got, err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		t.Fatalf("path is %v, %v; want a regular 0600 file", info.Mode(), err)
+	}
+	app.Lock()
+}
+
+// In a folder that takes no new files, the file the dialog created (and
+// emptied) is made private and written in place, rather than lost.
+func TestFlow_ExportIntoAReadOnlyFolderWritesInPlace(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs Unix folder permissions that apply to this user")
+	}
+	app, _ := newFlowApp(t, testutil.FileSecret("key", "id_ed25519", "aGVsbG8=", "ssh")) // "hello"
+	unlock(app)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "id_ed25519")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	exportTo(t, app, path)
+
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "hello" {
+		t.Fatalf("exported file holds %q, %v", got, err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("exported file is %v, %v; want 0600", info.Mode(), err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("folder holds %v, %v; want only the export", entries, err)
 	}
 	app.Lock()
 }

@@ -154,6 +154,7 @@ Added 2026-11-11, from an architecture review (deepening opportunities in the ch
 Added 2026-11-11, from an audit with the samber Go skills (security, safety, concurrency, tests, tooling). Goal: fix the five findings that matter most.
 - [[F34 Tampered vault files]]
 - [[F35 Location round trip]]
+- [[F36 Private exports]]
 
 ## Tracker
 
