@@ -129,7 +129,7 @@ func TestCheckForUpdates_AFailureIsReportedPlainly(t *testing.T) {
 
 	checkForUpdatesMenu(t, w)
 	text := dialogText(t, w)
-	if !strings.Contains(text, "Cannot check for updates: GitHub's request limit was reached") || strings.Contains(text, "update.Latest") {
+	if !strings.Contains(text, "Couldn't check for updates: GitHub's request limit was reached") || strings.Contains(text, "update.Latest") {
 		t.Fatalf("dialog says %q", text)
 	}
 }

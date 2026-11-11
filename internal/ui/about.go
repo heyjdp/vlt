@@ -167,6 +167,6 @@ func (a *App) openURL(link string) {
 	}
 	if err != nil {
 		a.log.Warn("cannot open link", "url", projectURL, "err", err)
-		dialog.ShowError(fmt.Errorf("cannot open the browser: %w; the project is at %s", err, projectURL), a.window)
+		showError(a.window, "Couldn't open the browser", fmt.Errorf("%w; the project is at %s", err, projectURL))
 	}
 }

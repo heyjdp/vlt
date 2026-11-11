@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"errors"
-	"fmt"
 	"runtime"
 	"strings"
 	"testing"
@@ -33,14 +31,6 @@ func TestCountText(t *testing.T) {
 		if got := countText(tt.shown, tt.total); got != tt.want {
 			t.Errorf("countText(%d, %d) = %q, want %q", tt.shown, tt.total, got, tt.want)
 		}
-	}
-}
-
-func TestUserMessage(t *testing.T) {
-	t.Parallel()
-	err := fmt.Errorf("store.Open: %w", fmt.Errorf("store.Exists %q: %w", "nas:/v", errors.New("ssh: Connection refused")))
-	if got := userMessage(err); got != "ssh: Connection refused" {
-		t.Fatalf("userMessage = %q", got)
 	}
 }
 

@@ -58,7 +58,7 @@ func TestCreateScreen_MismatchShowsErrorAndDoesNotCreate(t *testing.T) {
 	if called {
 		t.Fatal("onCreate called despite mismatched confirmation")
 	}
-	if !s.errorLabel.Visible() || s.errorLabel.Text != errPassphraseMismatch.Error() {
+	if !s.errorLabel.Visible() || s.errorLabel.Text != "Passphrases do not match" {
 		t.Fatalf("expected mismatch error, got visible=%v text=%q", s.errorLabel.Visible(), s.errorLabel.Text)
 	}
 	if s.confirm.Text != "" {
@@ -313,7 +313,7 @@ func TestApp_OpenUnreadableFolderShowsTheError(t *testing.T) {
 
 	app.openExistingVault(locked)
 
-	if text := app.createScreen.errorLabel.Text; !strings.Contains(text, "Cannot read") {
+	if text := app.createScreen.errorLabel.Text; !strings.Contains(text, "Couldn't look for a vault in "+locked+": can't look at "+filepath.Join(locked, "vlt.age")+": permission denied") {
 		t.Fatalf("expected a read error, got %q", text)
 	}
 	if app.createScreen.openBtn.Disabled() {

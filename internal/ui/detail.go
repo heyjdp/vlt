@@ -290,7 +290,7 @@ func (dv *DetailView) showForm(secret *store.Secret, isNew bool, fields []formFi
 		for _, f := range fields {
 			if f.check != nil {
 				if err := f.check(f.entry.Text); err != nil {
-					dialog.ShowError(err, dv.window)
+					showError(dv.window, "Couldn't save the secret", err)
 					return
 				}
 			}
@@ -440,16 +440,16 @@ func (dv *DetailView) saveSecret(secret *store.Secret, isNew bool, btn *widget.B
 			switch {
 			case errors.Is(err, store.ErrSecretExists) && isNew:
 				dv.statusBar.SetText("")
-				dialog.ShowError(fmt.Errorf("a secret named %q (or one whose name differs only in case or punctuation) already exists in group %q; choose a different name",
-					secret.Name, secret.Group), dv.window)
+				showError(dv.window, "Couldn't save the secret", fmt.Errorf("a secret named %q (or one whose name differs only in case or punctuation) already exists in group %q; choose a different name",
+					secret.Name, secret.Group))
 				return
 			case errors.Is(err, store.ErrSecretExists):
 				dv.statusBar.SetText("")
-				dialog.ShowError(fmt.Errorf("save failed: this secret's file is now held by a different secret: %w", err), dv.window)
+				showError(dv.window, "Couldn't save the secret: its file is now held by a different secret", err)
 				return
 			case err != nil:
 				dv.statusBar.SetText("")
-				dialog.ShowError(fmt.Errorf("save failed: %w", err), dv.window)
+				showError(dv.window, "Couldn't save the secret", err)
 				return
 			}
 
@@ -499,7 +499,7 @@ func (dv *DetailView) deleteSecret(secret *store.Secret) {
 		func(_ none, err error) {
 			dv.busy = false
 			if err != nil {
-				dialog.ShowError(fmt.Errorf("delete failed: %w", err), dv.window)
+				showError(dv.window, "Couldn't delete the secret", err)
 				return
 			}
 			dv.log.Info("secret deleted via UI", "name", deleted.Name)
@@ -520,7 +520,7 @@ func (dv *DetailView) deleteSecret(secret *store.Secret) {
 // exportFile exports a file secret to disk via the file operations handler.
 func (dv *DetailView) exportFile(secret *store.Secret) {
 	if dv.fileOps == nil {
-		dialog.ShowError(fmt.Errorf("file operations not available"), dv.window)
+		showError(dv.window, "Couldn't export the file", errors.New("file operations are not available"))
 		return
 	}
 	dv.fileOps.ExportFile(secret)

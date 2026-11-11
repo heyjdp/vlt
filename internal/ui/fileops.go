@@ -67,7 +67,7 @@ func (fo *FileOps) ImportFile() {
 	fd := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 		fo.activity()
 		if err != nil {
-			dialog.ShowError(err, fo.window)
+			showError(fo.window, "Couldn't choose a file", err)
 			return
 		}
 		if reader == nil {
@@ -109,15 +109,15 @@ func readImport(r io.Reader) ([]byte, error) {
 // It runs in the background: a 10 MiB read plus encoding must not block the
 // UI.
 func prepareImport(reader fyne.URIReadCloser) (importedFile, error) {
-	name := filepath.Base(reader.URI().Name())
+	name := importName(reader)
 	data, err := readImport(reader)
 	closeErr := reader.Close()
 	if err != nil {
-		return importedFile{}, fmt.Errorf("read %q: %w", name, err)
+		return importedFile{}, err
 	}
 	if closeErr != nil {
 		crypto.Wipe(data)
-		return importedFile{}, fmt.Errorf("close %q: %w", name, closeErr)
+		return importedFile{}, closeErr
 	}
 
 	sum := sha256.Sum256(data)
@@ -132,6 +132,12 @@ func prepareImport(reader fyne.URIReadCloser) (importedFile, error) {
 	return f, nil
 }
 
+// importName is the name of the file behind reader, which an imported file
+// secret is given.
+func importName(reader fyne.URIReadCloser) string {
+	return filepath.Base(reader.URI().Name())
+}
+
 // processImport reads the file in the background, then asks for a group and
 // saves it. A read error or an oversized file is reported and nothing is
 // saved.
@@ -140,7 +146,7 @@ func (fo *FileOps) processImport(reader fyne.URIReadCloser) {
 		func(context.Context) (importedFile, error) { return prepareImport(reader) },
 		func(f importedFile, err error) {
 			if err != nil {
-				dialog.ShowError(fmt.Errorf("import failed: %w", err), fo.window)
+				showError(fo.window, fmt.Sprintf("Couldn't import %q", importName(reader)), err)
 				return
 			}
 			fo.askGroup(f)
@@ -196,7 +202,7 @@ func (fo *FileOps) importSecret(secret *store.Secret, f importedFile) {
 				return
 			}
 			if err != nil {
-				dialog.ShowError(fmt.Errorf("failed to save file secret: %w", err), fo.window)
+				showError(fo.window, fmt.Sprintf("Couldn't import %q", secret.Name), err)
 				return
 			}
 			fo.importDone(secret, f)
@@ -209,13 +215,14 @@ func (fo *FileOps) importSecret(secret *store.Secret, f importedFile) {
 func (fo *FileOps) askReplace(secret *store.Secret, exists *store.ExistsError, f importedFile) {
 	existing := exists.Existing
 	if existing == nil {
-		dialog.ShowError(fmt.Errorf("cannot import %q: a file already stored under that name in group %q can't be read, so vlt leaves it alone; rename the file and import again (%w)",
-			secret.Name, secret.Group, exists.ReadErr), fo.window)
+		showError(fo.window,
+			fmt.Sprintf("Couldn't import %q: the file already stored under that name in group %q can't be read", secret.Name, secret.Group),
+			fmt.Errorf("%w. vlt leaves that file alone; rename the file and import again", exists.ReadErr))
 		return
 	}
 	if existing.Name != secret.Name {
-		dialog.ShowError(fmt.Errorf("cannot import %q: its filename is already used by %q in group %q; rename the file and import again",
-			secret.Name, existing.Name, secret.Group), fo.window)
+		showError(fo.window, fmt.Sprintf("Couldn't import %q", secret.Name),
+			fmt.Errorf("its filename is already used by %q in group %q; rename the file and import again", existing.Name, secret.Group))
 		return
 	}
 	dialog.ShowConfirm("Secret already exists",
@@ -229,7 +236,7 @@ func (fo *FileOps) askReplace(secret *store.Secret, exists *store.ExistsError, f
 				func(ctx context.Context) (none, error) { return none{}, fo.vaultStore.Update(ctx, secret) },
 				func(_ none, err error) {
 					if err != nil {
-						dialog.ShowError(fmt.Errorf("replace failed: %w", err), fo.window)
+						showError(fo.window, fmt.Sprintf("Couldn't replace %q", secret.Name), err)
 						return
 					}
 					fo.importDone(secret, f)
@@ -256,7 +263,7 @@ func (fo *FileOps) importDone(secret *store.Secret, f importedFile) {
 // save it and writes it in the background.
 func (fo *FileOps) ExportFile(secret *store.Secret) {
 	if secret.Type != store.TypeFile {
-		dialog.ShowError(fmt.Errorf("not a file secret"), fo.window)
+		showError(fo.window, fmt.Sprintf("Couldn't export %q", secret.Name), errors.New("it is not a file secret"))
 		return
 	}
 	// Copy what the background work needs: the list's *Secret may be
@@ -275,7 +282,7 @@ func (fo *FileOps) ExportFile(secret *store.Secret) {
 		},
 		func(data []byte, err error) {
 			if err != nil {
-				dialog.ShowError(fmt.Errorf("failed to decode file content: %w", err), fo.window)
+				showError(fo.window, fmt.Sprintf("Couldn't export %q", name), err)
 				return
 			}
 			fo.askExportPath(name, filename, data)
@@ -313,7 +320,7 @@ func (fo *FileOps) saveExport(writer fyne.URIWriteCloser, err error, name, filen
 	}
 	if err != nil {
 		crypto.Wipe(data)
-		dialog.ShowError(err, fo.window)
+		showError(fo.window, fmt.Sprintf("Couldn't export %q", name), err)
 		return
 	}
 	if writer == nil {
@@ -332,7 +339,7 @@ func (fo *FileOps) saveExport(writer fyne.URIWriteCloser, err error, name, filen
 		},
 		func(n int, err error) {
 			if err != nil {
-				dialog.ShowError(fmt.Errorf("export failed: %w", err), fo.window)
+				showError(fo.window, fmt.Sprintf("Couldn't export %q", name), err)
 				return
 			}
 			fo.log.Info("file exported", "name", name, "size", n)

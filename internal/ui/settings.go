@@ -143,7 +143,7 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 					if errors.Is(err, store.ErrWrongPassphrase) {
 						errorLabel.SetText("Current passphrase is incorrect")
 					} else {
-						errorLabel.SetText("Passphrase change failed: " + err.Error())
+						errorLabel.SetText(errorMessage("Couldn't change the passphrase", err))
 					}
 					errorLabel.Show()
 					return
@@ -182,7 +182,7 @@ func (ss *SettingsScreen) buildVaultLocation() *fyne.Container {
 		fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
 			ss.activity()
 			if err != nil {
-				dialog.ShowError(err, ss.window)
+				showError(ss.window, "Couldn't choose a folder", err)
 				return
 			}
 			if uri == nil {
@@ -278,7 +278,7 @@ func (ss *SettingsScreen) targetLocation(text string, errorLabel *widget.Label, 
 	}
 	loc, err := store.ParseLocation(text)
 	if err != nil {
-		errorLabel.SetText(err.Error())
+		errorLabel.SetText(errorMessage("", err))
 		errorLabel.Show()
 		return "", false
 	}
@@ -304,7 +304,7 @@ func (ss *SettingsScreen) moveVault(newDir string, errorLabel, currentLabel *wid
 		func(_ none, err error) {
 			if err != nil {
 				ss.statusBar.SetText("")
-				errorLabel.SetText("Move failed: " + err.Error())
+				errorLabel.SetText(errorMessage("Couldn't move the vault", err))
 				errorLabel.Show()
 				return
 			}

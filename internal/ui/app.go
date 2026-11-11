@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -194,7 +193,7 @@ func (a *App) vaultErrorContent(err error) fyne.CanvasObject {
 	}
 	title := subheading(heading)
 	title.Alignment = fyne.TextAlignCenter
-	msg := muted(fmt.Sprintf("%s\n\n%s", a.config.VaultDir, userMessage(err)))
+	msg := muted(fmt.Sprintf("%s\n\n%s", a.config.VaultDir, errorMessage("", err)))
 	retry := widget.NewButtonWithIcon("Retry", theme.ViewRefreshIcon(), a.showUnlockScreen)
 	retry.Importance = widget.HighImportance
 	icon := container.NewCenter(fixedHeight(fixedWidth(widget.NewIcon(theme.ErrorIcon()), 40), 40))
@@ -209,21 +208,6 @@ func (a *App) vaultErrorContent(err error) fyne.CanvasObject {
 		objects = append(objects, local)
 	}
 	return centeredCard(createFormWidth, objects...)
-}
-
-// userMessage is err's text without the "store.Func: " prefixes that say
-// where in the code it came from; the rest is written for people.
-func userMessage(err error) string {
-	return storePrefix.ReplaceAllString(err.Error(), "")
-}
-
-// storePrefix matches the store package's error prefixes ("store.Exists: ").
-var storePrefix = regexp.MustCompile(`store\.[A-Za-z]+( "[^"]*")?: `)
-
-// isServerError reports whether err came from reaching a vault's server.
-func isServerError(err error) bool {
-	return errors.Is(err, store.ErrUnreachable) || errors.Is(err, store.ErrConnectionLost) ||
-		errors.Is(err, store.ErrServerUnsupported)
 }
 
 // openResult is the outcome of a background unlock or create.
@@ -276,9 +260,9 @@ func (a *App) onUnlock(passphrase string) {
 			case errors.Is(err, store.ErrKeyMissing):
 				screen.ShowError("This vault's key file (vlt.age) is missing, so its secrets cannot be decrypted. Restore vlt.age from a backup.")
 			case isServerError(err):
-				screen.ShowError(userMessage(err))
+				screen.ShowError(errorMessage("", err))
 			case err != nil:
-				screen.ShowError("Failed to open vault: " + err.Error())
+				screen.ShowError(errorMessage("Couldn't open the vault", err))
 			default:
 				a.unlockedOrAsk(r, screen.SetBusy, func() bool { return a.unlockScreen == screen })
 			}
@@ -294,7 +278,7 @@ func (a *App) chooseServerVault() {
 	entry.Validator = func(s string) error {
 		loc, err := store.ParseLocation(s)
 		if err != nil {
-			return err
+			return errors.New(errorMessage("", err))
 		}
 		if !loc.IsRemote() {
 			return errors.New("enter host:/path or ssh://host/path")
@@ -330,7 +314,7 @@ func (a *App) chooseServerVault() {
 func (a *App) chooseExistingVault() {
 	fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
 		if err != nil {
-			dialog.ShowError(err, a.window)
+			showError(a.window, "Couldn't choose a folder", err)
 			return
 		}
 		if uri != nil {
@@ -360,7 +344,7 @@ func (a *App) openExistingVault(dir string) {
 			screen.SetBusy(false)
 			switch {
 			case err != nil:
-				screen.ShowError(fmt.Sprintf("Cannot read %s: %v", dir, err))
+				screen.ShowError(errorMessage("Couldn't look for a vault in "+dir, err))
 			case found.vault:
 				a.log.Info("opening existing vault", "dir", dir)
 				a.config.VaultDir = dir
@@ -428,7 +412,7 @@ func (a *App) onCreate(passphrase string) {
 			}
 			screen.SetBusy(false)
 			if err != nil {
-				screen.ShowError("Failed to create vault: " + err.Error())
+				screen.ShowError(errorMessage("Couldn't create the vault", err))
 				return
 			}
 			a.unlockedOrAsk(r, screen.SetBusy, func() bool { return a.createScreen == screen })

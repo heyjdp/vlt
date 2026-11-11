@@ -278,6 +278,7 @@ The test suite covers:
   - *Auto-lock*: activity resets the countdown, idleness locks, the warning and its buttons work, timeout changes apply, zero disables it
   - *Clipboard*: cleared after the TTL, each copy gets its full TTL, unrelated content is left alone, cleared on lock and quit
   - *Import and export*: read errors and oversized files save nothing; the SHA-256 is reported; failed writes and closes are reported; an exported file has mode 0600 and is a new file renamed into place, so a handle opened on the one the save dialog created never sees the secret, and a symlink planted at the path is replaced rather than written through; in a folder that takes no new files, the existing file is made 0600 and written in place, or not written at all if it can't be made private
+  - *Error wording*: real errors from the store (wrong passphrase, no vault, vault or secret already there, open elsewhere, cancelled or too slow, a bad location, a file that's missing or can't be created) and the update and server errors as those packages wrap them come out as words with the failed action in front, the path and the server's message kept, and no `store.`, `crypto.` or `update.` prefix
   - *Settings*: env → saved → default precedence, clamping, per-setting saves, env-controlled settings disabled
   - *Memory hygiene*: passphrase entries cleared on read; lock empties secrets, blanks forms and wipes a pending export
   - *End-to-end flows through the real dialogs*: delete confirmation (Yes and No), import with group selection and replace (Yes and No), an import refused over a differently named secret or a file that can't be read, passphrase change then re-unlock, switch vault, export to a file
@@ -388,6 +389,7 @@ internal/
 │   ├── unlock.go            Passphrase entry screen (existing vault)
 │   ├── create.go            Create-vault screen (passphrase + confirmation, open existing)
 │   ├── runner.go            Runs vault I/O off the UI thread, results via fyne.Do
+│   ├── errmsg.go            Turns any error into words for people (all error dialogs and labels)
 │   ├── activity.go          Tracks user input for the auto-lock countdown
 │   ├── clipboard.go         Copies secrets and clears them after the TTL or on lock
 │   ├── config.go            Settings: load (env → saved → default), clamp, save

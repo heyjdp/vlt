@@ -23,6 +23,7 @@ All notable changes to vlt are documented here. The format follows
 - Moving a vault that has another vault in a folder inside it (a backup copy, say) copied that vault's key file into the new location without the rest of it, as if it were a secret. The vault inside is now left where it is.
 - A vault kept in a folder inside your vault is no longer counted under the list as a secret file that couldn't be read.
 - Importing a file whose name is taken by a secret file that can't be read now says so and suggests renaming the file; it showed a decryption error.
+- Error messages no longer show internal prefixes such as "store.CopyTo" or "store.Update: write:". Each says what couldn't be done and why in plain words ("Couldn't move the vault: can't create the folder /Volumes/usb/vault: permission denied"), keeping the file's path and what the server said.
 
 ## [0.2.0] - 2026-11-02
 

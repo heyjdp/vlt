@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -64,7 +63,7 @@ func (a *App) checkForUpdates() {
 func (a *App) showUpdateResult(rel update.Release, err error) {
 	if err != nil {
 		a.log.Warn("update check failed", "err", err)
-		dialog.ShowError(errors.New("cannot check for updates: "+updateErrorText(err)), a.window)
+		showError(a.window, "Couldn't check for updates", err)
 		return
 	}
 	version := a.versionName()
@@ -79,18 +78,6 @@ func (a *App) showUpdateResult(rel update.Release, err error) {
 		a.showRelease(rel, "Latest Release",
 			fmt.Sprintf("This is a development build (%s), so it can't be compared. The latest release is vlt %s.", version, rel.Tag))
 	}
-}
-
-// updateErrorText describes a failed check for people: the update
-// package's own errors as they are, anything else (a network error) without
-// the function prefix.
-func updateErrorText(err error) string {
-	for _, known := range []error{update.ErrNoRelease, update.ErrRateLimited} {
-		if errors.Is(err, known) {
-			return known.Error()
-		}
-	}
-	return strings.TrimPrefix(err.Error(), "update.Latest: ")
 }
 
 // showUpdateAvailable offers a release newer than this build.

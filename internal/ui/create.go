@@ -134,7 +134,7 @@ func (s *CreateScreen) submit() {
 	passphrase, confirm := s.entry.Text, s.confirm.Text
 	if err := validateNewPassphrase(passphrase, confirm); err != nil {
 		s.confirm.SetText("")
-		s.ShowError(err.Error())
+		s.ShowError(errorMessage("", err))
 		return
 	}
 	s.entry.SetText("")

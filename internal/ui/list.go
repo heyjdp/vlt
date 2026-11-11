@@ -219,7 +219,7 @@ func (sl *SecretList) Refresh() {
 			sl.retry.Enable()
 			if err != nil {
 				sl.log.Error("failed to list secrets", "err", err)
-				sl.showNotice("Couldn't load the vault: "+userMessage(err), sl.retry)
+				sl.showNotice(errorMessage("Couldn't load the vault", err), sl.retry)
 				return
 			}
 			sl.unreadable = c.Unreadable
