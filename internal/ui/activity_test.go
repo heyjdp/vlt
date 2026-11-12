@@ -6,6 +6,7 @@ import (
 
 	"fyne.io/fyne/v2/test"
 
+	"github.com/heyjdp/vlt/internal/store"
 	"github.com/heyjdp/vlt/internal/testutil"
 )
 
@@ -18,7 +19,7 @@ func newLockingApp(t *testing.T) (*App, *fakeClock) {
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "x", "work"))
 	clock := &fakeClock{}
 	cfg := settingsAt(a, dir, withLockTimeoutMs(int(testTimeout/time.Millisecond)))
-	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), clock.factory, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: cfg, Log: quietLog(), run: inlineRunner(), timers: clock.factory, storeOpts: []store.Option{testKDF}})
 	unlock(app)
 	return app, clock
 }
@@ -130,7 +131,7 @@ func TestAutoLock_DisabledWhenTimeoutIsZero(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	clock := &fakeClock{}
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), clock.factory, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: clock.factory, storeOpts: []store.Option{testKDF}})
 	unlock(app)
 
 	if len(clock.timers) != 0 {

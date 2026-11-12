@@ -26,7 +26,7 @@ func newFlowApp(t *testing.T, secrets ...*store.Secret) (*App, fyne.Window) {
 	dir := t.TempDir()
 	newVaultWith(t, dir, secrets...)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	return app, w
 }
 

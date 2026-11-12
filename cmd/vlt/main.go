@@ -69,7 +69,13 @@ func run() error {
 	window := fyneApp.NewWindow(fmt.Sprintf("vlt %s", version))
 	window.Resize(fyne.NewSize(900, 600))
 
-	_ = ui.NewApp(fyneApp, window, settings, logger, version)
+	_ = ui.NewApp(&ui.AppDeps{
+		FyneApp:  fyneApp,
+		Window:   window,
+		Settings: settings,
+		Log:      logger,
+		Version:  version,
+	})
 	window.ShowAndRun()
 	return nil
 }

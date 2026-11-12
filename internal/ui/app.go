@@ -64,35 +64,70 @@ type App struct {
 	statusBar *widget.Label
 }
 
-// NewApp creates the main application controller. version is the build's
-// version, shown in the About dialog.
-func NewApp(fyneApp fyne.App, window fyne.Window, settings *Settings, log *slog.Logger, version string) *App {
-	app := newVersionedApp(version, fyneApp, window, settings, log, goroutineRunner(), realTimers)
+// AppDeps is what an App is built from. NewApp takes the fields set in
+// main; the unexported ones are the seams tests replace, and NewApp fills
+// them in for production.
+type AppDeps struct {
+	// FyneApp is the running Fyne app (its clipboard, preferences, browser).
+	FyneApp fyne.App
+	// Window is the app's one window.
+	Window fyne.Window
+	// Settings holds the vault location and the other settings.
+	Settings *Settings
+	// Log receives the app's structured log.
+	Log *slog.Logger
+	// Version is the build's version (main.version), shown in About and
+	// compared with releases.
+	Version string
+
+	// run runs blocking vault work off the main goroutine (goroutineRunner
+	// in production; tests run it inline or queue it).
+	run runner
+	// timers starts the auto-lock and clipboard timers (realTimers in
+	// production; tests fire them by hand).
+	timers timerFactory
+	// pick shows the file and folder choosers; nil means Fyne's dialogs.
+	pick picker
+	// open opens a link in the browser; nil means FyneApp.OpenURL.
+	open func(*url.URL) error
+	// storeOpts are passed to store.Open and store.Create (tests lower the
+	// scrypt work factor; production passes none).
+	storeOpts []store.Option
+}
+
+// NewApp creates the main application controller from deps, running
+// vault work on goroutines and the auto-lock on real timers, and starts
+// the start-up update check if the user turned it on.
+func NewApp(deps *AppDeps) *App {
+	production := *deps
+	production.run, production.timers = goroutineRunner(), realTimers
+	app := newApp(&production)
 	app.startUpdateChecks(update.NewChecker().Latest)
 	return app
 }
 
-// newApp creates the controller with an explicit runner, timer factory and
-// store options (tests run work inline, fire timers by hand, and use a cheap
-// scrypt work factor).
-func newApp(fyneApp fyne.App, window fyne.Window, settings *Settings, log *slog.Logger, run runner, timers timerFactory, storeOpts ...store.Option) *App {
-	return newVersionedApp("", fyneApp, window, settings, log, run, timers, storeOpts...)
-}
-
-// newVersionedApp is newApp with the build's version, set before the first
-// screen starts any background work.
-func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, settings *Settings, log *slog.Logger, run runner, timers timerFactory, storeOpts ...store.Option) *App {
+// newApp creates the controller from deps, whose run and timers must be
+// set, and shows the first screen. Its release checker never reaches the
+// network until startUpdateChecks sets one (NewApp does).
+func newApp(deps *AppDeps) *App {
+	window, settings, run, timers := deps.Window, deps.Settings, deps.run, deps.timers
 	app := &App{
-		version:  version,
-		open:     fyneApp.OpenURL,
+		version:  deps.Version,
+		open:     deps.open,
 		latest:   noUpdateCheck,
-		fyneApp:  fyneApp,
+		fyneApp:  deps.FyneApp,
 		window:   window,
 		settings: settings,
-		log:      log,
+		log:      deps.Log,
 		run:      run,
 		newTimer: timers,
-		pick:     fynePicker{window: window},
+		pick:     deps.pick,
+	}
+	if app.open == nil {
+		app.open = deps.FyneApp.OpenURL
+	}
+	if app.pick == nil {
+		app.pick = fynePicker{window: window}
 	}
 	app.ops = newOperations(window, run, nil, app.resetLockTimer, nil, nil, app.pick)
 
@@ -124,10 +159,9 @@ func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, setti
 			app.Lock()
 		},
 	})
-	// storeOpts lower the scrypt work factor in tests; production passes none.
-	app.opener = newOpener(app.session, run, fyne.Do, timers, settings.LockTimeout, log, storeOpts...)
+	app.opener = newOpener(app.session, run, fyne.Do, timers, settings.LockTimeout, app.log, deps.storeOpts...)
 	app.statusBar = caption("Locked")
-	app.clipboard = newClipboardClearer(fyneApp.Clipboard(), app.statusBar, settings.ClipboardTTL, timers)
+	app.clipboard = newClipboardClearer(app.fyneApp.Clipboard(), app.statusBar, settings.ClipboardTTL, timers)
 	app.showUnlockScreen()
 
 	return app

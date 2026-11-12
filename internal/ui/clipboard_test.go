@@ -8,6 +8,7 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/heyjdp/vlt/internal/store"
 	"github.com/heyjdp/vlt/internal/testutil"
 )
 
@@ -135,7 +136,7 @@ func TestApp_LockClearsCopiedSecret(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir, withDefaultClipboardTTL), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir, withDefaultClipboardTTL), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	unlock(app)
 
 	app.main.detail.copyValue("ghp_secret")
@@ -153,7 +154,7 @@ func TestApp_ClipboardTTLChangeAppliesToNextCopy(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir, withDefaultClipboardTTL), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir, withDefaultClipboardTTL), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	unlock(app)
 
 	app.settings.SetClipboardTTL(5 * time.Second) // Settings slider
@@ -190,7 +191,7 @@ func TestApp_QuitClearsCopiedSecret(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir, withDefaultClipboardTTL), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir, withDefaultClipboardTTL), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	unlock(app)
 
 	app.main.detail.copyValue("ghp_secret")

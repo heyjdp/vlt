@@ -11,6 +11,8 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
+
+	"github.com/heyjdp/vlt/internal/store"
 )
 
 func TestReadBuildDetails(t *testing.T) {
@@ -94,7 +96,7 @@ func TestAbout_IsReachableWhileLockedAndCopiesTheDetails(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	app.version = "v0.1.0"
 
 	about := findButton(w.Content(), "About")
@@ -125,7 +127,7 @@ func TestAbout_IsInTheMainViewAndTheHelpMenu(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	unlock(app)
 
 	test.Tap(findButton(w.Content(), "About"))
@@ -163,7 +165,7 @@ func TestAbout_ReportABugOpensAnIssueWithTheDetails(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	app.version = "v0.1.0"
 	opened := openedURLs(app)
 
@@ -190,7 +192,7 @@ func TestAbout_ReportABugOpensAnIssueWithTheDetails(t *testing.T) {
 func TestAbout_TheAboutMenuItemOpensTheDialog(t *testing.T) {
 	a := test.NewTempApp(t)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, t.TempDir()), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, t.TempDir()), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	app.version = "v0.1.0"
 	for _, m := range w.MainMenu().Items {
 		for _, it := range m.Items {
@@ -207,7 +209,7 @@ func TestAbout_TheAboutMenuItemOpensTheDialog(t *testing.T) {
 func TestAbout_AFailedBrowserIsReported(t *testing.T) {
 	a := test.NewTempApp(t)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, t.TempDir()), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, t.TempDir()), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	app.open = func(*url.URL) error { return errors.New("no browser") }
 
 	app.openURL(issueURL("vlt dev\n"))
@@ -224,7 +226,7 @@ func TestAbout_AServerVaultIsNotNamed(t *testing.T) {
 	fakeSSH(t)
 	a := test.NewTempApp(t)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, "vltuser@nas.example:/home/vltuser/vault"), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, "vltuser@nas.example:/home/vltuser/vault"), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 
 	text := app.aboutDetails().String()
 	if !strings.Contains(text, "Vault: on a server, locked") {
@@ -238,10 +240,10 @@ func TestAbout_AServerVaultIsNotNamed(t *testing.T) {
 }
 
 // NewApp itself starts real background work, which would outlive the test,
-// so this goes through newVersionedApp, which NewApp calls with the version.
+// so this goes through newApp, which NewApp calls with its AppDeps.
 func TestNewApp_KeepsTheVersion(t *testing.T) {
 	a := test.NewTempApp(t)
-	app := newVersionedApp("v0.1.0", a, test.NewTempWindow(t, nil), settingsAt(a, t.TempDir()), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, t.TempDir()), Log: quietLog(), Version: "v0.1.0", run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	if app.version != "v0.1.0" || !strings.HasPrefix(app.aboutDetails().String(), "vlt v0.1.0\n") {
 		t.Fatalf("version = %q", app.version)
 	}

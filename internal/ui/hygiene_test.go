@@ -7,6 +7,7 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/heyjdp/vlt/internal/store"
 	"github.com/heyjdp/vlt/internal/testutil"
 )
 
@@ -18,7 +19,7 @@ func TestUnlockScreen_EntryIsClearedAfterSubmit(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: q.runner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	q.flush()
 	screen := app.unlockScreen
 
@@ -46,7 +47,7 @@ func TestApp_LockDropsAllReferencesToSecrets(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	unlock(app)
 	list, detail := app.main.list, app.main.detail
 	list.list.Select(0) // render a form holding the secret
@@ -91,7 +92,7 @@ func TestApp_LockEmptiesSecretsAndBlanksFormsStillReachableElsewhere(t *testing.
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	unlock(app)
 
 	loaded := app.main.list.secrets[0]
@@ -135,7 +136,7 @@ func TestApp_LockWipesPendingExport(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	pickerOf(app) // its save dialog is never answered
 	unlock(app)
 

@@ -14,6 +14,8 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
+
+	"github.com/heyjdp/vlt/internal/store"
 )
 
 // plantLock writes vlt.lock as vlt on another computer would.
@@ -51,7 +53,7 @@ func TestApp_UnlockTakesTheLockAndLockReleasesIt(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 
 	unlock(app)
 	host, _ := os.Hostname()
@@ -70,7 +72,7 @@ func TestApp_VaultOpenElsewhereAsksAndOpenAnywayTakesOver(t *testing.T) {
 	newVaultWith(t, dir)
 	plantLock(t, dir)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 
 	unlock(app)
 	if app.session.Store() != nil || app.unlockScreen == nil {
@@ -95,7 +97,7 @@ func TestApp_VaultOpenElsewhereCancelLeavesItLocked(t *testing.T) {
 	newVaultWith(t, dir)
 	plantLock(t, dir)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 
 	unlock(app)
 	test.Tap(dialogButton(t, w, "Cancel"))
@@ -115,7 +117,7 @@ func TestApp_UnlockScreenNamesTheVault(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	if findDeep(app.unlockScreen.Content(), func(o fyne.CanvasObject) bool {
 		l, ok := o.(*widget.Label)
 		return ok && l.Text == displayLocation(dir)
@@ -144,7 +146,7 @@ func TestApp_UnreachableServerOffersRetryAndTheLocalVault(t *testing.T) {
 	a := test.NewTempApp(t)
 	local := t.TempDir()
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, "nas:/srv/vault", withDefaultVault(local)), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, "nas:/srv/vault", withDefaultVault(local)), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 
 	content := w.Content()
 	if app.unlockScreen != nil || app.createScreen != nil {
@@ -174,7 +176,7 @@ func TestApp_UnparsableSavedLocationShowsWhyAndOffersTheDefault(t *testing.T) {
 	w := test.NewTempWindow(t, nil)
 	local := t.TempDir()
 	a.Preferences().SetString(prefVaultDir, "nas:")
-	app := newApp(a, w, LoadSettings(a.Preferences(), env(nil), local, quietLog()), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: LoadSettings(a.Preferences(), env(nil), local, quietLog()), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 
 	want := "nas:\n\nInvalid vault location: \"nas:\" names no folder on the server"
 	if findDeep(w.Content(), func(o fyne.CanvasObject) bool {
@@ -205,7 +207,7 @@ func TestApp_UnreadableDefaultVaultIsNotOfferedAgain(t *testing.T) {
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	newApp(a, w, settingsAt(a, "  "+file, withDefaultVault(file)), quietLog(), inlineRunner(), noTimers, testKDF)
+	newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, "  "+file, withDefaultVault(file)), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 
 	if findButton(w.Content(), "Retry") == nil {
 		t.Fatal("expected the error screen")
@@ -219,8 +221,7 @@ func TestApp_UnreachableServerFromTheEnvironmentOffersOnlyRetry(t *testing.T) {
 	fakeSSH(t)
 	a := test.NewTempApp(t)
 	w := test.NewTempWindow(t, nil)
-	newApp(a, w, LoadSettings(a.Preferences(), env(map[string]string{envVaultDir: "nas:/srv/vault"}), t.TempDir(), quietLog()),
-		quietLog(), inlineRunner(), noTimers, testKDF)
+	newApp(&AppDeps{FyneApp: a, Window: w, Settings: LoadSettings(a.Preferences(), env(map[string]string{envVaultDir: "nas:/srv/vault"}), t.TempDir(), quietLog()), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	if findButton(w.Content(), "Use the Vault on This Computer") != nil {
 		t.Fatal("VLT_VAULT_DIR fixes the location; no switch should be offered")
 	}
@@ -230,7 +231,7 @@ func TestApp_ServerDialogValidatesAndSwitchesTheLocation(t *testing.T) {
 	fakeSSH(t)
 	a := test.NewTempApp(t)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, t.TempDir()), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, t.TempDir()), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	if app.createScreen == nil || app.createScreen.serverBtn == nil {
 		t.Fatal("the create screen should offer a vault on a server")
 	}
@@ -280,7 +281,7 @@ func TestApp_UnansweredOpenElsewhereDialogLocksAfterTheTimeout(t *testing.T) {
 	plantLock(t, dir)
 	w := test.NewTempWindow(t, nil)
 	clock := &fakeClock{}
-	app := newApp(a, w, settingsAt(a, dir, withLockTimeoutMs(60_000)), quietLog(), inlineRunner(), clock.factory, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir, withLockTimeoutMs(60_000)), Log: quietLog(), run: inlineRunner(), timers: clock.factory, storeOpts: []store.Option{testKDF}})
 
 	unlock(app)
 	timer := clock.active(time.Minute)
@@ -300,7 +301,7 @@ func TestApp_QuitReleasesTheLock(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	unlock(app)
 	if lockHolder(t, dir) == "" {
 		t.Fatal("expected a lock while unlocked")
@@ -350,7 +351,7 @@ func queuedLockApp(t *testing.T, dir string) (*App, fyne.Window, *queue) {
 	a := test.NewTempApp(t)
 	w := test.NewTempWindow(t, nil)
 	q := &queue{}
-	app := newApp(a, w, settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: q.runner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	q.flush()
 	return app, w, q
 }

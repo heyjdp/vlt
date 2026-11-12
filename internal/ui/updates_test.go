@@ -11,6 +11,7 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/heyjdp/vlt/internal/store"
 	"github.com/heyjdp/vlt/internal/update"
 )
 
@@ -32,7 +33,7 @@ func updateApp(t *testing.T, version string, opts ...func(*Settings)) (*App, fyn
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, dir, opts...), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir, opts...), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	app.version = version
 	return app, w, openedURLs(app)
 }
@@ -282,7 +283,7 @@ func TestCheckForUpdates_AnsweringTheDialogCountsAsActivity(t *testing.T) {
 	newVaultWith(t, dir)
 	w := test.NewTempWindow(t, nil)
 	clock := &fakeClock{}
-	app := newApp(a, w, settingsAt(a, dir, withLockTimeoutMs(DefaultLockTimeoutMs)), quietLog(), inlineRunner(), clock.factory, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir, withLockTimeoutMs(DefaultLockTimeoutMs)), Log: quietLog(), run: inlineRunner(), timers: clock.factory, storeOpts: []store.Option{testKDF}})
 	app.version = "v0.1.0"
 	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
 	unlock(app)

@@ -48,8 +48,7 @@ func TestScreenshots(t *testing.T) {
 		t.Setenv("HOME", home)
 		dir := filepath.Join(home, "Library", "Application Support", "vlt", "vault")
 		newVaultWith(t, dir, sampleSecrets()...)
-		app := newApp(a, w, settingsAt(a, dir, withLockTimeoutMs(DefaultLockTimeoutMs), withDefaultClipboardTTL),
-			quietLog(), inlineRunner(), noTimers, testKDF)
+		app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir, withLockTimeoutMs(DefaultLockTimeoutMs), withDefaultClipboardTTL), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 		w.Resize(size)
 		capture(t, w, filepath.Join(out, variant.name+"-unlock.png"))
 

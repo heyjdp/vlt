@@ -110,7 +110,7 @@ func TestApp_MissingVaultShowsCreateScreen(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := filepath.Join(t.TempDir(), "vault")
 
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	if app.createScreen == nil || app.unlockScreen != nil {
 		t.Fatal("expected the create-vault screen for a missing vault")
 	}
@@ -132,7 +132,7 @@ func TestApp_ExistingVaultShowsUnlockScreen(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	if app.unlockScreen == nil || app.createScreen != nil {
 		t.Fatal("expected the unlock screen for an existing vault")
 	}
@@ -142,7 +142,7 @@ func TestApp_SwitchToEmptyDirectoryShowsCreateScreen(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 
 	// settings.switchVault sets the directory and relocks.
 	app.settings.ProposeVault(localAt(t.TempDir()))
@@ -157,7 +157,7 @@ func TestApp_VaultRemovedAfterScreenChosenOffersCreate(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := filepath.Join(t.TempDir(), "vault")
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 
 	if err := os.RemoveAll(dir); err != nil {
 		t.Fatal(err)
@@ -176,7 +176,7 @@ func TestApp_LeftoverMarkerWithoutVaultShowsError(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "vlt.json"), []byte(`{"format":1}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	if app.unlockScreen == nil {
 		t.Fatal("a directory with vault files should show the unlock screen")
 	}
@@ -200,7 +200,7 @@ func TestApp_UnreadableDirectoryShowsNeitherScreen(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	if app.createScreen != nil || app.unlockScreen != nil {
 		t.Fatal("an unreadable directory must show an error, not offer to create or unlock")
 	}
@@ -211,7 +211,7 @@ func newCreateApp(t *testing.T, opts ...func(*Settings)) *App {
 	t.Helper()
 	a := test.NewTempApp(t)
 	cfg := settingsAt(a, filepath.Join(t.TempDir(), "vault"), opts...)
-	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: cfg, Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	if app.createScreen == nil {
 		t.Fatal("expected the create-vault screen for a missing vault")
 	}
@@ -324,7 +324,7 @@ func TestApp_OpenUnreadableFolderShowsTheError(t *testing.T) {
 func TestApp_OpenCheckDisablesTheScreenUntilItFinishes(t *testing.T) {
 	a := test.NewTempApp(t)
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, filepath.Join(t.TempDir(), "vault")), quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, filepath.Join(t.TempDir(), "vault")), Log: quietLog(), run: q.runner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	q.flush()
 	other := t.TempDir()
 	newVaultWith(t, other)
@@ -343,7 +343,7 @@ func TestApp_StaleOpenResultIsDropped(t *testing.T) {
 	a := test.NewTempApp(t)
 	q := &queue{}
 	dir := filepath.Join(t.TempDir(), "vault")
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: q.runner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	q.flush()
 	other := t.TempDir()
 	newVaultWith(t, other)

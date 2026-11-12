@@ -14,6 +14,7 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/heyjdp/vlt/internal/store"
 	"github.com/heyjdp/vlt/internal/testutil"
 )
 
@@ -214,7 +215,7 @@ func exportApp(t *testing.T) (*App, fyne.Window, *scriptedPicker) {
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.FileSecret("notes", "notes.txt", "aGVsbG8=", "docs"))
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	p := pickerOf(app)
 	unlock(app)
 	return app, w, p
@@ -355,7 +356,7 @@ func TestApp_LockDismissesOpenDialogs(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	unlock(app)
 
 	dialog.ShowInformation("open", "a dialog left open", w)

@@ -18,7 +18,7 @@ func TestApp_UnlockLoadsSecretsIntoList(t *testing.T) {
 		testutil.PasswordSecret("gh", "x", "work"),
 		testutil.PasswordSecret("bank", "y", "personal"),
 	)
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 
 	unlock(app)
 
@@ -36,7 +36,7 @@ func TestApp_UnlockRunsOffTheMainGoroutine(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: q.runner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	q.flush() // the Exists check
 
 	unlock(app)
@@ -61,7 +61,7 @@ func TestApp_StaleUnlockIsDiscardedAfterVaultSwitch(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: q.runner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	q.flush()
 
 	unlock(app)
@@ -83,7 +83,7 @@ func TestApp_SaveCompletingAfterLockIsDropped(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: q.runner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	q.flush()
 	unlockQueued(t, app, q)
 	q.flush() // initial list load
@@ -102,7 +102,7 @@ func TestApp_LockCancelsInitialListLoad(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "x", "work"))
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: q.runner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	q.flush()
 	unlockQueued(t, app, q)
 	list := app.main.list
@@ -119,7 +119,7 @@ func TestApp_CreateRunsOffTheMainGoroutine(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := filepath.Join(t.TempDir(), "vault")
 	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: q.runner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	q.flush()
 
 	test.Type(app.createScreen.entry, "correct horse battery")

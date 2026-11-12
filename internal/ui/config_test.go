@@ -328,7 +328,7 @@ func settingsApp(t *testing.T, clock timerFactory, opts ...func(*Settings)) (*Ap
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "x", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir, opts...), quietLog(), inlineRunner(), clock, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir, opts...), Log: quietLog(), run: inlineRunner(), timers: clock, storeOpts: []store.Option{testKDF}})
 	unlock(app)
 	ss := app.main.openSettings()
 	return app, ss
@@ -345,7 +345,7 @@ func TestSettings_EnvironmentValuesAreNotSavedBySliderChanges(t *testing.T) {
 	dir := t.TempDir()
 	cfg := LoadSettings(a.Preferences(), env(map[string]string{envVaultDir: dir}), "/default", quietLog())
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: cfg, Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	unlock(app)
 	ss := app.main.openSettings()
 
@@ -556,8 +556,7 @@ func TestApp_DefaultLocationIsSavedAfterUnlock(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), LoadSettings(a.Preferences(), env(nil), dir, quietLog()),
-		quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: LoadSettings(a.Preferences(), env(nil), dir, quietLog()), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 	prefs := a.Preferences()
 	if prefs.String(prefVaultDir) != "" {
 		t.Fatal("nothing should be saved before the vault is unlocked")
@@ -576,7 +575,7 @@ func TestApp_LocationFromEnvironmentIsNeverSaved(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	cfg := LoadSettings(a.Preferences(), env(map[string]string{envVaultDir: dir}), "/default", quietLog())
-	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), noTimers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: cfg, Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
 
 	unlock(app)
 
@@ -690,7 +689,7 @@ func queuedSettingsWith(t *testing.T, timers timerFactory, opts ...func(*Setting
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "x", "work"))
 	w := test.NewTempWindow(t, nil)
 	q := &queue{}
-	app := newApp(a, w, settingsAt(a, dir, opts...), quietLog(), q.runner(), timers, testKDF)
+	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir, opts...), Log: quietLog(), run: q.runner(), timers: timers, storeOpts: []store.Option{testKDF}})
 	q.flush()
 	unlockQueued(t, app, q)
 	q.flush() // the first load of the list
