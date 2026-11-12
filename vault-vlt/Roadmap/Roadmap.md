@@ -181,6 +181,10 @@ Added 2026-11-12, from the third architecture review. Goal: the store owns its l
 - [[F51 Vault-wide changes]]
 - [[F52 Main view]]
 
+### Phase 14: Deepening, fourth pass
+Added 2026-11-12, from the fourth architecture review, which found the production modules deep. Goal: one App test rig, so the most-changed file's tests cross one seam.
+- [[F53 App test rig]]
+
 ## Tracker
 
 ![[Roadmap.base]]

@@ -6,33 +6,31 @@ import (
 
 	"fyne.io/fyne/v2/test"
 
-	"github.com/heyjdp/vlt/internal/store"
 	"github.com/heyjdp/vlt/internal/testutil"
 )
 
 const testTimeout = 5 * time.Minute
 
-func newLockingApp(t *testing.T) (*App, *fakeClock) {
-	t.Helper()
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir, testutil.PasswordSecret("gh", "x", "work"))
-	clock := &fakeClock{}
-	cfg := settingsAt(a, dir, withLockTimeoutMs(int(testTimeout/time.Millisecond)))
-	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: cfg, Log: quietLog(), run: inlineRunner(), timers: clock.factory, storeOpts: []store.Option{testKDF}})
-	unlock(app)
-	return app, clock
+// autoLocking builds an app over a vault holding one secret, with
+// auto-lock after testTimeout.
+func autoLocking() []rigOption {
+	return []rigOption{
+		withSecrets(testutil.PasswordSecret("gh", "x", "work")),
+		withSettings(withLockTimeoutMs(int(testTimeout / time.Millisecond))),
+	}
 }
 
 func TestAutoLock_TypingInAFormResetsTheCountdown(t *testing.T) {
-	app, clock := newLockingApp(t)
+	r := newAppRig(t, autoLocking()...)
+	r.unlock()
+	clock := r.clock
 	first := clock.active(testTimeout)
 	if first == nil {
 		t.Fatal("unlocking should start the auto-lock timer")
 	}
 
-	app.main.list.list.Select(0)
-	entry := firstEditableEntry(app.main.detail.Content())
+	r.selectSecret(0)
+	entry := firstEditableEntry(r.detail())
 	if entry == nil {
 		t.Fatal("expected an editable entry in the secret form")
 	}
@@ -46,36 +44,40 @@ func TestAutoLock_TypingInAFormResetsTheCountdown(t *testing.T) {
 
 	// Once typing stops, the restarted countdown still locks.
 	clock.active(testTimeout).f()
-	if app.session.Store() != nil {
+	if !r.locked() {
 		t.Fatal("the vault should lock once the restarted countdown expires")
 	}
 }
 
 func TestAutoLock_SearchAndListSelectionCountAsActivity(t *testing.T) {
-	app, clock := newLockingApp(t)
+	r := newAppRig(t, autoLocking()...)
+	r.unlock()
+	clock := r.clock
 
 	before := clock.active(testTimeout)
-	test.Type(app.main.list.searchEntry, "g")
+	r.search("g")
 	if !before.stopped {
 		t.Fatal("typing in the search box must reset the countdown")
 	}
 	before = clock.active(testTimeout)
-	app.main.list.list.Select(0)
+	r.selectSecret(0)
 	if !before.stopped {
 		t.Fatal("selecting a list row must reset the countdown")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestAutoLock_IdlenessLocks(t *testing.T) {
-	app, clock := newLockingApp(t)
+	r := newAppRig(t, autoLocking()...)
+	r.unlock()
+	clock := r.clock
 
 	clock.active(testTimeout).f()
 
-	if app.session.Store() != nil {
+	if !r.locked() {
 		t.Fatal("the vault should lock when the timer fires")
 	}
-	if app.unlockScreen == nil {
+	if r.shownScreen() != screenUnlock {
 		t.Fatal("expected the unlock screen after auto-lock")
 	}
 	if clock.active(testTimeout) != nil || clock.active(warnDelay(testTimeout)) != nil {
@@ -84,25 +86,27 @@ func TestAutoLock_IdlenessLocks(t *testing.T) {
 }
 
 func TestAutoLock_WarnsBeforeLockingAndActivityDismisses(t *testing.T) {
-	app, clock := newLockingApp(t)
+	r := newAppRig(t, autoLocking()...)
+	r.unlock()
+	clock := r.clock
 
 	warn := clock.active(warnDelay(testTimeout))
 	if warn == nil {
 		t.Fatal("a 5-minute timeout should schedule a warning")
 	}
 	warn.f()
-	if app.lockWarning == nil {
+	if !r.lockWarningShown() {
 		t.Fatal("expected a lock warning")
 	}
 
-	test.Type(app.main.list.searchEntry, "x")
-	if app.lockWarning != nil {
+	r.search("x")
+	if r.lockWarningShown() {
 		t.Fatal("activity should dismiss the warning")
 	}
 	if clock.active(testTimeout) == nil {
 		t.Fatal("activity should restart the countdown")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestAutoLock_ShortTimeoutHasNoWarning(t *testing.T) {
@@ -115,120 +119,129 @@ func TestAutoLock_ShortTimeoutHasNoWarning(t *testing.T) {
 }
 
 func TestAutoLock_TimeoutChangeAppliesOnNextActivity(t *testing.T) {
-	app, clock := newLockingApp(t)
+	r := newAppRig(t, autoLocking()...)
+	r.unlock()
+	clock := r.clock
 
-	app.settings.SetLockTimeout(10 * time.Minute)
-	test.Type(app.main.list.searchEntry, "x")
+	r.settings.SetLockTimeout(10 * time.Minute)
+	r.search("x")
 
 	if clock.active(10*time.Minute) == nil {
 		t.Fatal("a changed timeout should be used when the countdown restarts")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestAutoLock_DisabledWhenTimeoutIsZero(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	clock := &fakeClock{}
-	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: clock.factory, storeOpts: []store.Option{testKDF}})
-	unlock(app)
+	r := newAppRig(t)
+	clock := r.clock
+	r.unlock()
 
 	if len(clock.timers) != 0 {
 		t.Fatalf("a zero timeout must not start timers, got %d", len(clock.timers))
 	}
-	test.Type(app.main.list.searchEntry, "x")
+	r.search("x")
 	if len(clock.timers) != 0 {
 		t.Fatal("activity must not start timers when auto-lock is disabled")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestAutoLock_TypingWithNothingFocusedResetsTheCountdown(t *testing.T) {
-	app, clock := newLockingApp(t)
-	app.window.Canvas().Unfocus()
+	r := newAppRig(t, autoLocking()...)
+	r.unlock()
+	clock := r.clock
+	r.window.Canvas().Unfocus()
 
 	before := clock.active(testTimeout)
-	test.TypeOnCanvas(app.window.Canvas(), "x")
+	test.TypeOnCanvas(r.window.Canvas(), "x")
 
 	if !before.stopped {
 		t.Fatal("key presses with no focused widget must reset the countdown")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestAutoLock_StayUnlockedRestartsTheCountdown(t *testing.T) {
-	app, clock := newLockingApp(t)
+	r := newAppRig(t, autoLocking()...)
+	r.unlock()
+	clock := r.clock
 
 	lock := clock.active(testTimeout)
 	clock.active(warnDelay(testTimeout)).f()
-	app.lockWarning.Confirm() // "Stay unlocked"
+	r.stayUnlocked() // "Stay unlocked"
 
-	if app.session.Store() == nil {
+	if r.locked() {
 		t.Fatal("Stay unlocked must not lock")
 	}
 	if !lock.stopped || clock.active(testTimeout) == nil {
 		t.Fatal("Stay unlocked must restart the countdown")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestAutoLock_LockNowLocksImmediately(t *testing.T) {
-	app, clock := newLockingApp(t)
+	r := newAppRig(t, autoLocking()...)
+	r.unlock()
+	clock := r.clock
 
 	clock.active(warnDelay(testTimeout)).f()
-	app.lockWarning.Hide() // the user pressing "Lock now" dismisses the dialog
+	r.lockNow() // the user pressing "Lock now" dismisses the dialog
 
-	if app.session.Store() != nil {
+	if !r.locked() {
 		t.Fatal("Lock now should lock the vault")
 	}
 }
 
 func TestAutoLock_StaleTimersAreIgnoredAfterActivity(t *testing.T) {
-	app, clock := newLockingApp(t)
+	r := newAppRig(t, autoLocking()...)
+	r.unlock()
+	clock := r.clock
 
 	oldLock := clock.active(testTimeout)
 	oldWarn := clock.active(warnDelay(testTimeout))
-	test.Type(app.main.list.searchEntry, "x") // activity replaces both timers
+	r.search("x") // activity replaces both timers
 
 	// Callbacks of the replaced timers that were already running.
 	oldWarn.f()
-	if app.lockWarning != nil {
+	if r.lockWarningShown() {
 		t.Fatal("a warning from a replaced timer must not be shown")
 	}
 	oldLock.f()
-	if app.session.Store() == nil {
+	if r.locked() {
 		t.Fatal("a lock from a replaced timer must not lock the vault")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestAutoLock_DialogCallbacksCountAsActivity(t *testing.T) {
-	app, clock := newLockingApp(t)
+	r := newAppRig(t, autoLocking()...)
+	r.unlock()
+	clock := r.clock
 
-	p := pickerOf(app)
-	test.Tap(findButton(app.main.content(), "Import File"))
+	test.Tap(findButton(r.mainView().content(), "Import File"))
 	before := clock.active(testTimeout)
-	p.answerFile(t, nil, nil) // the file chooser, cancelled
+	r.pick.answerFile(t, nil, nil) // the file chooser, cancelled
 	if !before.stopped {
 		t.Fatal("dialog callbacks must reset the countdown")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestActivityTracker_DoesNotRetainReplacedForms(t *testing.T) {
-	app, _ := newLockingApp(t)
+	r := newAppRig(t, autoLocking()...)
+	r.unlock()
 
 	for range 20 {
-		app.main.list.list.UnselectAll()
-		app.main.list.list.Select(0)
+		r.mainView().list.list.UnselectAll()
+		r.selectSecret(0)
 	}
 	// Only the current panel's widgets are remembered, not 20 old forms.
-	if n := len(app.main.tracker.seen); n > 40 {
+	if n := len(r.mainView().tracker.seen); n > 40 {
 		t.Fatalf("tracker retains %d widgets after re-rendering; old forms are leaking", n)
 	}
-	app.Lock()
-	if app.main != nil {
+	r.lock()
+	if r.shownScreen() == screenMain {
 		t.Fatal("locking should drop the main view and its activity tracker")
 	}
 }

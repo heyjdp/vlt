@@ -318,36 +318,36 @@ func TestFormatLockTimeout(t *testing.T) {
 // The default location depends on the environment (XDG_DATA_HOME), which can
 // differ between launches, so it is remembered once a vault opens there.
 func TestApp_DefaultLocationIsSavedAfterUnlock(t *testing.T) {
-	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: LoadSettings(a.Preferences(), env(nil), dir, quietLog()), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
-	prefs := a.Preferences()
-	if prefs.String(prefVaultDir) != "" {
+	r := newAppRig(t, withLoadedSettings(func(prefs fyne.Preferences) *Settings {
+		return LoadSettings(prefs, env(nil), dir, quietLog())
+	}))
+	if r.prefs().String(prefVaultDir) != "" {
 		t.Fatal("nothing should be saved before the vault is unlocked")
 	}
 
-	unlock(app)
+	r.unlock()
 
-	if got := restart(prefs).Vault(); got != localAt(dir) {
+	if got := restart(r.prefs()).Vault(); got != localAt(dir) {
 		t.Fatalf("saved location = %v, want %q", got, dir)
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestApp_LocationFromEnvironmentIsNeverSaved(t *testing.T) {
-	a := test.NewTempApp(t)
 	dir := t.TempDir()
 	newVaultWith(t, dir)
-	cfg := LoadSettings(a.Preferences(), env(map[string]string{envVaultDir: dir}), "/default", quietLog())
-	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: cfg, Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
+	r := newAppRig(t, withLoadedSettings(func(prefs fyne.Preferences) *Settings {
+		return LoadSettings(prefs, env(map[string]string{envVaultDir: dir}), "/default", quietLog())
+	}))
 
-	unlock(app)
+	r.unlock()
 
-	if got := a.Preferences().String(prefVaultDir); got != "" {
+	if got := r.prefs().String(prefVaultDir); got != "" {
 		t.Fatalf("a location set by %s must not be saved, got %q", envVaultDir, got)
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestMigratePreferences_CarriesOverTheSettingsOfTheOldAppID(t *testing.T) {

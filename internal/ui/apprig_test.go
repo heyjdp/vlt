@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/heyjdp/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/update"
 )
 
 // appRig is an App under test together with what it was built from: a
@@ -99,10 +101,20 @@ func withQueuedRunner() rigOption {
 	return func(c *rigConfig) { c.queued = true }
 }
 
+// withVersion builds the app as version (none is a development build).
+func withVersion(version string) rigOption {
+	return func(c *rigConfig) { c.version = version }
+}
+
 // withFyneDialogs shows Fyne's own file and folder dialogs instead of the
 // scripted picker.
 func withFyneDialogs() rigOption {
 	return func(c *rigConfig) { c.fyneDialogs = true }
+}
+
+// withFailingBrowser makes opening a link fail with err.
+func withFailingBrowser(err error) rigOption {
+	return func(c *rigConfig) { c.browserErr = err }
 }
 
 // newAppRig builds an App, by default over an empty vault in a new folder,
@@ -171,6 +183,13 @@ func (r *appRig) browse(u *url.URL) error {
 	return nil
 }
 
+// hold makes background work wait in the queue from now on.
+func (r *appRig) hold() { r.isHeld = true }
+
+// runInline runs background work at once from now on; work already queued
+// still waits for flush.
+func (r *appRig) runInline() { r.isHeld = false }
+
 // flush runs the queued work, and any work it queues, in order.
 func (r *appRig) flush() { r.queue.flush() }
 
@@ -179,6 +198,9 @@ func (r *appRig) runNext() {
 	r.t.Helper()
 	runNext(r.t, r.queue)
 }
+
+// queued is how many pieces of work wait in the queue.
+func (r *appRig) queued() int { return len(r.queue.pending) }
 
 // prefs are the test app's saved settings.
 func (r *appRig) prefs() fyne.Preferences { return r.fyneApp.Preferences() }
@@ -443,3 +465,35 @@ func (r *appRig) importFile(f fyne.URIReadCloser) {
 
 // status is the status bar's text.
 func (r *appRig) status() string { return r.app.statusBar.Text }
+
+// lockWarningShown reports whether the auto-lock's warning is shown.
+func (r *appRig) lockWarningShown() bool { return r.app.lockWarning != nil }
+
+// stayUnlocked answers the lock warning with "Stay unlocked".
+func (r *appRig) stayUnlocked() {
+	r.t.Helper()
+	if r.app.lockWarning == nil {
+		r.t.Fatal("no lock warning is shown")
+	}
+	r.app.lockWarning.Confirm()
+}
+
+// lockNow answers the lock warning with "Lock now", which dismisses it.
+func (r *appRig) lockNow() {
+	r.t.Helper()
+	if r.app.lockWarning == nil {
+		r.t.Fatal("no lock warning is shown")
+	}
+	r.app.lockWarning.Hide()
+}
+
+// releases makes the app's release checker answer rel or err from now on,
+// and returns how many times it has been asked.
+func (r *appRig) releases(rel update.Release, err error) *int {
+	calls := 0
+	r.app.latest = func(context.Context) (update.Release, error) {
+		calls++
+		return rel, err
+	}
+	return &calls
+}

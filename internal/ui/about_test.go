@@ -11,8 +11,6 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
-
-	"github.com/heyjdp/vlt/internal/store"
 )
 
 func TestReadBuildDetails(t *testing.T) {
@@ -92,12 +90,8 @@ func aboutText(t *testing.T, w fyne.Window) string {
 }
 
 func TestAbout_IsReachableWhileLockedAndCopiesTheDetails(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	w := test.NewTempWindow(t, nil)
-	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
-	app.version = "v0.1.0"
+	r := newAppRig(t, withVersion("v0.1.0"))
+	w := r.window
 
 	about := findButton(w.Content(), "About")
 	if about == nil {
@@ -110,11 +104,11 @@ func TestAbout_IsReachableWhileLockedAndCopiesTheDetails(t *testing.T) {
 			t.Fatalf("About shows %q, missing %q", text, want)
 		}
 	}
-	if strings.Contains(text, dir) {
+	if strings.Contains(text, r.dir) {
 		t.Fatal("About must not show the vault's path")
 	}
 	test.Tap(findButton(w.Canvas().Overlays().Top(), "Copy Details"))
-	if got, want := a.Clipboard().Content(), app.aboutDetails().String(); got != want {
+	if got, want := r.fyneApp.Clipboard().Content(), r.app.aboutDetails().String(); got != want {
 		t.Fatalf("clipboard = %q, want %q", got, want)
 	}
 	if findButton(w.Canvas().Overlays().Top(), "Copied") == nil {
@@ -123,18 +117,15 @@ func TestAbout_IsReachableWhileLockedAndCopiesTheDetails(t *testing.T) {
 }
 
 func TestAbout_IsInTheMainViewAndTheHelpMenu(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	w := test.NewTempWindow(t, nil)
-	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
-	unlock(app)
+	r := newAppRig(t)
+	w := r.window
+	r.unlock()
 
 	test.Tap(findButton(w.Content(), "About"))
 	if !strings.Contains(aboutText(t, w), "Vault: local, unlocked") {
 		t.Fatal("About in the main view should say the vault is unlocked")
 	}
-	app.Lock()
+	r.lock()
 
 	var items []string
 	for _, m := range w.MainMenu().Items {
@@ -150,24 +141,9 @@ func TestAbout_IsInTheMainViewAndTheHelpMenu(t *testing.T) {
 	}
 }
 
-// openedURLs replaces the app's browser with one that records links.
-func openedURLs(app *App) *[]string {
-	var opened []string
-	app.open = func(u *url.URL) error {
-		opened = append(opened, u.String())
-		return nil
-	}
-	return &opened
-}
-
 func TestAbout_ReportABugOpensAnIssueWithTheDetails(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	w := test.NewTempWindow(t, nil)
-	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
-	app.version = "v0.1.0"
-	opened := openedURLs(app)
+	r := newAppRig(t, withVersion("v0.1.0"))
+	w := r.window
 
 	test.Tap(findButton(w.Content(), "About"))
 	test.Tap(findButton(w.Canvas().Overlays().Top(), "Report a Bug…"))
@@ -178,22 +154,19 @@ func TestAbout_ReportABugOpensAnIssueWithTheDetails(t *testing.T) {
 			}
 		}
 	}
-	if len(*opened) != 2 {
-		t.Fatalf("opened %v, want the issue page twice (dialog and menu)", *opened)
+	if len(r.opened) != 2 {
+		t.Fatalf("opened %v, want the issue page twice (dialog and menu)", r.opened)
 	}
-	for _, link := range *opened {
+	for _, link := range r.opened {
 		u, err := url.Parse(link)
-		if err != nil || u.Path != "/heyjdp/vlt/issues/new" || !strings.Contains(u.Query().Get("body"), app.aboutDetails().String()) {
+		if err != nil || u.Path != "/heyjdp/vlt/issues/new" || !strings.Contains(u.Query().Get("body"), r.app.aboutDetails().String()) {
 			t.Fatalf("opened %s", link)
 		}
 	}
 }
 
 func TestAbout_TheAboutMenuItemOpensTheDialog(t *testing.T) {
-	a := test.NewTempApp(t)
-	w := test.NewTempWindow(t, nil)
-	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, t.TempDir()), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
-	app.version = "v0.1.0"
+	w := newAppRig(t, withoutVault(), withVersion("v0.1.0")).window
 	for _, m := range w.MainMenu().Items {
 		for _, it := range m.Items {
 			if it.Label == "About" {
@@ -207,12 +180,10 @@ func TestAbout_TheAboutMenuItemOpensTheDialog(t *testing.T) {
 }
 
 func TestAbout_AFailedBrowserIsReported(t *testing.T) {
-	a := test.NewTempApp(t)
-	w := test.NewTempWindow(t, nil)
-	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, t.TempDir()), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
-	app.open = func(*url.URL) error { return errors.New("no browser") }
+	r := newAppRig(t, withoutVault(), withFailingBrowser(errors.New("no browser")))
+	w := r.window
 
-	app.openURL(issueURL("vlt dev\n"))
+	r.app.openURL(issueURL("vlt dev\n"))
 	top := w.Canvas().Overlays().Top()
 	if top == nil || findDeep(top, func(o fyne.CanvasObject) bool {
 		l, ok := o.(*widget.Label)
@@ -224,11 +195,9 @@ func TestAbout_AFailedBrowserIsReported(t *testing.T) {
 
 func TestAbout_AServerVaultIsNotNamed(t *testing.T) {
 	fakeSSH(t)
-	a := test.NewTempApp(t)
-	w := test.NewTempWindow(t, nil)
-	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, "vltuser@nas.example:/home/vltuser/vault"), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
+	r := newAppRig(t, atLocation("vltuser@nas.example:/home/vltuser/vault"))
 
-	text := app.aboutDetails().String()
+	text := r.app.aboutDetails().String()
 	if !strings.Contains(text, "Vault: on a server, locked") {
 		t.Fatalf("details = %q", text)
 	}
@@ -240,10 +209,9 @@ func TestAbout_AServerVaultIsNotNamed(t *testing.T) {
 }
 
 // NewApp itself starts real background work, which would outlive the test,
-// so this goes through newApp, which NewApp calls with its AppDeps.
+// so this builds the app through the rig, with newApp, which NewApp calls.
 func TestNewApp_KeepsTheVersion(t *testing.T) {
-	a := test.NewTempApp(t)
-	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, t.TempDir()), Log: quietLog(), Version: "v0.1.0", run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
+	app := newAppRig(t, withoutVault(), withVersion("v0.1.0")).app
 	if app.version != "v0.1.0" || !strings.HasPrefix(app.aboutDetails().String(), "vlt v0.1.0\n") {
 		t.Fatalf("version = %q", app.version)
 	}
