@@ -149,7 +149,7 @@ func newAppRig(t *testing.T, opts ...rigOption) *appRig {
 		FyneApp:   a,
 		Window:    r.window,
 		Settings:  r.settings,
-		Log:       quietLog(),
+		Logger:    quietLog(),
 		Version:   cfg.version,
 		run:       runner{spawn: r.spawn},
 		timers:    r.clock.factory,

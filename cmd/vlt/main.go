@@ -69,13 +69,15 @@ func run() error {
 	window := fyneApp.NewWindow(fmt.Sprintf("vlt %s", version))
 	window.Resize(fyne.NewSize(900, 600))
 
-	_ = ui.NewApp(&ui.AppDeps{
+	if _, err := ui.NewApp(&ui.AppDeps{
 		FyneApp:  fyneApp,
 		Window:   window,
 		Settings: settings,
-		Log:      logger,
+		Logger:   logger,
 		Version:  version,
-	})
+	}); err != nil {
+		return fmt.Errorf("build the app: %w", err)
+	}
 	window.ShowAndRun()
 	return nil
 }
