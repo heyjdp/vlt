@@ -2,11 +2,109 @@ package ui
 
 import (
 	"context"
+	"errors"
+	"log/slog"
+	"strings"
 	"testing"
+
+	"fyne.io/fyne/v2/test"
 
 	"github.com/heyjdp/vlt/internal/store"
 	"github.com/heyjdp/vlt/internal/testutil"
 )
+
+// productionDeps are AppDeps as main sets them, over a location that does
+// not parse, so the first screen is the vault error and NewApp starts no
+// background work (and, with update checks off, no network request).
+func productionDeps(t *testing.T) *AppDeps {
+	t.Helper()
+	a := test.NewTempApp(t)
+	return &AppDeps{
+		FyneApp:  a,
+		Window:   test.NewTempWindow(t, nil),
+		Settings: settingsAt(a, "nas:"),
+		Logger:   quietLog(),
+		Version:  "1.2.3",
+	}
+}
+
+func TestNewApp_FillsInTheProductionSeams(t *testing.T) {
+	deps := productionDeps(t)
+
+	app, err := NewApp(deps)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+
+	if app.open == nil {
+		t.Error("NewApp left no browser (FyneApp.OpenURL is the default)")
+	}
+	if app.pick == nil {
+		t.Error("NewApp left no file and folder chooser (Fyne's dialogs are the default)")
+	}
+	if app.run.spawn == nil {
+		t.Error("NewApp left no runner")
+	}
+	if app.newTimer == nil {
+		t.Error("NewApp left no timer factory")
+	}
+	if app.version != "1.2.3" {
+		t.Errorf("version = %q, want 1.2.3", app.version)
+	}
+	if app.log != deps.Logger {
+		t.Error("NewApp did not use the logger it was given")
+	}
+	if findButton(deps.Window.Content(), "Retry") == nil {
+		t.Error("expected the vault error screen for a location that does not parse")
+	}
+}
+
+func TestNewApp_NilLoggerUsesTheDefault(t *testing.T) {
+	deps := productionDeps(t)
+	deps.Logger = nil
+
+	app, err := NewApp(deps)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+
+	if app.log != slog.Default() {
+		t.Error("a nil Logger should be replaced by slog.Default()")
+	}
+}
+
+func TestNewApp_RefusesMissingRequiredDeps(t *testing.T) {
+	tests := []struct {
+		name  string
+		unset func(*AppDeps) *AppDeps
+		want  string
+	}{
+		{"no deps", func(*AppDeps) *AppDeps { return nil }, "no AppDeps"},
+		{"no Fyne app", func(d *AppDeps) *AppDeps { d.FyneApp = nil; return d }, "FyneApp"},
+		{"no window", func(d *AppDeps) *AppDeps { d.Window = nil; return d }, "Window"},
+		{"no settings", func(d *AppDeps) *AppDeps { d.Settings = nil; return d }, "Settings"},
+		{
+			"all three",
+			func(d *AppDeps) *AppDeps { d.FyneApp, d.Window, d.Settings = nil, nil, nil; return d },
+			"FyneApp, Window, Settings",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, err := NewApp(tt.unset(productionDeps(t)))
+
+			if !errors.Is(err, ErrMissingAppDep) {
+				t.Fatalf("NewApp error = %v, want ErrMissingAppDep", err)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("NewApp error = %q, want it to name %q", err, tt.want)
+			}
+			if app != nil {
+				t.Error("NewApp returned an app with its error")
+			}
+		})
+	}
+}
 
 func TestApp_UnlockLoadsSecretsIntoList(t *testing.T) {
 	r := newAppRig(t, withSecrets(

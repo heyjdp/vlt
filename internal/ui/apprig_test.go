@@ -77,7 +77,8 @@ func withoutVault() rigOption {
 }
 
 // atLocation proposes the vault location text, as written (a prepared
-// folder, a server, a bad location); the rig makes no vault.
+// folder, a server, a bad location); the rig makes no vault, and its dir
+// is "".
 func atLocation(text string) rigOption {
 	return func(c *rigConfig) { c.location = &text }
 }
@@ -89,7 +90,7 @@ func withSettings(opts ...func(*Settings)) rigOption {
 
 // withLoadedSettings has the test load the settings itself from the test
 // app's preferences (LoadSettings, with its environment and default
-// location); the rig makes no vault.
+// location); the rig makes no vault, and its dir is "".
 func withLoadedSettings(load func(fyne.Preferences) *Settings) rigOption {
 	return func(c *rigConfig) { c.settingsFrom = load }
 }
@@ -120,13 +121,14 @@ func withFailingBrowser(err error) rigOption {
 // newAppRig builds an App, by default over an empty vault in a new folder,
 // with work run inline, a fake clock, a scripted picker, the cheap test
 // work factor and settings that are all zero (auto-lock off), and shows
-// its first screen.
+// its first screen. Options that contradict each other fail the test.
 func newAppRig(t *testing.T, opts ...rigOption) *appRig {
 	t.Helper()
 	var cfg rigConfig
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+	cfg.check(t)
 	a := test.NewTempApp(t)
 	r := &appRig{
 		t: t, fyneApp: a, window: test.NewTempWindow(t, nil),
@@ -162,6 +164,25 @@ func newAppRig(t *testing.T, opts ...rigOption) *appRig {
 	r.app = newApp(deps)
 	r.flush() // the look at the location
 	return r
+}
+
+// check fails the test if the options contradict each other: the rig's
+// own vault (withSecrets, withoutVault) is not made when the test chooses
+// the location (atLocation) or loads the settings (withLoadedSettings),
+// and settings the test loads are not changed by withSettings.
+func (c *rigConfig) check(t *testing.T) {
+	t.Helper()
+	ownVault := len(c.secrets) > 0 || c.noVault
+	switch {
+	case ownVault && c.location != nil:
+		t.Fatal("newAppRig: withSecrets and withoutVault need the rig's own vault, not atLocation")
+	case ownVault && c.settingsFrom != nil:
+		t.Fatal("newAppRig: withSecrets and withoutVault need the rig's own vault, not withLoadedSettings")
+	case c.location != nil && c.settingsFrom != nil:
+		t.Fatal("newAppRig: atLocation and withLoadedSettings both choose the location")
+	case len(c.settingsOpts) > 0 && c.settingsFrom != nil:
+		t.Fatal("newAppRig: withSettings does not apply to withLoadedSettings; change the loaded settings instead")
+	}
 }
 
 // spawn is the app's runner: work runs at once, or waits in the queue
@@ -432,10 +453,15 @@ func (r *appRig) listed() []*store.Secret {
 	return r.mainView().list.secrets
 }
 
-// selectSecret selects row i of the list, showing that secret.
+// selectSecret selects row i of the list as shown (filtered), showing
+// that secret.
 func (r *appRig) selectSecret(i int) {
 	r.t.Helper()
-	r.mainView().list.list.Select(i)
+	list := r.mainView().list
+	if i < 0 || i >= len(list.filtered) {
+		r.t.Fatalf("selectSecret(%d): the list shows %d rows", i, len(list.filtered))
+	}
+	list.list.Select(i)
 }
 
 // search types text into the list's search box.
@@ -459,7 +485,11 @@ func (r *appRig) openSettings() *SettingsScreen {
 // importFile imports f through Import File and the file chooser.
 func (r *appRig) importFile(f fyne.URIReadCloser) {
 	r.t.Helper()
-	test.Tap(findButton(r.mainView().content(), "Import File"))
+	b := findButton(r.mainView().content(), "Import File")
+	if b == nil {
+		r.t.Fatal("importFile: the main view has no Import File button")
+	}
+	test.Tap(b)
 	r.pick.answerFile(r.t, f, nil)
 }
 
