@@ -540,3 +540,67 @@ func TestLock_AReleaseRacingAThirdCopyLeavesTheNewerLockAside(t *testing.T) {
 		}
 	}
 }
+
+// takeOverHook holds a takeover's write of the lock until proceed is
+// closed, after telling entered.
+type takeOverHook struct {
+	vaultFS
+	entered chan<- struct{}
+	proceed <-chan struct{}
+}
+
+func (f takeOverHook) WriteFileAtomic(name string, data []byte) error {
+	if name == lockFile {
+		f.entered <- struct{}{}
+		<-f.proceed
+	}
+	return f.vaultFS.WriteFileAtomic(name, data)
+}
+
+// Quitting or locking can close a waiting store while Open Anyway takes its
+// lock over. Close waits for the takeover, then releases the lock it took:
+// a closed Store never leaves a lock behind.
+func TestLock_CloseDuringATakeOverWaitsForItAndLeavesNoLock(t *testing.T) {
+	t.Parallel()
+	dir := closedVault(t)
+	plantLockAt(t, dir, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
+	entered, proceed := make(chan struct{}), make(chan struct{})
+	s := openAt(t, dir, withFS(func(f vaultFS) vaultFS {
+		return takeOverHook{vaultFS: f, entered: entered, proceed: proceed}
+	}))
+
+	tookOver := make(chan error, 1)
+	go func() { tookOver <- s.TakeOver(context.Background()) }()
+	<-entered // the takeover is writing the lock
+	go s.Close()
+	select {
+	case <-s.Closed():
+		t.Fatal("Close finished while the lock was being taken over")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(proceed)
+
+	if err := <-tookOver; err != nil {
+		t.Fatalf("a takeover begun before Close should finish: %v", err)
+	}
+	<-s.Closed()
+	if _, err := os.Stat(filepath.Join(dir, lockFile)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Close should release the lock the takeover took: %v", err)
+	}
+}
+
+func TestLock_TakeOverAfterCloseFailsAndLeavesTheLockAlone(t *testing.T) {
+	t.Parallel()
+	dir := closedVault(t)
+	plantLockAt(t, dir, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
+	s := openAt(t, dir)
+	s.Close()
+	<-s.Closed()
+
+	if err := s.TakeOver(context.Background()); !errors.Is(err, ErrClosed) {
+		t.Fatalf("TakeOver after Close = %v, want ErrClosed", err)
+	}
+	if held, err := lockAt(t, dir); err != nil || held.Token != "theirs" {
+		t.Fatalf("a closed Store must not take the lock: %+v, %v", held, err)
+	}
+}

@@ -23,6 +23,9 @@ const lockFile = "vlt.lock"
 // returns when another copy of vlt has the vault open.
 var errVaultInUse = errors.New("the vault is open elsewhere")
 
+// ErrClosed is returned by TakeOver once Close has been called.
+var ErrClosed = errors.New("the vault has been closed")
+
 // LockInfo is the contents of vlt.lock: who has the vault open, and since
 // when. Token identifies the holder, so a Store only removes its own lock.
 type LockInfo struct {
@@ -87,8 +90,18 @@ func (s *Store) OpenElsewhere() (holder LockInfo, elsewhere bool) {
 
 // TakeOver takes over the lock OpenElsewhere reports, as when the user
 // chooses to open the vault anyway: vlt.lock then records this Store, and
-// Close releases it. It blocks on the vault's storage.
+// Close releases it. It blocks on the vault's storage, and may be called
+// from any goroutine.
+//
+// TakeOver and Close exclude each other, so a closed Store never leaves a
+// lock behind: once Close has been called, TakeOver returns ErrClosed and
+// writes nothing; a TakeOver already running when Close is called finishes
+// first, and Close then releases the lock it took.
 func (s *Store) TakeOver(ctx context.Context) error {
+	if !s.beginTakeOver() {
+		return fmt.Errorf("store.TakeOver: %w", ErrClosed)
+	}
+	defer s.takeOvers.Done()
 	if err := s.acquireLock(ctx, true); err != nil {
 		return fmt.Errorf("store.TakeOver: %w", err)
 	}
@@ -96,6 +109,28 @@ func (s *Store) TakeOver(ctx context.Context) error {
 	s.elsewhere = nil
 	s.lockMu.Unlock()
 	return nil
+}
+
+// beginTakeOver counts a takeover in, unless Close has been called. Counting
+// under lockMu, which Close takes to set closing before it waits, means
+// takeOvers is never added to while Close waits on it.
+func (s *Store) beginTakeOver() bool {
+	s.lockMu.Lock()
+	defer s.lockMu.Unlock()
+	if s.closing {
+		return false
+	}
+	s.takeOvers.Add(1)
+	return true
+}
+
+// refuseTakeOvers makes every later TakeOver fail. Close calls it at once,
+// then waits on takeOvers for those already running before it releases the
+// lock.
+func (s *Store) refuseTakeOvers() {
+	s.lockMu.Lock()
+	s.closing = true
+	s.lockMu.Unlock()
 }
 
 // acquireLock records in vlt.lock that this Store has the vault open. If

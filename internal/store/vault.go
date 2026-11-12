@@ -437,7 +437,8 @@ func (s *Store) ZeroKey() {
 }
 
 // Close zeroes the vault key at once, then releases the vault's lock file
-// (if this Store holds it) and, for a vault on a server, ends the
+// (if this Store holds it; a TakeOver still running is waited for first,
+// and none starts after Close) and, for a vault on a server, ends the
 // connection. For a local vault that cleanup is done before Close returns,
 // so it can block on a network folder that stops answering (the UI's
 // session therefore calls ZeroKey, then Close on another goroutine); for a
@@ -447,7 +448,9 @@ func (s *Store) ZeroKey() {
 func (s *Store) Close() {
 	s.id.Zero()
 	s.closeOnce.Do(func() {
+		s.refuseTakeOvers()
 		cleanup := func() {
+			s.takeOvers.Wait()
 			s.releaseLock()
 			if err := s.fs.Close(); err != nil {
 				s.log.Warn("closing the vault's connection", "err", err)
