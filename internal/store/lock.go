@@ -23,7 +23,8 @@ const lockFile = "vlt.lock"
 // returns when another copy of vlt has the vault open.
 var errVaultInUse = errors.New("the vault is open elsewhere")
 
-// ErrClosed is returned by TakeOver once Close has been called.
+// ErrClosed is returned by TakeOver once Close has been called, and by
+// ChangePassphrase once the vault key has been zeroed (ZeroKey or Close).
 var ErrClosed = errors.New("the vault has been closed")
 
 // LockInfo is the contents of vlt.lock: who has the vault open, and since

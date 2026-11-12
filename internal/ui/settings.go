@@ -15,7 +15,6 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/heyjdp/vlt/internal/crypto"
 	"github.com/heyjdp/vlt/internal/store"
 )
 
@@ -169,14 +168,13 @@ func (ss *SettingsScreen) buildChangePassphrase() *fyne.Container {
 // dialogs from a queued fyne.Do, so the message is queued after it.
 func (ss *SettingsScreen) passphraseChangeOutlived(err error) {
 	window := ss.window
-	switch {
-	case err == nil:
+	switch change := store.ChangeOf(err); {
+	case change == store.Changed:
 		fyne.Do(func() {
 			dialog.ShowInformation("Passphrase Changed",
 				"The vault locked as the passphrase change finished.\nYour vault key is now protected by the new passphrase; unlock it with the new passphrase.", window)
 		})
-	case errors.Is(err, context.Canceled) || errors.Is(err, crypto.ErrIdentityZeroed):
-		// Stopped before vlt.age was written: the lock came first.
+	case change == store.Unchanged && stoppedByTheLock(err):
 		fyne.Do(func() {
 			dialog.ShowInformation("Passphrase Not Changed",
 				"The vault locked before the change was saved, so the passphrase was not changed.\nUnlock with your current passphrase.", window)
@@ -187,18 +185,27 @@ func (ss *SettingsScreen) passphraseChangeOutlived(err error) {
 	}
 }
 
+// stoppedByTheLock reports whether a change failed because the vault
+// locked: its context was cancelled, or the store closed.
+func stoppedByTheLock(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, store.ErrClosed)
+}
+
 // passphraseChangeFailure says why a passphrase change failed. When the
-// server's reply was lost, vlt.age may have been renamed into place on the
-// server all the same, so the user is told the change may have been saved
+// store can't tell whether vlt.age was replaced (the server's reply to the
+// rename was lost, say), the user is told the change may have been saved
 // and which passphrase to try.
 func passphraseChangeFailure(err error) string {
 	switch {
+	case store.ChangeOf(err) == store.MaybeChanged:
+		text := errorMessage("Couldn't confirm the passphrase change", err) +
+			". The change may or may not have been saved"
+		if isServerError(err) {
+			text += ": the server may have made it though its reply was lost"
+		}
+		return text + ". If your current passphrase is refused next time you unlock, try the new one."
 	case errors.Is(err, store.ErrWrongPassphrase):
 		return "Current passphrase is incorrect"
-	case isServerError(err):
-		return errorMessage("Couldn't confirm the passphrase change", err) +
-			". The change may or may not have been saved: the server may have made it though its reply was lost. " +
-			"If your current passphrase is refused next time you unlock, try the new one."
 	}
 	return errorMessage("Couldn't change the passphrase", err)
 }

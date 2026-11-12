@@ -391,42 +391,116 @@ func encryptedToPassphrase(data []byte) bool {
 	return bytes.Contains(header, []byte("\n-> scrypt "))
 }
 
+// Change says how a change to the vault ended (see ChangeOf).
+type Change int
+
+const (
+	// Unchanged means the vault is as it was before the change.
+	Unchanged Change = iota + 1
+	// Changed means the change took effect.
+	Changed
+	// MaybeChanged means whether the change took effect is not known. Its
+	// write was made or sent but not confirmed: the server's reply to the
+	// rename that replaces the file was lost, or a local rename was made
+	// but could not be made durable.
+	MaybeChanged
+)
+
+// ChangeError is a change to the vault that failed: Change says whether the
+// vault is as it was (Unchanged) or may have changed all the same
+// (MaybeChanged), and Err why it failed. Its text is Err's.
+type ChangeError struct {
+	Change Change
+	Err    error
+}
+
+// Error returns Err's text.
+func (e *ChangeError) Error() string { return e.Err.Error() }
+
+// Unwrap returns Err.
+func (e *ChangeError) Unwrap() error { return e.Err }
+
+// ChangeOf says how the change that returned err ended: Changed for nil,
+// Unchanged for a *ChangeError that says so, and MaybeChanged for any other
+// error, since an error that does not say leaves the vault's state unknown.
+func ChangeOf(err error) Change {
+	if err == nil {
+		return Changed
+	}
+	var ce *ChangeError
+	if errors.As(err, &ce) && ce.Change == Unchanged {
+		return Unchanged
+	}
+	return MaybeChanged
+}
+
 // ChangePassphrase re-encrypts the vault key from oldPass to newPass. Only
 // vlt.age is rewritten, atomically, so an interrupted change leaves the old
-// passphrase working. It returns ErrWrongPassphrase if oldPass is incorrect.
-// ctx is checked before the final write.
+// passphrase working. It returns nil once the change took effect, and
+// otherwise a *ChangeError that says whether the vault changed (ChangeOf):
+//
+//   - Unchanged for every failure before vlt.age is replaced: a wrong
+//     oldPass (ErrWrongPassphrase), ctx cancelled (checked just before the
+//     write), the vault key zeroed by ZeroKey or Close (ErrClosed), a
+//     vlt.age that can't be read or holds another vault's key, a server
+//     that can't be reached or a connection lost before the rename is sent,
+//     and a write the storage refused.
+//   - MaybeChanged when the rename replacing vlt.age was sent to the server
+//     and the connection was lost before its reply (ErrConnectionLost), or
+//     was made on this computer but the folder could not be synced. Either
+//     passphrase may then unlock the vault.
 func (s *Store) ChangePassphrase(ctx context.Context, oldPass, newPass string) error {
+	err := s.changePassphrase(ctx, oldPass, newPass)
+	if err == nil {
+		s.log.Info("passphrase changed", "location", s.loc.String())
+		return nil
+	}
+	change := Unchanged
+	if writeUncertain(err) {
+		change = MaybeChanged
+	}
+	return &ChangeError{Change: change, Err: fmt.Errorf("store.ChangePassphrase: %w", err)}
+}
+
+// changePassphrase is ChangePassphrase's work. A vault key zeroed meanwhile
+// is ErrClosed.
+func (s *Store) changePassphrase(ctx context.Context, oldPass, newPass string) error {
 	data, err := s.fs.ReadFile(keyFile)
 	if err != nil {
-		return fmt.Errorf("store.ChangePassphrase: %w", err)
+		return err
 	}
 	s.opts.kdf()
 	current, err := crypto.UnwrapIdentity(oldPass, data)
 	if err != nil {
-		return fmt.Errorf("store.ChangePassphrase: %w", err)
+		return err
 	}
 	defer current.Zero()
 
 	same, err := sameKey(current, s.id)
 	if err != nil {
-		return fmt.Errorf("store.ChangePassphrase: %w", err)
+		return closedIfZeroed(err)
 	}
 	if !same {
-		return fmt.Errorf("store.ChangePassphrase: %w", errors.New("vlt.age does not hold this vault's key"))
+		return errors.New("vlt.age does not hold this vault's key")
 	}
 
 	wrapped, err := s.opts.wrap(newPass, s.id)
 	if err != nil {
-		return fmt.Errorf("store.ChangePassphrase: %w", err)
+		return closedIfZeroed(err)
 	}
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("store.ChangePassphrase: %w", err)
+		return err
 	}
-	if err := s.fs.WriteFileAtomic(keyFile, wrapped); err != nil {
-		return fmt.Errorf("store.ChangePassphrase: %w", err)
+	return s.fs.WriteFileAtomic(keyFile, wrapped)
+}
+
+// closedIfZeroed is ErrClosed for err if err says the vault key was zeroed
+// (the Store was closed, or its key zeroed, meanwhile), and err otherwise.
+func closedIfZeroed(err error) error {
+	if errors.Is(err, crypto.ErrIdentityZeroed) {
+		return ErrClosed
 	}
-	s.log.Info("passphrase changed", "location", s.loc.String())
-	return nil
+	return err
 }
 
 // ZeroKey zeroes the vault key at once, without touching the vault's

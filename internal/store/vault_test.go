@@ -281,8 +281,8 @@ func TestStore_ChangePassphrase_RejectsWrongCurrent(t *testing.T) {
 	}
 
 	err = s.ChangePassphrase(context.Background(), "not-the-passphrase", "new-passphrase")
-	if !errors.Is(err, store.ErrWrongPassphrase) {
-		t.Fatalf("expected ErrWrongPassphrase, got %v", err)
+	if !errors.Is(err, store.ErrWrongPassphrase) || store.ChangeOf(err) != store.Unchanged {
+		t.Fatalf("expected ErrWrongPassphrase, unchanged; got %v (%v)", err, store.ChangeOf(err))
 	}
 	keyAfter, err := os.ReadFile(filepath.Join(dir, "vlt.age"))
 	if err != nil {
@@ -306,10 +306,92 @@ func TestStore_ChangePassphrase_FailedWriteKeepsOldPassphrase(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	if err := s.ChangePassphrase(context.Background(), testPass, "new-passphrase"); err == nil {
-		t.Fatal("expected ChangePassphrase to fail in a read-only vault")
+	err := s.ChangePassphrase(context.Background(), testPass, "new-passphrase")
+	if err == nil || store.ChangeOf(err) != store.Unchanged {
+		t.Fatalf("ChangePassphrase in a read-only vault = %v; want it to fail, unchanged", err)
 	}
 	openVault(t, dir, testPass)
+}
+
+func TestChangeOf(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want store.Change
+	}{
+		{"success", nil, store.Changed},
+		{"unchanged", &store.ChangeError{Change: store.Unchanged, Err: errors.New("x")}, store.Unchanged},
+		{"unchanged, wrapped", fmt.Errorf("w: %w", &store.ChangeError{Change: store.Unchanged, Err: errors.New("x")}), store.Unchanged},
+		{"maybe changed", &store.ChangeError{Change: store.MaybeChanged, Err: errors.New("x")}, store.MaybeChanged},
+		{"an error that does not say", errors.New("x"), store.MaybeChanged},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := store.ChangeOf(tt.err); got != tt.want {
+				t.Fatalf("ChangeOf(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+// A change stopped before vlt.age is written (its context cancelled, or the
+// vault key zeroed by a lock) reports the vault unchanged, and the old
+// passphrase still opens it.
+func TestStore_ChangePassphrase_StoppedBeforeTheWriteIsUnchanged(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		stop func(s *store.Store, cancel context.CancelFunc)
+		want error
+	}{
+		{"context cancelled", func(_ *store.Store, cancel context.CancelFunc) { cancel() }, context.Canceled},
+		{"key zeroed", func(s *store.Store, _ context.CancelFunc) { s.ZeroKey() }, store.ErrClosed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			s := createVault(t, dir)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			tt.stop(s, cancel)
+
+			err := s.ChangePassphrase(ctx, testPass, "new-passphrase")
+			if !errors.Is(err, tt.want) || store.ChangeOf(err) != store.Unchanged {
+				t.Fatalf("ChangePassphrase = %v (%v); want %v, unchanged", err, store.ChangeOf(err), tt.want)
+			}
+			openVault(t, dir, testPass)
+		})
+	}
+}
+
+// When vlt.age was replaced but the folder could not be synced afterwards,
+// the change may not survive a crash: it is reported as maybe changed, not
+// as a failure that kept the old passphrase. A folder that can be written
+// but not read lets the rename through and fails the sync.
+func TestStore_ChangePassphrase_RenameNotMadeDurableIsMaybeChanged(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs Unix directory permissions and a non-root user")
+	}
+
+	dir := t.TempDir()
+	s := createVault(t, dir)
+	if err := os.Chmod(dir, 0o300); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	err := s.ChangePassphrase(context.Background(), testPass, "new-passphrase")
+	if store.ChangeOf(err) != store.MaybeChanged {
+		t.Fatalf("ChangePassphrase = %v (%v); want maybe changed", err, store.ChangeOf(err))
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	openVault(t, dir, "new-passphrase")
 }
 
 func TestStore_CopyTo_CopiesAllSecrets(t *testing.T) {

@@ -877,9 +877,16 @@ func TestSettings_APassphraseChangeFinishedAfterTheLockIsReported(t *testing.T) 
 	}
 }
 
-// A passphrase change the vault locked during reports how it ended: not
-// saved when the lock stopped it; possibly saved when the server's reply
-// was lost (the rename of vlt.age may have happened); otherwise the error.
+// changeFailed is a passphrase change the store reports as failed, having
+// left the vault as it was (Unchanged) or maybe changed it (MaybeChanged).
+func changeFailed(change store.Change, err error) error {
+	return &store.ChangeError{Change: change, Err: fmt.Errorf("store.ChangePassphrase: %w", err)}
+}
+
+// A passphrase change the vault locked during reports how the store says it
+// ended: not changed when the lock stopped it; possibly saved when the
+// store can't tell (the server's reply to the rename was lost); otherwise
+// the error.
 func TestSettings_APassphraseChangeEndedByALockReportsItsOutcome(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -888,22 +895,33 @@ func TestSettings_APassphraseChangeEndedByALockReportsItsOutcome(t *testing.T) {
 		notWant string
 	}{
 		{
-			"stopped by the lock", fmt.Errorf("store.ChangePassphrase: %w", context.Canceled),
+			"stopped by the lock", changeFailed(store.Unchanged, context.Canceled),
 			[]string{"the passphrase was not changed", "Unlock with your current passphrase"},
 			"may or may not",
 		},
 		{
-			"connection lost", fmt.Errorf("store.ChangePassphrase: %w", store.ErrConnectionLost),
+			"key zeroed by the lock", changeFailed(store.Unchanged, store.ErrClosed),
+			[]string{"the passphrase was not changed", "Unlock with your current passphrase"},
+			"may or may not",
+		},
+		{
+			"reply lost", changeFailed(store.MaybeChanged, store.ErrConnectionLost),
 			[]string{"may or may not have been saved", "try the new one"},
 			"was not changed",
 		},
 		{
-			"server unreachable", fmt.Errorf("store.ChangePassphrase: %w", store.ErrUnreachable),
-			[]string{"may or may not have been saved", "try the new one"},
+			// Never "not changed" while the store can't tell, whatever stopped it.
+			"maybe changed, then stopped", changeFailed(store.MaybeChanged, fmt.Errorf("%w: %w", store.ErrConnectionLost, context.Canceled)),
+			[]string{"may or may not have been saved"},
 			"was not changed",
 		},
 		{
-			"another error", fmt.Errorf("store.ChangePassphrase: %w", errors.New("disk full")),
+			"connection lost before the write", changeFailed(store.Unchanged, store.ErrConnectionLost),
+			[]string{"Couldn't change the passphrase: lost the connection"},
+			"may or may not",
+		},
+		{
+			"another error", changeFailed(store.Unchanged, errors.New("disk full")),
 			[]string{"Couldn't change the passphrase: disk full"},
 			"may or may not",
 		},
@@ -929,33 +947,44 @@ func TestSettings_APassphraseChangeEndedByALockReportsItsOutcome(t *testing.T) {
 }
 
 // A passphrase change that fails while the vault stays unlocked says why
-// under the form; when the server's reply was lost, that the change may
-// still have been saved.
+// under the form; when the store can't tell whether it was saved, that it
+// may have been, mentioning the server only for a vault on one.
 func TestPassphraseChangeFailure(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		err  error
-		want string
+		name    string
+		err     error
+		want    string
+		notWant string
 	}{
 		{
-			"wrong passphrase", fmt.Errorf("store.ChangePassphrase: %w", store.ErrWrongPassphrase),
-			"Current passphrase is incorrect",
+			"wrong passphrase", changeFailed(store.Unchanged, store.ErrWrongPassphrase),
+			"Current passphrase is incorrect", "may or may not",
 		},
 		{
-			"connection lost", fmt.Errorf("store.ChangePassphrase: %w", store.ErrConnectionLost),
-			"The change may or may not have been saved",
+			"reply lost", changeFailed(store.MaybeChanged, store.ErrConnectionLost),
+			"The change may or may not have been saved: the server may have made it though its reply was lost. " +
+				"If your current passphrase is refused next time you unlock, try the new one.", "Couldn't change",
 		},
 		{
-			"another error", fmt.Errorf("store.ChangePassphrase: %w", errors.New("disk full")),
-			"Couldn't change the passphrase: disk full",
+			"local rename not made durable", changeFailed(store.MaybeChanged, errors.New("sync dir: input/output error")),
+			"The change may or may not have been saved. If your current passphrase is refused", "server",
+		},
+		{
+			"server unreachable before the write", changeFailed(store.Unchanged, store.ErrUnreachable),
+			"Couldn't change the passphrase: cannot connect", "may or may not",
+		},
+		{
+			"another error", changeFailed(store.Unchanged, errors.New("disk full")),
+			"Couldn't change the passphrase: disk full", "may or may not",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := passphraseChangeFailure(tt.err); !strings.Contains(got, tt.want) {
-				t.Fatalf("passphraseChangeFailure = %q; want it to say %q", got, tt.want)
+			got := passphraseChangeFailure(tt.err)
+			if !strings.Contains(got, tt.want) || strings.Contains(got, tt.notWant) {
+				t.Fatalf("passphraseChangeFailure = %q; want it to say %q and not %q", got, tt.want, tt.notWant)
 			}
 		})
 	}
