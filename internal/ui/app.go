@@ -448,17 +448,14 @@ func (a *App) unlockedOrAsk(s *store.Store, setBusy func(bool), current func() b
 				return
 			}
 			// s stays waiting while its lock is taken over, so the auto-lock
-			// and quitting still cover it; Busy keeps them from closing it
-			// before the takeover ends.
-			if !a.session.Busy(s) {
+			// and quitting still cover it; a Close they start waits for the
+			// takeover, then releases the lock it took.
+			if a.session.Pending() != s {
 				return // already closed (timed out, or quitting)
 			}
 			setBusy(true)
 			background(a.run,
-				func(ctx context.Context) (none, error) {
-					defer a.session.Idle(s)
-					return none{}, s.TakeOver(ctx)
-				},
+				func(ctx context.Context) (none, error) { return none{}, s.TakeOver(ctx) },
 				func(_ none, err error) {
 					if !a.session.Take(s) {
 						return // closed meanwhile (timed out, or quitting)

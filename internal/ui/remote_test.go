@@ -518,3 +518,29 @@ func TestApp_QuitDuringATakeoverWaitsForTheStoresRelease(t *testing.T) {
 		t.Fatal("quitting should then find every store released")
 	}
 }
+
+// "Open Anyway" answered after the waiting store was let go (vlt is
+// quitting, which leaves the dialog up) does nothing: no takeover starts,
+// and the screen is not left busy.
+func TestApp_OpenAnywayAfterTheWaitingStoreWasLetGoDoesNothing(t *testing.T) {
+	dir := t.TempDir()
+	newVaultWith(t, dir)
+	plantLock(t, dir)
+	app, w, q := queuedLockApp(t, dir)
+
+	unlock(app)
+	runNext(t, q)
+	app.session.Close(0) // quitting lets the waiting store go
+	test.Tap(dialogButton(t, w, "Open Anyway"))
+	q.flush()
+
+	if app.unlockScreen == nil || app.unlockScreen.entry.Disabled() {
+		t.Fatal("the unlock screen should not be left busy")
+	}
+	if got := lockHolder(t, dir); got != "laptop.local" {
+		t.Fatalf("no takeover should run, the lock is held by %q", got)
+	}
+	if !app.session.Close(closeWait) || app.session.Store() != nil {
+		t.Fatal("the vault must stay locked, with every store released")
+	}
+}
