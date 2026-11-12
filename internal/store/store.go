@@ -71,9 +71,11 @@ type Store struct {
 	skipped []string
 
 	// lockMu guards lockToken, the token of the vault's lock file while this
-	// Store holds it (see lock.go).
+	// Store holds it, and elsewhere, the lock another copy of vlt held when
+	// this Store was opened, until TakeOver (see lock.go).
 	lockMu    sync.Mutex
 	lockToken string
+	elsewhere *LockInfo
 
 	closeOnce sync.Once
 	closed    chan struct{}

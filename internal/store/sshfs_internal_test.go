@@ -380,8 +380,8 @@ func TestRemoteStore_RealServer(t *testing.T) {
 	if c, err := r.session(); err != nil || !c.fsync {
 		t.Errorf("the server should offer fsync@openssh.com (%v)", err)
 	}
-	if err := s.AcquireLock(ctx, false); err != nil {
-		t.Fatalf("AcquireLock: %v", err)
+	if _, elsewhere := s.OpenElsewhere(); elsewhere {
+		t.Fatal("a new vault cannot be open elsewhere")
 	}
 	for i := range 20 {
 		sec := &Secret{Type: TypePassword, Name: "secret " + string(rune('a'+i)), Group: "test", Value: "v"}
@@ -453,9 +453,6 @@ func TestRemoteStore_ContentsKeepsNameOrderWithManyFiles(t *testing.T) {
 
 func TestRemoteStore_CloseReleasesTheLock(t *testing.T) {
 	s, _, dir := openRemoteVault(t)
-	if err := s.AcquireLock(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := os.Stat(filepath.Join(dir, lockFile)); err != nil {
 		t.Fatalf("lock not written: %v", err)
 	}

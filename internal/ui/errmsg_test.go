@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/heyjdp/vlt/internal/store"
+	"github.com/heyjdp/vlt/internal/testutil"
 	"github.com/heyjdp/vlt/internal/update"
 )
 
@@ -113,21 +114,6 @@ func TestErrorMessage_DescribesRealErrorsInPlainWords(t *testing.T) {
 			want: "Couldn't save the secret: a secret with that name already exists",
 		},
 		{
-			name:  "vault open elsewhere",
-			doing: "",
-			err: func(t *testing.T) error {
-				s, dir := openTestVault(t)
-				plantLock(t, dir)
-				err := s.AcquireLock(ctx, false)
-				var inUse *store.InUseError
-				if !errors.As(err, &inUse) {
-					t.Fatalf("AcquireLock = %v, want an *InUseError", err)
-				}
-				return fmt.Errorf("store.Open: %w", err) // as callers may wrap it
-			},
-			want: "The vault is open on laptop.local (user me, process 4242) since 29 Oct 2026 09:30 UTC",
-		},
-		{
 			name:  "bad location keeps its detail",
 			doing: "",
 			err: func(*testing.T) error {
@@ -143,7 +129,7 @@ func TestErrorMessage_DescribesRealErrorsInPlainWords(t *testing.T) {
 				s, _ := openTestVault(t)
 				cancelled, cancel := context.WithCancel(ctx)
 				cancel()
-				return s.AcquireLock(cancelled, false)
+				return s.Create(cancelled, testutil.PasswordSecret("a", "1", ""))
 			},
 			want: "Couldn't open the vault: it was cancelled",
 		},
@@ -154,7 +140,7 @@ func TestErrorMessage_DescribesRealErrorsInPlainWords(t *testing.T) {
 				s, _ := openTestVault(t)
 				expired, cancel := context.WithTimeout(ctx, 0)
 				defer cancel()
-				return s.AcquireLock(expired, false)
+				return s.Create(expired, testutil.PasswordSecret("a", "1", ""))
 			},
 			want: "Couldn't open the vault: it took too long",
 		},

@@ -361,9 +361,6 @@ func TestStore_ZeroKey_ZeroesTheKeyButLeavesTheLockForClose(t *testing.T) {
 	if err := s.Create(context.Background(), testutil.PasswordSecret("a", "1", "")); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AcquireLock(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
 	s.ZeroKey()
 
 	if _, err := s.Get(context.Background(), "a", ""); err == nil {

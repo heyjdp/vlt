@@ -61,6 +61,9 @@ func openLocation(ctx context.Context, location string, o options) (vaultFS, Loc
 	if err != nil {
 		return nil, loc, err
 	}
+	if o.wrapFS != nil {
+		fsys = o.wrapFS(fsys)
+	}
 	return fsys, loc, nil
 }
 

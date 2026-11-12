@@ -19,9 +19,9 @@ import (
 // the same secret wins. It holds no secrets, only who has the vault open.
 const lockFile = "vlt.lock"
 
-// ErrVaultInUse is matched (errors.Is) by the *InUseError AcquireLock
+// errVaultInUse is matched (errors.Is) by the *inUseError acquireLock
 // returns when another copy of vlt has the vault open.
-var ErrVaultInUse = errors.New("the vault is open elsewhere")
+var errVaultInUse = errors.New("the vault is open elsewhere")
 
 // LockInfo is the contents of vlt.lock: who has the vault open, and since
 // when. Token identifies the holder, so a Store only removes its own lock.
@@ -33,13 +33,13 @@ type LockInfo struct {
 	Token string    `json:"token"`
 }
 
-// InUseError reports the lock found by AcquireLock. Lock is zero if the lock
+// inUseError reports the lock found by acquireLock. Lock is zero if the lock
 // file could not be parsed, or this user may not read it.
-type InUseError struct {
+type inUseError struct {
 	Lock LockInfo
 }
 
-func (e *InUseError) Error() string {
+func (e *inUseError) Error() string {
 	if e.Lock.Host == "" {
 		return "the vault is open elsewhere (its lock file is unreadable)"
 	}
@@ -47,25 +47,73 @@ func (e *InUseError) Error() string {
 		e.Lock.Host, e.Lock.User, e.Lock.PID, e.Lock.Since.UTC().Format("2 Jan 2006 15:04 UTC"))
 }
 
-// Is makes errors.Is(err, ErrVaultInUse) match.
-func (e *InUseError) Is(target error) bool { return target == ErrVaultInUse }
+// Is makes errors.Is(err, errVaultInUse) match.
+func (e *inUseError) Is(target error) bool { return target == errVaultInUse }
 
-// AcquireLock records in vlt.lock that this Store has the vault open, until
-// Close. If another copy of vlt holds the lock it returns an *InUseError,
-// unless force is set, in which case the lock is taken over. A lock left by
-// a copy of vlt on this computer that is no longer running (after a crash)
-// is taken over without asking.
-func (s *Store) AcquireLock(ctx context.Context, force bool) error {
+// lock records in vlt.lock that this Store has the vault open, until Close.
+// Open and Create call it before returning the Store. If another copy of
+// vlt holds the lock, the Store is still returned, without the lock, and
+// OpenElsewhere reports who holds it. Any other failure (the lock cannot be
+// written, or read for a reason that says nothing about who holds it) is
+// logged and ignored: the lock only warns, and must not keep the user out
+// of their vault.
+func (s *Store) lock(ctx context.Context) {
+	err := s.acquireLock(ctx, false)
+	var inUse *inUseError
+	switch {
+	case errors.As(err, &inUse):
+		s.lockMu.Lock()
+		s.elsewhere = &inUse.Lock
+		s.lockMu.Unlock()
+	case err != nil:
+		s.log.Warn("cannot record that the vault is open", "err", err)
+	}
+}
+
+// OpenElsewhere reports whether another copy of vlt had the vault open when
+// this Store was opened or created, and if so its lock: holder is zero if
+// the lock file could not be parsed, or this user may not read it. A lock
+// left on this computer by a copy of vlt that is no longer running (after a
+// crash) is taken over without asking, and is not reported. Until TakeOver
+// succeeds, this Store does not hold the lock, and Close leaves it alone.
+func (s *Store) OpenElsewhere() (holder LockInfo, elsewhere bool) {
+	s.lockMu.Lock()
+	defer s.lockMu.Unlock()
+	if s.elsewhere == nil {
+		return LockInfo{}, false
+	}
+	return *s.elsewhere, true
+}
+
+// TakeOver takes over the lock OpenElsewhere reports, as when the user
+// chooses to open the vault anyway: vlt.lock then records this Store, and
+// Close releases it. It blocks on the vault's storage.
+func (s *Store) TakeOver(ctx context.Context) error {
+	if err := s.acquireLock(ctx, true); err != nil {
+		return fmt.Errorf("store.TakeOver: %w", err)
+	}
+	s.lockMu.Lock()
+	s.elsewhere = nil
+	s.lockMu.Unlock()
+	return nil
+}
+
+// acquireLock records in vlt.lock that this Store has the vault open. If
+// another copy of vlt holds the lock it returns an *inUseError, unless force
+// is set, in which case the lock is taken over. A lock left by a copy of vlt
+// on this computer that is no longer running (after a crash) is taken over
+// without asking.
+func (s *Store) acquireLock(ctx context.Context, force bool) error {
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("store.AcquireLock: %w", err)
+		return err // callers wrap
 	}
 	mine, err := newLockInfo()
 	if err != nil {
-		return fmt.Errorf("store.AcquireLock: %w", err)
+		return err // callers wrap
 	}
 	data, err := json.Marshal(mine)
 	if err != nil {
-		return fmt.Errorf("store.AcquireLock: %w", err)
+		return err // callers wrap
 	}
 
 	if !force {
@@ -76,7 +124,7 @@ func (s *Store) AcquireLock(ctx context.Context, force bool) error {
 	}
 
 	if err := s.fs.WriteFileAtomic(lockFile, data); err != nil {
-		return fmt.Errorf("store.AcquireLock: %w", err)
+		return err // callers wrap
 	}
 	s.setLockToken(mine.Token)
 	return nil
@@ -88,7 +136,7 @@ const lockAttempts = 3
 
 // tryLock creates the lock if it is free. It reports true if it took the
 // lock, false (and no error) if the existing lock is stale and may be
-// replaced, and an *InUseError if someone else holds it.
+// replaced, and an *inUseError if someone else holds it.
 func (s *Store) tryLock(data []byte, mine *LockInfo) (bool, error) {
 	var lost error
 	for range lockAttempts {
@@ -98,7 +146,7 @@ func (s *Store) tryLock(data []byte, mine *LockInfo) (bool, error) {
 			s.setLockToken(mine.Token)
 			return true, nil
 		case !errors.Is(err, fs.ErrExist):
-			return false, fmt.Errorf("store.AcquireLock: %w", err)
+			return false, err // callers wrap
 		}
 		held, err := s.readLock()
 		switch {
@@ -107,7 +155,7 @@ func (s *Store) tryLock(data []byte, mine *LockInfo) (bool, error) {
 		case errors.Is(err, errBadLock), errors.Is(err, fs.ErrPermission):
 			// Someone holds it, but who can't be read: a damaged lock, or
 			// another user's that this one may not read.
-			return false, &InUseError{}
+			return false, &inUseError{}
 		case errors.Is(err, ErrConnectionLost):
 			// The next call reconnects; try again for a real answer.
 			lost = err
@@ -115,18 +163,18 @@ func (s *Store) tryLock(data []byte, mine *LockInfo) (bool, error) {
 		case err != nil:
 			// A file system error says nothing about whether the vault is
 			// open elsewhere.
-			return false, fmt.Errorf("store.AcquireLock: %w", err)
+			return false, err
 		case isStale(&held, mine):
 			s.log.Info("taking over a stale vault lock", "host", held.Host, "pid", held.PID, "since", held.Since)
 			return false, nil
 		default:
-			return false, &InUseError{Lock: held}
+			return false, &inUseError{Lock: held}
 		}
 	}
 	if lost != nil {
-		return false, fmt.Errorf("store.AcquireLock: %w", lost)
+		return false, lost
 	}
-	return false, fmt.Errorf("store.AcquireLock: %w", fmt.Errorf("%s keeps appearing and disappearing", lockFile))
+	return false, fmt.Errorf("%s keeps appearing and disappearing", lockFile)
 }
 
 // isStale reports whether a lock was left on this computer by a process

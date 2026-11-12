@@ -85,6 +85,9 @@ type options struct {
 	// onKDF, when set, is called before every scrypt derivation. It exists
 	// so internal tests can count derivations.
 	onKDF func()
+	// wrapFS, when set, wraps the location's storage. It exists so internal
+	// tests can inject faults into Open and Create.
+	wrapFS func(vaultFS) vaultFS
 }
 
 // WithWorkFactor sets the scrypt work factor (log2 N) used when wrapping the
@@ -97,6 +100,11 @@ func WithWorkFactor(logN int) Option {
 // withDial replaces the ssh client for remote locations (tests only).
 func withDial(d dialFunc) Option {
 	return func(o *options) { o.dial = d }
+}
+
+// withFS wraps the location's storage (tests only).
+func withFS(wrap func(vaultFS) vaultFS) Option {
+	return func(o *options) { o.wrapFS = wrap }
 }
 
 func buildOptions(opts []Option) options {
@@ -181,7 +189,8 @@ func existsIn(fsys vaultFS) (bool, error) {
 // Create initialises a new vault at location: it generates a random vault
 // key, stores it encrypted to passphrase in vlt.age, and writes the format
 // marker. It returns ErrVaultExists if the location already holds a vault or
-// secret files, and ErrNotAFolder if it is a file.
+// secret files, and ErrNotAFolder if it is a file. Like Open, it takes the
+// vault's lock file before returning (see OpenElsewhere).
 func Create(ctx context.Context, location, passphrase string, log *slog.Logger, opts ...Option) (*Store, error) {
 	o := buildOptions(opts)
 	fsys, loc, err := openLocation(ctx, location, o)
@@ -193,6 +202,7 @@ func Create(ctx context.Context, location, passphrase string, log *slog.Logger, 
 		_ = fsys.Close()
 		return nil, err
 	}
+	s.lock(ctx)
 	return s, nil
 }
 
@@ -246,6 +256,12 @@ func create(fsys vaultFS, loc Location, passphrase string, log *slog.Logger, o o
 // ErrVaultNotFound if the location holds no vault, ErrKeyMissing if a
 // format-2 vault has lost vlt.age, and ErrUnsupportedFormat for a newer
 // format. For a vault on a server it keeps the connection open until Close.
+//
+// Before returning, Open records in the vault's lock file (vlt.lock) that
+// this Store has it open, until Close. A vault another copy of vlt has open
+// is still opened, without taking its lock: OpenElsewhere says so, and
+// TakeOver takes the lock over. A lock that cannot be written is logged
+// and does not stop Open.
 func Open(ctx context.Context, location, passphrase string, log *slog.Logger, opts ...Option) (*Store, error) {
 	o := buildOptions(opts)
 	fsys, loc, err := openLocation(ctx, location, o)
@@ -257,6 +273,7 @@ func Open(ctx context.Context, location, passphrase string, log *slog.Logger, op
 		_ = fsys.Close()
 		return nil, err
 	}
+	s.lock(ctx)
 	return s, nil
 }
 

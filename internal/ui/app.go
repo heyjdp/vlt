@@ -229,9 +229,6 @@ func (a *App) vaultErrorContent(dir string, err error) fyne.CanvasObject {
 // openResult is the outcome of a background unlock or create.
 type openResult struct {
 	store *store.Store
-	// inUse is set when the vault opened but another copy of vlt holds its
-	// lock; the user is asked before going on.
-	inUse *store.InUseError
 	// stillExists reports, after ErrVaultNotFound, whether leftover vault
 	// files remain (so the error is shown rather than offering to create).
 	stillExists bool
@@ -253,7 +250,7 @@ func (a *App) onUnlock(passphrase string) {
 			if err != nil {
 				return openResult{}, err
 			}
-			return a.lockVault(ctx, s), nil
+			return openResult{store: s}, nil
 		},
 		func(r openResult, err error) {
 			if a.unlockScreen != screen {
@@ -280,7 +277,7 @@ func (a *App) onUnlock(passphrase string) {
 			case err != nil:
 				screen.ShowError(errorMessage("Couldn't open the vault", err))
 			default:
-				a.unlockedOrAsk(r, screen.SetBusy, func() bool { return a.unlockScreen == screen })
+				a.unlockedOrAsk(r.store, screen.SetBusy, func() bool { return a.unlockScreen == screen })
 			}
 		})
 }
@@ -403,17 +400,13 @@ func (a *App) onCreate(passphrase string) {
 	screen.SetBusy(true)
 	dir := a.settings.Vault().String()
 	background(a.run,
-		func(ctx context.Context) (openResult, error) {
-			s, err := store.Create(ctx, dir, passphrase, a.log, a.storeOpts...)
-			if err != nil {
-				return openResult{}, err
-			}
-			return a.lockVault(ctx, s), nil
+		func(ctx context.Context) (*store.Store, error) {
+			return store.Create(ctx, dir, passphrase, a.log, a.storeOpts...)
 		},
-		func(r openResult, err error) {
+		func(s *store.Store, err error) {
 			if a.createScreen != screen {
-				if r.store != nil {
-					a.session.Discard(r.store)
+				if s != nil {
+					a.session.Discard(s)
 				}
 				return
 			}
@@ -422,38 +415,23 @@ func (a *App) onCreate(passphrase string) {
 				screen.ShowError(errorMessage("Couldn't create the vault", err))
 				return
 			}
-			a.unlockedOrAsk(r, screen.SetBusy, func() bool { return a.createScreen == screen })
+			a.unlockedOrAsk(s, screen.SetBusy, func() bool { return a.createScreen == screen })
 		})
 }
 
-// lockVault takes the vault's lock file for the opened store s (in the
-// background). If another copy of vlt holds it, the result says so and the
-// user is asked. Any other failure to write the lock is logged and ignored:
-// the lock only warns, and must not keep the user out of their vault.
-func (a *App) lockVault(ctx context.Context, s *store.Store) openResult {
-	err := s.AcquireLock(ctx, false)
-	var inUse *store.InUseError
-	switch {
-	case errors.As(err, &inUse):
-		return openResult{store: s, inUse: inUse}
-	case err != nil:
-		a.log.Warn("cannot record that the vault is open", "err", err)
-	}
-	return openResult{store: s}
-}
-
-// unlockedOrAsk goes on to the main view, unless another copy of vlt has
-// the vault open: then it asks first, and on "Open Anyway" takes the lock
-// over. current reports whether the screen that started the unlock is
-// still shown; if it is not, or the user cancels, the store is discarded.
-// Until the takeover ends the store stays with the session, waiting, so the
-// auto-lock and quitting zero its key and release it.
-func (a *App) unlockedOrAsk(r openResult, setBusy func(bool), current func() bool) {
-	if r.inUse == nil {
-		a.unlocked(r.store)
+// unlockedOrAsk goes on to the main view with the opened store s, unless
+// another copy of vlt has the vault open (s.OpenElsewhere): then it asks
+// first, and on "Open Anyway" takes the lock over. current reports whether
+// the screen that started the unlock is still shown; if it is not, or the
+// user cancels, the store is discarded. Until the takeover ends the store
+// stays with the session, waiting, so the auto-lock and quitting zero its
+// key and release it.
+func (a *App) unlockedOrAsk(s *store.Store, setBusy func(bool), current func() bool) {
+	holder, elsewhere := s.OpenElsewhere()
+	if !elsewhere {
+		a.unlocked(s)
 		return
 	}
-	s := r.store
 	// No answer within the auto-lock timeout: the session closes s, as it
 	// would lock an unlocked vault.
 	a.session.Hold(s, func() {
@@ -461,7 +439,7 @@ func (a *App) unlockedOrAsk(r openResult, setBusy func(bool), current func() boo
 		setBusy(false)
 	})
 	dialog.ShowCustomConfirm("Vault Already Open", "Open Anyway", "Cancel",
-		widget.NewLabel(inUseMessage(r.inUse)),
+		widget.NewLabel(inUseMessage(&holder)),
 		func(openAnyway bool) {
 			if !openAnyway || !current() {
 				if a.session.Take(s) {
@@ -479,7 +457,7 @@ func (a *App) unlockedOrAsk(r openResult, setBusy func(bool), current func() boo
 			background(a.run,
 				func(ctx context.Context) (none, error) {
 					defer a.session.Idle(s)
-					return none{}, s.AcquireLock(ctx, true)
+					return none{}, s.TakeOver(ctx)
 				},
 				func(_ none, err error) {
 					if !a.session.Take(s) {
@@ -498,10 +476,11 @@ func (a *App) unlockedOrAsk(r openResult, setBusy func(bool), current func() boo
 		}, a.window)
 }
 
-// inUseMessage explains a lock held by another copy of vlt.
-func inUseMessage(e *store.InUseError) string {
+// inUseMessage explains a lock held by another copy of vlt; l is zero when
+// the lock could not be read.
+func inUseMessage(l *store.LockInfo) string {
 	who := "Another copy of vlt"
-	if l := e.Lock; l.Host != "" {
+	if l.Host != "" {
 		who = fmt.Sprintf("vlt on %s (user %s, process %d) has had it open since %s.\nIt", l.Host, l.User, l.PID, formatTime(l.Since))
 	}
 	return who + " may still be using this vault. If both save the same secret, the\n" +
