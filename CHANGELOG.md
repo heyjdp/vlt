@@ -5,6 +5,8 @@ All notable changes to vlt are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-12
+
 ### Security
 - vlt refuses to open a passphrase-protected file (`vlt.age`, or a secret file in an older vault being upgraded) that demands more passphrase-hashing work than vlt ever uses (more than 2^20; vlt writes 2^18), and says so. Anyone who can change the vault's files, such as a server or a shared folder, could otherwise make every unlock use gigabytes of memory and take many seconds.
 - Built with the go1.27.4 toolchain, which fixes GO-2026-6859 in `net/http` (used by the update check).
