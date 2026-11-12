@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -490,6 +491,12 @@ func TestOpener_OpenAnywayTakesOverAndBeginsTheSession(t *testing.T) {
 // and the vault opens all the same: the lock only warns. The other copy's
 // lock stays.
 func TestOpener_AFailedTakeoverIsLoggedAndTheVaultOpens(t *testing.T) {
+	// A read-only folder makes the takeover's write fail; Windows doesn't
+	// apply Unix folder modes. The store's own test fails the takeover with
+	// injected storage faults on every system.
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs Unix folder permissions that apply to this user")
+	}
 	r := newOpenerRig(t, sessionTimeout)
 	var logged bytes.Buffer
 	r.o.log = slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn}))
