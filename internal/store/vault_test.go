@@ -599,3 +599,22 @@ func TestStore_Exists_TellsNestedVaultsFromGroups(t *testing.T) {
 		})
 	}
 }
+
+// A location that is a file, not a folder, is an error on every system, so
+// vlt says so rather than offering to create a vault there. (Windows reports
+// a path through a file as missing, where Unix says "not a directory".)
+func TestStore_Exists_AFileIsNotAVaultLocation(t *testing.T) {
+	t.Parallel()
+
+	file := filepath.Join(t.TempDir(), "not-a-folder")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exists, err := store.Exists(context.Background(), file)
+	if err == nil || exists || !errors.Is(err, store.ErrNotAFolder) {
+		t.Fatalf("Exists(file) = %v, %v; want ErrNotAFolder", exists, err)
+	}
+	if _, err := store.Create(context.Background(), file, testPass, quietLog(), store.WithWorkFactor(testWorkFactor)); !errors.Is(err, store.ErrNotAFolder) {
+		t.Fatalf("Create(file) = %v; want ErrNotAFolder", err)
+	}
+}
