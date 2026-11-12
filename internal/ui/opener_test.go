@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -481,6 +483,34 @@ func TestOpener_OpenAnywayTakesOverAndBeginsTheSession(t *testing.T) {
 	timer.f() // already firing when the takeover ended
 	if r.sess.Store() != got.store || len(r.posted) != 0 {
 		t.Fatal("the timer of an answered question must leave the vault alone")
+	}
+}
+
+// A takeover that fails (here, the folder has become read-only) is logged,
+// and the vault opens all the same: the lock only warns. The other copy's
+// lock stays.
+func TestOpener_AFailedTakeoverIsLoggedAndTheVaultOpens(t *testing.T) {
+	r := newOpenerRig(t, sessionTimeout)
+	var logged bytes.Buffer
+	r.o.log = slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	dir := r.waiting(t)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	r.o.OpenAnyway()
+	runNext(t, r.q)
+
+	got := r.last(t)
+	if got.kind != vaultOpened || r.sess.Store() != got.store || r.busy[len(r.busy)-1] {
+		t.Fatalf("the vault should open although its lock could not be taken over: %+v", got)
+	}
+	if !strings.Contains(logged.String(), "cannot take over the vault lock") {
+		t.Fatalf("the failed takeover should be logged, got %q", logged.String())
+	}
+	if lockHolder(t, dir) != "laptop.local" {
+		t.Fatal("the other copy's lock should be left as it was")
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -559,33 +560,74 @@ func (f takeOverHook) WriteFileAtomic(name string, data []byte) error {
 
 // Quitting or locking can close a waiting store while Open Anyway takes its
 // lock over. Close waits for the takeover, then releases the lock it took:
-// a closed Store never leaves a lock behind.
+// a closed Store never leaves a lock behind. The test runs in a synctest
+// bubble so that "Close has not finished" is checked once every goroutine
+// is blocked, not after a guessed delay.
 func TestLock_CloseDuringATakeOverWaitsForItAndLeavesNoLock(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := closedVault(t)
+		plantLockAt(t, dir, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
+		entered, proceed := make(chan struct{}), make(chan struct{})
+		s := openAt(t, dir, withFS(func(f vaultFS) vaultFS {
+			return takeOverHook{vaultFS: f, entered: entered, proceed: proceed}
+		}))
+
+		tookOver := make(chan error, 1)
+		go func() { tookOver <- s.TakeOver(context.Background()) }()
+		<-entered // the takeover is writing the lock
+		go s.Close()
+		synctest.Wait() // Close is blocked, or has finished
+		select {
+		case <-s.Closed():
+			t.Fatal("Close finished while the lock was being taken over")
+		default:
+		}
+		close(proceed)
+
+		if err := <-tookOver; err != nil {
+			t.Fatalf("a takeover begun before Close should finish: %v", err)
+		}
+		<-s.Closed()
+		if _, err := os.Stat(filepath.Join(dir, lockFile)); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("Close should release the lock the takeover took: %v", err)
+		}
+	})
+}
+
+// lockOverwriteFails makes replacing the lock fail, as taking it over from
+// a folder vlt may no longer write to would.
+type lockOverwriteFails struct {
+	vaultFS
+	err error
+}
+
+func (f lockOverwriteFails) WriteFileAtomic(name string, data []byte) error {
+	if name == lockFile {
+		return f.err
+	}
+	return f.vaultFS.WriteFileAtomic(name, data)
+}
+
+// A takeover that cannot write the lock fails: the vault is still open
+// elsewhere, the other copy's lock stays, and Close leaves it alone.
+func TestLock_ATakeOverThatCannotWriteTheLockFailsAndLeavesItAlone(t *testing.T) {
 	t.Parallel()
 	dir := closedVault(t)
 	plantLockAt(t, dir, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
-	entered, proceed := make(chan struct{}), make(chan struct{})
-	s := openAt(t, dir, withFS(func(f vaultFS) vaultFS {
-		return takeOverHook{vaultFS: f, entered: entered, proceed: proceed}
-	}))
+	writeErr := errors.New("read-only file system")
+	s := openAt(t, dir, withFS(func(f vaultFS) vaultFS { return lockOverwriteFails{vaultFS: f, err: writeErr} }))
 
-	tookOver := make(chan error, 1)
-	go func() { tookOver <- s.TakeOver(context.Background()) }()
-	<-entered // the takeover is writing the lock
-	go s.Close()
-	select {
-	case <-s.Closed():
-		t.Fatal("Close finished while the lock was being taken over")
-	case <-time.After(50 * time.Millisecond):
+	if err := s.TakeOver(context.Background()); !errors.Is(err, writeErr) {
+		t.Fatalf("TakeOver = %v, want the write error", err)
 	}
-	close(proceed)
-
-	if err := <-tookOver; err != nil {
-		t.Fatalf("a takeover begun before Close should finish: %v", err)
+	if holder, elsewhere := s.OpenElsewhere(); !elsewhere || holder.Token != "theirs" {
+		t.Fatalf("OpenElsewhere = %+v, %v; a failed takeover leaves the vault open elsewhere", holder, elsewhere)
 	}
+	s.Close()
 	<-s.Closed()
-	if _, err := os.Stat(filepath.Join(dir, lockFile)); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("Close should release the lock the takeover took: %v", err)
+	if held, err := lockAt(t, dir); err != nil || held.Token != "theirs" {
+		t.Fatalf("a failed takeover must leave the other copy's lock: %+v, %v", held, err)
 	}
 }
 

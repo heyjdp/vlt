@@ -3,10 +3,12 @@ package ui
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
@@ -183,7 +185,9 @@ func TestMainView_DeleteRemovesSecretFromList(t *testing.T) {
 
 func TestMainView_ImportAddsSecretToList(t *testing.T) {
 	f := newView(t)
-	f.view.files.importSecret(testutil.FileSecret("id_rsa", "id_rsa", "eA==", "keys"), importedFile{size: 1})
+	f.importFile(t, &fakeURIReader{Reader: strings.NewReader("x"), uri: storage.NewFileURI("/tmp/id_rsa")})
+	test.Type(dialogEntry(t, f.window), "keys")
+	test.Tap(dialogButton(t, f.window, "Import"))
 
 	if len(f.listed()) != 1 || f.listed()[0].Name != "id_rsa" {
 		t.Fatal("an imported file should be added to the list")
