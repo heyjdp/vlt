@@ -77,7 +77,7 @@ func inlineRunner() runner {
 // testOps returns operations on run for a component built without an App:
 // progress goes to a label nobody reads, and answers report no activity.
 func testOps(t *testing.T, run runner) *operations {
-	return newOperations(test.NewTempWindow(t, nil), run, widget.NewLabel(""), func() {}, nil, &scriptedPicker{})
+	return newOperations(test.NewTempWindow(t, nil), run, widget.NewLabel(""), func() {}, nil, nil, &scriptedPicker{})
 }
 
 // queue is a runner that holds work until flush, so tests can observe the

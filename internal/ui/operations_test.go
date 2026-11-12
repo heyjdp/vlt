@@ -24,7 +24,9 @@ type opsHarness struct {
 	activity int
 	// pauses and resumes count the auto-lock pauses taken and resumed.
 	pauses, resumes int
-	end             context.CancelFunc
+	// relocks counts the relocks asked for after a vault change.
+	relocks int
+	end     context.CancelFunc
 }
 
 func newOpsHarness(t *testing.T) *opsHarness {
@@ -39,7 +41,7 @@ func newOpsHarness(t *testing.T) *opsHarness {
 		h.pauses++
 		return func() { h.resumes++ }
 	}
-	h.ops = newOperations(h.w, h.q.runner().withContext(ctx), h.status, func() { h.activity++ }, pause, h.pick)
+	h.ops = newOperations(h.w, h.q.runner().withContext(ctx), h.status, func() { h.activity++ }, pause, func() { h.relocks++ }, h.pick)
 	return h
 }
 
@@ -182,22 +184,37 @@ func TestOperations_StartOwned_DeliversWithoutReleasing(t *testing.T) {
 	}
 }
 
-// Moving the vault and changing its passphrase pause the auto-lock until
-// they end, however they end; other work leaves it running.
-func TestOperations_Start_PausesTheAutoLockWhileAnOperationThatKeepsUnlockedRuns(t *testing.T) {
+// changing is a vault change that fails the test if it reports in a way
+// it should not: failed, changed and outlived all fail unless replaced.
+func changing(t *testing.T) *vaultChange {
+	t.Helper()
+	return &vaultChange{
+		failed:   func(err error) { t.Fatalf("failed(%v) must not run", err) },
+		changed:  func() notice { t.Fatal("changed must not run"); return notice{} },
+		outlived: func(err error) { t.Fatalf("outlived(%v) must not run", err) },
+	}
+}
+
+// A vault change pauses the auto-lock until it ends, however it ends;
+// other work leaves it running.
+func TestOperations_ChangeVault_PausesTheAutoLockUntilItEnds(t *testing.T) {
 	tests := []struct {
 		name string
-		work func(context.Context) (none, error)
+		err  error
 		lock bool // the session ends before the outcome arrives
 	}{
-		{"succeeds", succeed(none{}), false},
-		{"fails", fail(errors.New("boom")), false},
-		{"outlives the session", succeed(none{}), true},
+		{"succeeds", nil, false},
+		{"fails", errors.New("boom"), false},
+		{"outlives the session", nil, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newOpsHarness(t)
-			start(h.ops, &operation{kind: opVault, keepUnlocked: true, failed: func(error) {}}, tt.work, func(none) {})
+			h.ops.changeVault(&vaultChange{
+				failed:   func(error) {},
+				changed:  func() notice { return notice{} },
+				outlived: func(error) {},
+			}, func(context.Context) error { return tt.err })
 			if h.pauses != 1 || h.resumes != 0 {
 				t.Fatalf("while running: %d pauses, %d resumed; want the auto-lock paused", h.pauses, h.resumes)
 			}
@@ -219,9 +236,48 @@ func TestOperations_Start_PausesTheAutoLockWhileAnOperationThatKeepsUnlockedRuns
 	}
 }
 
-// Work whose outcome the user must hear of even after a lock (a passphrase
-// change that may have rewritten vlt.age) reports it through afterEnd.
-func TestOperations_Start_ReportsAnOutcomeDroppedAtTheLockToAfterEnd(t *testing.T) {
+// A vault change that took effect runs changed, relocks, and then tells
+// the user changed's notice; one that failed only reports the failure.
+func TestOperations_ChangeVault_RelocksOnceItTookEffect(t *testing.T) {
+	h := newOpsHarness(t)
+	btn := widget.NewButton("Go", nil)
+	change := changing(t)
+	change.progress, change.control = "Changing…", btn
+	relocksWhenChanged := -1
+	change.changed = func() notice {
+		relocksWhenChanged = h.relocks
+		return notice{"Changed", "It changed."}
+	}
+
+	h.ops.changeVault(change, func(context.Context) error { return nil })
+	if h.status.Text != "Changing…" || !btn.Disabled() {
+		t.Fatalf("while running: status %q, disabled %v", h.status.Text, btn.Disabled())
+	}
+	h.q.flush()
+
+	if relocksWhenChanged != 0 || h.relocks != 1 {
+		t.Fatalf("changed ran after %d relocks, and %d relocks in all; want changed first, then one relock", relocksWhenChanged, h.relocks)
+	}
+	if text := dialogText(t, h.w); !strings.Contains(text, "It changed.") {
+		t.Fatalf("the notice says %q", text)
+	}
+
+	h = newOpsHarness(t)
+	var got error
+	boom := errors.New("boom")
+	change = changing(t)
+	change.failed = func(err error) { got = err }
+	h.ops.changeVault(change, func(context.Context) error { return boom })
+	h.q.flush()
+	if !errors.Is(got, boom) || h.relocks != 0 {
+		t.Fatalf("failed got %v with %d relocks; want the failure and no relock", got, h.relocks)
+	}
+}
+
+// A vault change's outcome the session ended before (a passphrase change
+// that may have rewritten vlt.age) is reported to outlived, once, rather
+// than dropped; without outlived it says nothing.
+func TestOperations_ChangeVault_ReportsAnOutcomeAfterTheLockToOutlived(t *testing.T) {
 	boom := errors.New("boom")
 	tests := []struct {
 		name string
@@ -234,27 +290,76 @@ func TestOperations_Start_ReportsAnOutcomeDroppedAtTheLockToAfterEnd(t *testing.
 		t.Run(tt.name, func(t *testing.T) {
 			h := newOpsHarness(t)
 			var reports []error
-			work := func(context.Context) (none, error) {
+			change := changing(t)
+			change.outlived = func(err error) { reports = append(reports, err) }
+			h.ops.changeVault(change, func(context.Context) error {
 				h.end() // the vault locks after the work, before its delivery
-				return none{}, tt.err
-			}
-			start(h.ops, &operation{
-				doing:    "Couldn't",
-				failed:   func(error) { t.Fatal("failed must not run after the lock") },
-				afterEnd: func(err error) { reports = append(reports, err) },
-			}, work, func(none) { t.Fatal("done must not run after the lock") })
+				return tt.err
+			})
 			h.q.flush()
 
 			if len(reports) != 1 || !errors.Is(reports[0], tt.err) || (tt.err == nil && reports[0] != nil) {
-				t.Fatalf("afterEnd got %v; want once, with %v", reports, tt.err)
+				t.Fatalf("outlived got %v; want once, with %v", reports, tt.err)
+			}
+			if h.relocks != 0 {
+				t.Fatal("an outcome after the lock must not lock again")
 			}
 		})
 	}
 
 	h := newOpsHarness(t)
-	start(h.ops, &operation{afterEnd: func(error) { t.Fatal("a delivered outcome is not reported again") }},
-		succeed(none{}), func(none) {})
+	change := changing(t)
+	change.outlived = nil
+	h.ops.changeVault(change, func(context.Context) error { h.end(); return nil })
 	h.q.flush()
+	if h.w.Canvas().Overlays().Top() != nil {
+		t.Fatal("without outlived, an outcome after the lock says nothing")
+	}
+
+	h = newOpsHarness(t)
+	change = changing(t)
+	change.changed = func() notice { return notice{} }
+	h.ops.changeVault(change, func(context.Context) error { return nil })
+	h.q.flush() // outlived fails the test if a delivered outcome reaches it
+}
+
+// Only one vault change runs at a time, whether started with changeVault
+// or changeVaultNow; other kinds are not held up.
+func TestOperations_ChangeVault_OneAtATime(t *testing.T) {
+	h := newOpsHarness(t)
+	change := changing(t)
+	change.changed = func() notice { return notice{} }
+
+	if !h.ops.changeVault(change, func(context.Context) error { return nil }) {
+		t.Fatal("with nothing running, a vault change should start")
+	}
+	if h.ops.changeVault(changing(t), func(context.Context) error { return nil }) || h.status.Text != waitMessage {
+		t.Fatal("a second vault change should be refused, asking the user to wait")
+	}
+	if h.ops.changeVaultNow(func() { t.Fatal("a switch must not cut into a vault change") }) {
+		t.Fatal("changeVaultNow should be refused while a vault change runs")
+	}
+	if !start(h.ops, &operation{kind: opSecretChange}, succeed(none{}), func(none) {}) {
+		t.Fatal("other kinds should still start")
+	}
+	h.q.flush()
+	if len(h.q.pending) != 0 || !h.ops.changeVault(change, func(context.Context) error { return nil }) {
+		t.Fatal("once the vault change ends, another should start")
+	}
+	h.q.flush()
+}
+
+func TestOperations_ChangeVaultNow_RunsAtOnceThenRelocks(t *testing.T) {
+	h := newOpsHarness(t)
+	relocksWhenRun := -1
+	act := func() { relocksWhenRun = h.relocks }
+
+	if !h.ops.changeVaultNow(act) || relocksWhenRun != 0 || h.relocks != 1 {
+		t.Fatalf("ran after %d relocks, %d in all; want it run at once, then one relock", relocksWhenRun, h.relocks)
+	}
+	if !h.ops.changeVaultNow(act) || h.relocks != 2 {
+		t.Fatal("a change run at once should not keep vault changes busy")
+	}
 }
 
 func TestOperations_Start_ShowsProgressInADialogWhenTitled(t *testing.T) {
@@ -447,26 +552,5 @@ func TestOperations_PickSave_AfterTheEndAnswersAtOnce(t *testing.T) {
 	h.ops.pickSave("out.txt", "Couldn't export", answers.use)
 	if len(answers.got) != 1 || answers.got[0] != nil || len(h.pick.saves) != 0 {
 		t.Fatal("asking after the session ended should answer nil without a dialog")
-	}
-}
-
-func TestOperations_Now_RunsAtOnceUnlessItsKindIsRunning(t *testing.T) {
-	h := newOpsHarness(t)
-	ran := 0
-	act := func() { ran++ }
-
-	if !h.ops.now(&operation{kind: opVault}, act) || ran != 1 {
-		t.Fatal("with nothing running, now should run at once")
-	}
-	if !h.ops.now(&operation{kind: opVault}, act) || ran != 2 {
-		t.Fatal("an operation run by now should not keep its kind busy")
-	}
-	start(h.ops, &operation{kind: opVault}, succeed(none{}), func(none) {})
-	if h.ops.now(&operation{kind: opVault}, act) || ran != 2 || h.status.Text != waitMessage {
-		t.Fatal("while its kind runs, now should refuse and ask the user to wait")
-	}
-	h.q.flush()
-	if !h.ops.now(&operation{kind: opVault}, act) || ran != 3 {
-		t.Fatal("once the running operation ends, now should run again")
 	}
 }

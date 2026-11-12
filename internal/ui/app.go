@@ -97,7 +97,7 @@ func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, setti
 		newTimer: timers,
 		pick:     fynePicker{window: window},
 	}
-	app.ops = newOperations(window, run, nil, app.resetLockTimer, nil, app.pick)
+	app.ops = newOperations(window, run, nil, app.resetLockTimer, nil, nil, app.pick)
 
 	// Quitting is a lock-equivalent for the clipboard: the system clipboard
 	// outlives the process, so a copied secret is cleared first. Closing the
@@ -371,7 +371,7 @@ func (a *App) unlocked(ctx context.Context, s *store.Store) {
 // auto-lock may clear concurrently. work is bound to the session context:
 // work still in flight when the vault locks has its result dropped.
 func (a *App) showMainView(s *store.Store, work runner) {
-	a.sessionOps = newOperations(a.window, work, a.statusBar, a.resetLockTimer, a.session.Pause, a.pick)
+	a.sessionOps = newOperations(a.window, work, a.statusBar, a.resetLockTimer, a.session.Pause, a.Lock, a.pick)
 	ops := a.sessionOps
 	a.detailView = NewDetailView(a.window, s, a.clipboard.Copy, a.statusBar, a.log, ops)
 	a.detailView.newTimer = a.newTimer
@@ -467,10 +467,10 @@ func (a *App) Lock() {
 	})
 }
 
-// openSettings shows the Settings screen in the detail panel, wired to
-// relock when needed.
+// openSettings shows the Settings screen in the detail panel; its vault
+// changes run through ops, which relocks after them.
 func (a *App) openSettings(s *store.Store, ops *operations) *SettingsScreen {
-	settings := NewSettingsScreen(a.window, a.settings, s, a.statusBar, a.log, ops, a.Lock)
+	settings := NewSettingsScreen(a.window, a.settings, s, a.statusBar, a.log, ops)
 	settings.checkUpdates = a.checkForUpdates
 	a.detailView.ShowContent(settings.Content())
 	return settings
