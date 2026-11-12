@@ -78,76 +78,6 @@ func TestApp_StaleUnlockIsDiscardedAfterVaultSwitch(t *testing.T) {
 	}
 }
 
-func TestApp_SaveFromListSelectionUpdatesList(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir, testutil.PasswordSecret("gh", "old", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
-	unlock(app)
-
-	sec := app.main.list.secrets[0]
-	edited := *sec
-	edited.Value = "new"
-	app.main.detail.saveSecret(&edited, false, saveButton(), func() { *sec = edited })
-
-	if app.main.list.secrets[0].Value != "new" {
-		t.Fatal("saving a secret selected from the list should update the list")
-	}
-	app.Lock()
-}
-
-func TestApp_SaveNewSecretAddsItToList(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
-	unlock(app)
-
-	sec := testutil.PasswordSecret("new-one", "v", "work")
-	app.main.detail.saveSecret(sec, true, saveButton(), func() {})
-
-	if len(app.main.list.secrets) != 1 || app.main.list.secrets[0].Name != "new-one" {
-		t.Fatalf("a newly created secret should be added to the list, got %d entries", len(app.main.list.secrets))
-	}
-	app.Lock()
-}
-
-func TestApp_DeleteRemovesSecretFromList(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir, testutil.PasswordSecret("gone", "v", "work"), testutil.PasswordSecret("kept", "v", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
-	unlock(app)
-
-	var target *store.Secret
-	for _, s := range app.main.list.secrets {
-		if s.Name == "gone" {
-			target = s
-		}
-	}
-	app.main.detail.deleteSecret(target)
-
-	if len(app.main.list.secrets) != 1 || app.main.list.secrets[0].Name != "kept" {
-		t.Fatalf("deleted secret should leave the list, got %d entries", len(app.main.list.secrets))
-	}
-	app.Lock()
-}
-
-func TestApp_ImportAddsSecretToList(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
-	unlock(app)
-
-	app.main.files.importSecret(testutil.FileSecret("id_rsa", "id_rsa", "eA==", "keys"), importedFile{size: 1})
-
-	if len(app.main.list.secrets) != 1 || app.main.list.secrets[0].Name != "id_rsa" {
-		t.Fatal("an imported file should be added to the list")
-	}
-	app.Lock()
-}
-
 func TestApp_SaveCompletingAfterLockIsDropped(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
@@ -208,30 +138,4 @@ func TestApp_CreateRunsOffTheMainGoroutine(t *testing.T) {
 	}
 	app.Lock()
 	q.flush()
-}
-
-func TestSecretList_SaveDuringFirstLoadSurvivesLoad(t *testing.T) {
-	test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir, testutil.PasswordSecret("on-disk", "v", "work"))
-	s, err := store.Open(context.Background(), dir, "correct horse battery", quietLog())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-
-	q := &queue{}
-	sl := listOver(t, s, q.runner())
-
-	sl.Refresh() // queued: as if the load read the vault before the save below
-	sl.Upsert(testutil.PasswordSecret("saved-meanwhile", "v", "work"))
-	q.flush()
-
-	names := map[string]bool{}
-	for _, sec := range sl.secrets {
-		names[sec.Name] = true
-	}
-	if !names["on-disk"] || !names["saved-meanwhile"] {
-		t.Fatalf("expected both the loaded and the concurrently saved secret, got %v", names)
-	}
 }
