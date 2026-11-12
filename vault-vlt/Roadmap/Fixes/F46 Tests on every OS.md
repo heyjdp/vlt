@@ -44,7 +44,17 @@ created: 2026-11-12
 ## Outcome
 A review of every test for Windows and macOS risks (open files at `TempDir` cleanup, renames of open files, slash paths, modes, symlinks, `HOME`, external programs, global state under shuffle) found only the slash-path bug above; everything else is already skipped with a reason or works on Windows. Cross-checks: `GOOS=windows go vet` on store, crypto, totp, update and (with `CGO_ENABLED=0`) ui, and `go test -c` for Windows on the non-cgo packages. Four local runs with `-race -shuffle=on` (different seeds) passed.
 
-Low-risk leftovers, watched rather than changed: memguard locks one page per buffer and Windows allows only a few dozen locked pages by default (the suite peaks at 14 live buffers); a concurrent-create test may leave a `.tmp-*` hard link on Windows that it doesn't check for.
+Low-risk leftovers, watched rather than changed: memguard locks one page per buffer and Windows allows only a few dozen locked pages by default (the suite peaks at about 13 vault keys plus 3 other buffers); a concurrent-create test may leave a `.tmp-*` hard link on Windows that it doesn't check for.
+
+### Review
+Three independent verifiers checked the branch (config, tests, docs):
+- **Config**: every action SHA matches its version tag; with zizmor's `advanced-security: false` nothing is uploaded, so `contents: read` suffices; `filepath.FromSlash` is the right fix for Fyne's slash paths; the removed `//nolint` directives were truly dead.
+- **Tests**: no test is expected to fail on Windows.
+- **Docs**: CLAUDE.md's Makefile, go.mod, golangci-lint and static-analysis sections, README's tool table, test and hook wording, and the CHANGELOG section were out of date; fixed in a follow-up `docs:` commit, and `workflow-lint` got a 10-minute job limit.
+
+Residual risks on Windows, to watch in the first runs: the memguard locked-page limit above; Defender holding a file open and failing the rename in `writeFileAtomic`; timing bounds under `-race` on a slow runner; the remote/ssh tests are skipped there; and the `FromSlash` fix is only tested on Unix, where it is a no-op, until the Windows job runs.
+
+Done once the first CI run on GitHub is green on all three OSes.
 
 ## Acceptance criteria
 - [x] actionlint and zizmor clean; `make check` passes locally
@@ -53,5 +63,5 @@ Low-risk leftovers, watched rather than changed: memguard locks one page per buf
 
 ## Related
 - [[Roadmap]]
-- [[F47 Workflow linters]]
+- [[F47 Workflow linters]] (`depends_on`: both change `ci.yml`, `make check` and the hooks, and F46 builds on F47's versions of them)
 - [[F48 nolintlint]]

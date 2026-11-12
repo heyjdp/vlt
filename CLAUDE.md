@@ -285,123 +285,49 @@ vlt/
 
 ### 2.2 go.mod
 
-```go
-module github.com/heyjdp/vlt
-
-go 1.23
-
-require (
-    filippo.io/age v1.2.1
-    fyne.io/fyne/v2 v2.5.3
-    github.com/awnumar/memguard v0.22.5
-)
-```
+`go.mod` is the source of truth for the Go version and dependencies; manage it with `go get` and `go mod tidy`, never by hand. It sets `go 1.26.1` with `toolchain go1.27.4` (a patched Go, which CI's `setup-go` honours via `go-version-file: go.mod`).
 
 ### 2.3 Makefile
 
+`Makefile` is the source of truth for every target (build, packaging, release notes, screenshots). The checks, as CI runs them:
+
 ```makefile
-.PHONY: build run lint fmt vet test test-race test-cover bench vuln clean package-mac package-win package-linux
+fmt:  ## Format with the formatters configured in .golangci.yml (gofumpt, goimports)
+	golangci-lint fmt ./...
 
-BINARY   := vlt
-CMD      := ./cmd/vlt
-GOFLAGS  := -trimpath
-LDFLAGS  := -s -w
+test-race:  ## The tests as CI runs them
+	go test -race -shuffle=on -timeout 10m ./...
 
-build:
-    go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD)
+mod-check:  ## go.mod and go.sum are tidy and match the downloaded modules
+	go mod tidy -diff
+	go mod verify
 
-run:
-    go run $(CMD)
+workflow-lint:  ## actionlint, zizmor and shellcheck, as CI's workflow-lint job
+	actionlint
+	zizmor .
+	shellcheck packaging/*.sh packaging/*/*.sh
 
-fmt:
-    gofumpt -l -w .
-    goimports -l -w .
-
-lint:
-    golangci-lint run ./...
-
-vet:
-    go vet ./...
-
-test:
-    go test ./...
-
-test-race:
-    go test -race -shuffle=on -timeout 10m ./...
-
-test-cover:
-    go test -coverprofile=coverage.out ./...
-    go tool cover -html=coverage.out
-
-bench:
-    go test -bench=. -benchmem ./...
-
-vuln:
-    govulncheck ./...
-
-mod-check:
-    go mod tidy -diff
-    go mod verify
-
-workflow-lint:  ## actionlint (also shellchecks run: blocks), zizmor, shellcheck
-    actionlint
-    zizmor .
-    shellcheck packaging/*.sh packaging/*/*.sh
-
-# CI equivalent; checks only, never rewrites (lint reports formatting).
+# The checks CI runs, without changing any file.
 check: vet lint mod-check test-release-notes workflow-lint test-race vuln
-
-# Fyne cross-platform packaging (requires fyne CLI: go install fyne.io/fyne/v2/cmd/fyne@latest)
-package-mac:
-    fyne package -os darwin -icon Icon.png -name "vlt"
-
-package-win:
-    fyne package -os windows -icon Icon.png -name "vlt"
-
-package-linux:
-    fyne package -os linux -icon Icon.png -name "vlt"
-
-clean:
-    rm -f $(BINARY) coverage.out
-    rm -rf fyne-cross/
 ```
 
 ### 2.4 golangci-lint Configuration
 
+`.golangci.yml` (golangci-lint v2) is the source of truth. It uses the standard set plus correctness and security linters, not `enable-all`; formatting is a golangci-lint formatter, so `golangci-lint run` also reports unformatted code. Excerpt:
+
 ```yaml
-# .golangci.yml
 version: "2"
-
 linters:
-  enable-all: true
-  disable:
-    - depguard       # we manage deps manually
-    - exhaustruct    # too noisy for UI code
-    - gochecknoglobals  # Fyne requires some package-level vars
-    - wsl            # formatting — gofumpt handles this
-
-linters-settings:
-  govet:
-    enable-all: true
-  gofumpt:
-    module-path: github.com/heyjdp/vlt
-    extra-rules: true
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-      - performance
-  gosec:
-    excludes:
-      - G115  # integer overflow — accept in known-safe contexts
-
-issues:
-  exclude-rules:
-    - path: "_test.go"
-      linters:
-        - gosec
-        - errcheck
-        - dupl
+  default: standard
+  enable: [bodyclose, dupl, errorlint, gocritic, gosec, misspell, nilerr,
+           nolintlint, revive, unconvert, unparam]
+  settings:
+    nolintlint:
+      require-specific: true    # //nolint:<linter>, only for enabled linters
+      require-explanation: true # // and why
+      allow-unused: false       # dead suppressions are reported
+formatters:
+  enable: [gofumpt, goimports]
 ```
 
 ### 2.5 lefthook Configuration
@@ -860,8 +786,8 @@ go test -tags '!integration' ./...
 Run in this order (fastest to slowest):
 
 ```bash
-# 1. Format check (instant)
-gofumpt -l .
+# 1. Format check (instant; make fmt rewrites)
+golangci-lint fmt --diff ./...
 
 # 2. Vet (seconds)
 go vet ./...
@@ -869,10 +795,13 @@ go vet ./...
 # 3. Lint (seconds)
 golangci-lint run ./...
 
-# 4. Tests with race detector (seconds–minutes)
-go test -race ./...
+# 4. go.mod/go.sum tidy and verified; workflows and scripts linted
+make mod-check workflow-lint
 
-# 5. Vulnerability scan (seconds)
+# 5. Tests with race detector, random order (seconds–minutes)
+go test -race -shuffle=on -timeout 10m ./...
+
+# 6. Vulnerability scan (seconds)
 govulncheck ./...
 ```
 

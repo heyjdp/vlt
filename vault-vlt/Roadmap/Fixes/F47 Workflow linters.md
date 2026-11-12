@@ -38,6 +38,16 @@ created: 2026-11-12
 - **Decision: drop `--fix` rather than add `stage_fixed`.** The format hook runs `golangci-lint fmt --diff` in parallel, and a hook that rewrites the staged copy can commit changes nobody looked at; `make fmt` formats.
 - **Decision: actionlint via `go install`** rather than a release binary with a hand-kept checksum: one pinned version, and the checksum database does the verification.
 
+## Outcome
+Three independent verifiers checked the branch (config, tests, docs):
+- **Config**: every action SHA matches its version tag; with zizmor's `advanced-security: false` nothing is uploaded, so `contents: read` suffices; `filepath.FromSlash` is the right fix for Fyne's slash paths; the removed `//nolint` directives were truly dead.
+- **Tests**: no test is expected to fail on Windows.
+- **Docs**: CLAUDE.md's Makefile, go.mod, golangci-lint and static-analysis sections, README's tool table, test and hook wording, and the CHANGELOG section were out of date; fixed in a follow-up `docs:` commit, and `workflow-lint` got a 10-minute job limit.
+
+Residual risk: zizmor's online audits (impostor commits, known-vulnerable actions) and the job itself have only run locally and offline.
+
+Done once the first CI run on GitHub is green on all three OSes.
+
 ## Acceptance criteria
 - [x] actionlint v1.7.12, zizmor 1.32.0 (regular and auditor personas: only informational "job has no name") and shellcheck 0.11.0 report nothing locally
 - [x] `lefthook validate` passes; the actionlint, zizmor and shellcheck hooks pick up the right files (`lefthook run pre-commit --all-files`)

@@ -175,8 +175,9 @@ Three secret types share this structure:
 | golangci-lint | Linting and formatting (gofumpt, goimports) | `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0` |
 | govulncheck | Vulnerability scanning | `go install golang.org/x/vuln/cmd/govulncheck@v1.9.0` |
 | actionlint | GitHub Actions workflow checks (runs shellcheck on `run:` blocks) | `go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12` |
-| zizmor | GitHub Actions security audit | `brew install zizmor`, `pipx install zizmor==1.32.0` or `uv tool install zizmor@1.32.0` |
+| zizmor | GitHub Actions security audit | `pipx install zizmor==1.32.0`, `uv tool install zizmor@1.32.0`, or `brew install zizmor` (unpinned; CI pins 1.32.0) |
 | shellcheck | Shell script checks | `brew install shellcheck` or `apt install shellcheck` |
+| detect-secrets | Secret scanning (pre-commit hook) | `pipx install detect-secrets` |
 | lefthook | Git hooks (`lefthook install`) | `go install github.com/evilmartians/lefthook@latest` |
 
 ## Clone and Build
@@ -242,8 +243,8 @@ make package-linux  # dist/vlt-<version>-x86_64.AppImage, on Linux (needs curl a
 # Run all tests
 go test ./...
 
-# Run tests with race detector (recommended, used in CI)
-go test -race ./...
+# Run tests as CI does (-race -shuffle=on -timeout 10m)
+make test-race
 
 # Run a specific package
 go test -race ./internal/crypto/...
@@ -307,17 +308,17 @@ govulncheck ./...
 # The workflow and shell scripts: actionlint, zizmor, shellcheck
 make workflow-lint
 
-# Run everything CI runs (needs all the optional tools above)
+# Run everything CI runs (needs the optional tools above, except lefthook and detect-secrets)
 make check
 ```
 
 `make check` only checks; it changes no file (`make fmt` formats). It runs `go vet`, golangci-lint, `go mod tidy -diff` and `go mod verify`, the release-notes script's tests, actionlint, zizmor and shellcheck, the tests under the race detector in a random order (`-shuffle=on -timeout 10m`, as CI), and govulncheck. Without `GH_TOKEN` set, zizmor skips its online audits (impostor commits, known-vulnerable actions); CI runs them.
 
-The lefthook hooks (`lefthook install`) run golangci-lint (including the formatting check), shellcheck, actionlint and zizmor on the staged files they apply to, and detect-secrets, before each commit, and golangci-lint, the race-detector tests and govulncheck before each push. Like `make check`, they never rewrite a file.
+The lefthook hooks (`lefthook install`) run, before each commit, golangci-lint and its formatting check on the whole module (`./...`) when Go files are staged, and shellcheck, actionlint, zizmor and detect-secrets on the staged files they apply to; before each push, golangci-lint, the race-detector tests and govulncheck. Like `make check`, they never rewrite a file.
 
 Use golangci-lint v2.14 or later: earlier releases cannot read the export data of the Go 1.27 standard library this module's toolchain uses, and fail with "export data version" errors.
 
-The linter set (`.golangci.yml`) is golangci-lint's `standard` set plus `bodyclose`, `dupl`, `errorlint`, `gocritic`, `gosec`, `misspell`, `nilerr`, `nolintlint`, `revive`, `unconvert` and `unparam`. A `//nolint` directive must name its linter and give a reason (`//nolint:gosec // why`), and `nolintlint` reports one that no longer suppresses anything, so remove it. It can't see a directive for a linter that isn't enabled, so name only enabled ones. Two gosec rule groups are excluded for `internal/store`, with the reasons recorded in the config: file paths there are slugified names inside the user's vault directory, and the secret envelope's `password` field exists to be encrypted.
+The linter set (`.golangci.yml`) is golangci-lint's `standard` set plus `bodyclose`, `dupl`, `errorlint`, `gocritic`, `gosec`, `misspell`, `nilerr`, `nolintlint`, `revive`, `unconvert` and `unparam`. A `//nolint` directive must name its linter and give a reason (`//nolint:gosec // why`), and `nolintlint` reports one that no longer suppresses anything, so remove it. It can't see a directive for a linter that isn't enabled, so name only enabled ones. Two gosec rule groups are excluded for `internal/store`, with the reasons recorded in the config: file paths there are slugified names inside the user's vault directory, and the secret envelope's `password` field exists to be encrypted. golangci-lint checks only the files built for the OS it runs on (Linux in CI), so `internal/store/*_windows.go` are not linted; CI's Windows test job runs `go vet` on them.
 
 ### Continuous integration
 

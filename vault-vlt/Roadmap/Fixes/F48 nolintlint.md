@@ -6,7 +6,7 @@ aliases:
 tags:
   - fix
 severity: low
-status: in-progress
+status: done
 phase: 12
 area: tooling
 review_finding: Go skills audit 2026-11-11, item 11
@@ -32,6 +32,9 @@ created: 2026-11-12
 - **`nolintlint` is enabled** with `require-specific`, `require-explanation` and `allow-unused: false`: every directive names its linter and says why, and one that suppresses nothing is reported.
 - **The dead directives are gone.** Their reasons stay as plain comments (`// *PathError already names the file`), since they still explain why the error is returned unwrapped. The remaining eight directives (gosec ×5, errorlint ×2, nilerr ×1) each still suppress a real finding and keep their reasons.
 - **Decision: the wrapcheck ones were removed by hand.** `nolintlint` only reports an unused directive for an enabled linter, so it never flagged them; `.golangci.yml` and the README say to name only enabled linters.
+
+## Outcome
+The config verifier confirmed every removed directive was dead (G115 is excluded globally; wrapcheck is not enabled) and that the eight that remain each still suppress a real finding. Nothing here depends on a CI run. One caveat: golangci-lint runs on Linux, so a `//nolint` in an `internal/store/*_windows.go` file would not be checked (there are none today); README now says those files aren't linted.
 
 ## Acceptance criteria
 - [x] The pinned golangci-lint (v2.15.0) reports 0 issues with `nolintlint` enabled
