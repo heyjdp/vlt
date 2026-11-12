@@ -60,6 +60,8 @@ Four commits on `refactor/deepen-open-and-lock`, each with build, vet, `go test 
 
 Nothing changes for the user: the same "Vault Already Open" dialog, the same *Open Anyway* and *Cancel*, the same logging. The session's interface is two methods smaller; the lock file now lives wholly in `store`, tested through `Open`, `OpenElsewhere`, `TakeOver` and `Close` on temporary folders. `TestSession_ABusyStoreLetGoIsClosedOnceIdle` and `TestSession_ABusyStoreNotLetGoIsTheCallersOnceTaken` went with the methods they tested; the errmsg case built from an `*InUseError` went too, since that error no longer reaches the UI.
 
+Verification (2026-11-12): an independent code verifier found no regressions, and a test verifier found no flakes and every mutation caught. Follow-ups: `TakeOver`'s error return is now tested (`TestLock_ATakeOverThatCannotWriteTheLockFailsAndLeavesItAlone`, mutation-checked); the unused `errVaultInUse` and `inUseError.Is` were removed; `TestLock_CloseDuringATakeOverWaitsForItAndLeavesNoLock` checks that `Close` has not finished in a `synctest` bubble rather than after a 50 ms wait; the `ErrClosed` doc comment was corrected.
+
 ## Acceptance criteria
 - [x] `TestLock_OpenAndCreateRecordThisProcessAndCloseReleasesIt` and the open-elsewhere tests fail when `Open` does not take the lock
 - [x] `TestLock_ALockThatCannotBeWrittenIsLoggedAndTheVaultOpens` and `TestLock_ALockThatCannotBeReadIsLoggedNotOpenElsewhere` fail when the warning is dropped, and when any failure counts as open elsewhere

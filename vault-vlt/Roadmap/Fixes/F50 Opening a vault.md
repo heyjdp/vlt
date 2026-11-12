@@ -50,6 +50,8 @@ Two commits on `refactor/deepen-open-and-lock`, each with build, vet, `go test -
 
 Nothing changes for the user: the same screens, dialogs, wording, *Open Anyway*, *Cancel*, timeouts, *Retry*, *Open Existing Vault…* and server dialog, and the location is still saved only after a successful unlock. `app.go` is about 135 lines shorter and `session.go` about 85. The opener's tests use temporary vaults, a queued runner, hand-fired timers and a real session, without a window; App keeps tests for the dialog, *Cancel*, the timeout's screen, quitting and the `Abandon` wiring. No test peeks at a waiting store any more.
 
+Verification (2026-11-12): an independent code verifier found no regressions, and a test verifier found no flakes and every mutation caught. Follow-ups: the failed takeover is now tested (`TestOpener_AFailedTakeoverIsLoggedAndTheVaultOpens`: the vault opens, the failure is logged, the other copy's lock stays; mutation-checked); DESIGN now says that quitting during an unlock or create leaves that store's key in memory until the process exits, as before.
+
 ## Acceptance criteria
 - [x] Every opener test was mutation-checked: removing the screen check, a dropped store's release, `Cancel`, `Abandon`'s release of the Waiting vault, the timer, the timeout's busy reset or its screen check, the leftovers case, the takeover's "still waiting" check or timer stop, or making the screen busy each fails a test
 - [x] `TestOpener_QuitWhileTheWaitingVaultTimesOutWaitsForItsRelease` fails when the timer lets the vault go outside the opener's mutex

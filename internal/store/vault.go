@@ -391,7 +391,8 @@ func encryptedToPassphrase(data []byte) bool {
 	return bytes.Contains(header, []byte("\n-> scrypt "))
 }
 
-// Change says how a change to the vault ended (see ChangeOf).
+// Change says how a change to the vault ended (see ChangeOf). The zero
+// Change is not an outcome.
 type Change int
 
 const (

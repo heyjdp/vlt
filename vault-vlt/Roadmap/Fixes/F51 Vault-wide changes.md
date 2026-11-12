@@ -57,6 +57,8 @@ Two commits on `refactor/deepen-open-and-lock`, each with build, vet, `go test -
 
 For the user: the same dialogs and wording, except that a passphrase change that lost its server connection before the new key was sent now says the passphrase was not changed (it used to say it may have been saved), and a local change whose folder could not be synced says it may have been saved (it used to say it failed). CHANGELOG's entry for the lost-reply fix says so.
 
+Verification (2026-11-12): an independent code verifier found no regressions, and a test verifier found no flakes and every mutation caught. Documentation fixes: GLOSSARY (only a passphrase change has three outcomes; the auto-lock is held off during a vault change), CHANGELOG (a change that never reached the server is a failed change; the local folder-sync case is its own entry), the Security Model (a lost confirmation as a residual risk), and the `ErrClosed` and `Change` doc comments.
+
 ## Acceptance criteria
 - [x] Store tests for each outcome: changed; unchanged for a wrong passphrase, a refused write, a cancelled context and a zeroed key; maybe changed for a local rename whose folder sync fails (a folder that can be written but not read); over the in-process SFTP server, maybe changed when the rename reached the server and its reply was cut off (and the new passphrase opens the vault), unchanged when the connection dropped before the rename was sent
 - [x] Mutation-checked: dropping either backend's marker, marking every remote failure, dropping the zeroed-key mapping, ignoring the marker in `ChangePassphrase`, or making `ChangeOf` trust any `ChangeError` (or default to unchanged) each fails a test

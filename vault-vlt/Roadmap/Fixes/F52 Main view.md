@@ -58,6 +58,8 @@ Two commits on `refactor/deepen-open-and-lock`, each with build, vet, `go test -
 
 App field reach-ins in the panel tests: totp 62 → 0, detail 28 → 0, list 30 → 0, fileops 17 → 4 (one App-level lock test kept). Nothing changes for the user: same layout, actions, dialogs, wording and lock guarantees.
 
+Verification (2026-11-12): an independent code verifier found no regressions, and a test verifier found no flakes and every mutation caught. Follow-ups: `TestMainView_ImportAddsSecretToList` now goes through *Import File*, the file chooser and the group question; DESIGN's lock bullet now gives the order the code follows (dialogs dismissed and clipboard cleared, then `wipe`, then the view dropped).
+
 ## Acceptance criteria
 - [x] App builds the main view in one call and wipes it in one call; no post-construction field setting from App
 - [x] Panel tests build a main view without an App or an unlock; App-level tests remain for unlock → main view and lock → wipe (list and form emptied, export wiped, clipboard cleared, dialogs dismissed, key handlers removed)

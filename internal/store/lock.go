@@ -19,8 +19,9 @@ import (
 // the same secret wins. It holds no secrets, only who has the vault open.
 const lockFile = "vlt.lock"
 
-// ErrClosed is returned by TakeOver once Close has been called, and by
-// ChangePassphrase once the vault key has been zeroed (ZeroKey or Close).
+// ErrClosed is returned by TakeOver once Close has been called, and is
+// matched (errors.Is) by ChangePassphrase's error once the vault key has
+// been zeroed (ZeroKey or Close).
 var ErrClosed = errors.New("the vault has been closed")
 
 // LockInfo is the contents of vlt.lock: who has the vault open, and since
