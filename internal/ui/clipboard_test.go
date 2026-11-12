@@ -138,7 +138,7 @@ func TestApp_LockClearsCopiedSecret(t *testing.T) {
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir, withDefaultClipboardTTL), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
-	app.detailView.copyValue("ghp_secret")
+	app.main.detail.copyValue("ghp_secret")
 	if a.Clipboard().Content() != "ghp_secret" {
 		t.Fatal("copy did not reach the clipboard")
 	}
@@ -157,7 +157,7 @@ func TestApp_ClipboardTTLChangeAppliesToNextCopy(t *testing.T) {
 	unlock(app)
 
 	app.settings.SetClipboardTTL(5 * time.Second) // Settings slider
-	app.detailView.copyValue("x")
+	app.main.detail.copyValue("x")
 
 	if app.clipboard.remaining != 5 {
 		t.Fatalf("new TTL should apply to the next copy, countdown is %ds", app.clipboard.remaining)
@@ -193,7 +193,7 @@ func TestApp_QuitClearsCopiedSecret(t *testing.T) {
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir, withDefaultClipboardTTL), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
-	app.detailView.copyValue("ghp_secret")
+	app.main.detail.copyValue("ghp_secret")
 	app.quit()
 
 	if a.Clipboard().Content() != "" {

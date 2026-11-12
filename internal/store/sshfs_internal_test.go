@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -380,8 +381,8 @@ func TestRemoteStore_RealServer(t *testing.T) {
 	if c, err := r.session(); err != nil || !c.fsync {
 		t.Errorf("the server should offer fsync@openssh.com (%v)", err)
 	}
-	if err := s.AcquireLock(ctx, false); err != nil {
-		t.Fatalf("AcquireLock: %v", err)
+	if _, elsewhere := s.OpenElsewhere(); elsewhere {
+		t.Fatal("a new vault cannot be open elsewhere")
 	}
 	for i := range 20 {
 		sec := &Secret{Type: TypePassword, Name: "secret " + string(rune('a'+i)), Group: "test", Value: "v"}
@@ -451,16 +452,20 @@ func TestRemoteStore_ContentsKeepsNameOrderWithManyFiles(t *testing.T) {
 	}
 }
 
-func TestRemoteStore_CloseReleasesTheLock(t *testing.T) {
+// A remote Close, like a local one, has released the lock and ended the
+// connection when it returns: whether Close may block its caller is the
+// caller's to decide (the UI's session runs it on another goroutine).
+func TestRemoteStore_CloseReleasesTheLockBeforeReturning(t *testing.T) {
 	s, _, dir := openRemoteVault(t)
-	if err := s.AcquireLock(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := os.Stat(filepath.Join(dir, lockFile)); err != nil {
 		t.Fatalf("lock not written: %v", err)
 	}
 	s.Close()
-	<-s.Closed()
+	select {
+	case <-s.Closed():
+	default:
+		t.Fatal("Close returned before releasing the lock and the connection")
+	}
 	if _, err := os.Stat(filepath.Join(dir, lockFile)); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("a remote Close must release the lock: %v", err)
 	}
@@ -577,4 +582,111 @@ func TestRemoteFS_FailuresAreFileErrorsNamingTheFile(t *testing.T) {
 	if want := "write missing-group/x.age: "; !strings.HasPrefix(err.Error(), want) {
 		t.Fatalf("error text %q must still start %q for logs", err, want)
 	}
+}
+
+// replyLosingConn is the client's end of a pipe to the SFTP server that,
+// once the client sends a posix-rename naming target, lets the server make
+// the rename and then cuts the connection before the client reads the
+// reply, as a network failure at that moment would.
+type replyLosingConn struct {
+	net.Conn
+	target []byte
+	sent   atomic.Bool
+}
+
+func (c *replyLosingConn) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte(extPosixRename)) && bytes.Contains(p, c.target) {
+		c.sent.Store(true)
+	}
+	return c.Conn.Write(p)
+}
+
+func (c *replyLosingConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if c.sent.Load() {
+		_ = c.Close()
+		return 0, io.EOF
+	}
+	return n, err
+}
+
+// dialLosingReplies dials sessions that lose the reply to a rename onto
+// target (see replyLosingConn).
+func dialLosingReplies(target string) dialFunc {
+	return func(_ context.Context, _ Location) (*sftp.Client, io.Closer, error) {
+		clientConn, serverConn := net.Pipe()
+		server, err := sftp.NewServer(serverConn)
+		if err != nil {
+			return nil, nil, err
+		}
+		go func() { _ = server.Serve() }()
+		conn := &replyLosingConn{Conn: clientConn, target: []byte(target)}
+		client, err := sftp.NewClientPipe(conn, conn)
+		if err != nil {
+			_ = server.Close()
+			return nil, nil, err
+		}
+		return client, closerFunc(func() error {
+			err := client.Close()
+			_ = server.Close()
+			return err
+		}), nil
+	}
+}
+
+// The rename of vlt.age reached the server, which made it, but the reply
+// was lost: the store can't tell whether the passphrase changed and says
+// so, and the new passphrase is the one that opens the vault.
+func TestRemoteStore_ChangePassphraseWhoseReplyIsLostIsMaybeChanged(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pkg/sftp's server needs slash paths")
+	}
+	loc, dir := remoteLocation(t)
+	s, err := Create(context.Background(), loc.String(), internalPass, quiet(), WithWorkFactor(10),
+		withDial(dialLosingReplies(dir+"/"+keyFile)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close(); <-s.Closed() })
+
+	err = s.ChangePassphrase(context.Background(), internalPass, "a new passphrase here")
+	if ChangeOf(err) != MaybeChanged || !errors.Is(err, ErrConnectionLost) {
+		t.Fatalf("ChangePassphrase = %v (%v); want a lost connection, maybe changed", err, ChangeOf(err))
+	}
+	opened, err := Open(context.Background(), filepath.FromSlash(dir), "a new passphrase here", quiet(), WithWorkFactor(10))
+	if err != nil {
+		t.Fatalf("the server made the rename, so the new passphrase should open the vault: %v", err)
+	}
+	opened.Close()
+}
+
+// A connection lost before the rename is sent leaves vlt.age as it was:
+// the change is reported as not made, and the old passphrase still opens
+// the vault.
+func TestRemoteStore_ChangePassphraseCutOffBeforeTheRenameIsUnchanged(t *testing.T) {
+	s, srv, dir := openRemoteVault(t)
+	inner := s.fs
+	s.fs = dropOnWrite{vaultFS: inner, srv: srv}
+	defer func() { s.fs = inner }()
+
+	err := s.ChangePassphrase(context.Background(), internalPass, "a new passphrase here")
+	if ChangeOf(err) != Unchanged || !errors.Is(err, ErrConnectionLost) {
+		t.Fatalf("ChangePassphrase = %v (%v); want a lost connection, unchanged", err, ChangeOf(err))
+	}
+	opened, err := Open(context.Background(), filepath.FromSlash(dir), internalPass, quiet(), WithWorkFactor(10))
+	if err != nil {
+		t.Fatalf("the old passphrase should still open the vault: %v", err)
+	}
+	opened.Close()
+}
+
+// dropOnWrite drops the pipe server's sessions before each atomic write.
+type dropOnWrite struct {
+	vaultFS
+	srv *pipeServer
+}
+
+func (d dropOnWrite) WriteFileAtomic(name string, data []byte) error {
+	d.srv.drop()
+	return d.vaultFS.WriteFileAtomic(name, data)
 }

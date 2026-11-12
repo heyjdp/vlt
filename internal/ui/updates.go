@@ -147,7 +147,7 @@ func (a *App) checkAtStartup() {
 // view is showing; until then it waits, and unlocking calls it again. It
 // runs on the main goroutine.
 func (a *App) announceRelease() {
-	if a.pendingRelease == nil || a.mainContent == nil || a.checkedManually {
+	if a.pendingRelease == nil || a.main == nil || a.checkedManually {
 		return
 	}
 	rel := *a.pendingRelease

@@ -25,7 +25,8 @@ const tmpPrefix = ".tmp-"
 // the umask does not apply), fsyncs it, renames it over path, and fsyncs the
 // directory so the rename survives a crash (see syncDir for platform limits).
 // Atomicity is per file; callers that rewrite several files must order their
-// writes so that any prefix of them leaves the vault readable.
+// writes so that any prefix of them leaves the vault readable. A failure to
+// sync the directory, after the rename, is marked with mayHaveWritten.
 func writeFileAtomic(path string, data []byte) (err error) {
 	dir := filepath.Dir(path)
 
@@ -58,7 +59,10 @@ func writeFileAtomic(path string, data []byte) (err error) {
 	}
 
 	if err = syncDir(dir); err != nil {
-		return fmt.Errorf("writeFileAtomic: sync dir: %w", err)
+		// The rename was made, so path holds the new contents, but a crash
+		// may still undo it.
+		err = mayHaveWritten(fmt.Errorf("writeFileAtomic: sync dir: %w", err))
+		return err
 	}
 	return nil
 }

@@ -133,14 +133,14 @@ func TestSecretList_CountFollowsTheSearch(t *testing.T) {
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
-	if got := app.secretList.count.Text; got != "2 secrets" {
+	if got := app.main.list.count.Text; got != "2 secrets" {
 		t.Fatalf("count = %q", got)
 	}
-	test.Type(app.secretList.searchEntry, "git")
-	if got := app.secretList.count.Text; got != "1 of 2 secrets" {
+	test.Type(app.main.list.searchEntry, "git")
+	if got := app.main.list.count.Text; got != "1 of 2 secrets" {
 		t.Fatalf("count while searching = %q", got)
 	}
-	list := app.secretList
+	list := app.main.list
 	app.Lock()
 	if list.count.Text != "" {
 		t.Fatalf("count still shows %q after lock", list.count.Text)

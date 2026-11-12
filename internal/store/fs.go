@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -17,6 +18,11 @@ import (
 // WriteFileAtomic leaves either the old or the new contents, never a partial
 // file; WriteFileExclusive never replaces an existing file; new files are
 // mode 0600 and new directories 0700. Methods may be called concurrently.
+//
+// A WriteFileAtomic failure after which name may hold the new contents all
+// the same is marked so (see writeUncertain): the rename that replaces name
+// was made but could not be made durable, or was sent to a server whose
+// reply was lost. Any other failure leaves the old contents.
 type vaultFS interface {
 	ReadFile(name string) ([]byte, error)
 	ReadDir(name string) ([]fs.DirEntry, error)
@@ -33,8 +39,6 @@ type vaultFS interface {
 	// SyncDir makes a preceding rename or removal in a directory durable,
 	// where the storage supports it.
 	SyncDir(name string) error
-	// Local reports whether the storage is this computer's file system.
-	Local() bool
 	Close() error
 }
 
@@ -60,6 +64,9 @@ func openLocation(ctx context.Context, location string, o options) (vaultFS, Loc
 	fsys, err := openFS(ctx, loc, o)
 	if err != nil {
 		return nil, loc, err
+	}
+	if o.wrapFS != nil {
+		fsys = o.wrapFS(fsys)
 	}
 	return fsys, loc, nil
 }
@@ -104,7 +111,6 @@ func (l localFS) WriteFileExclusive(name string, data []byte) error {
 
 func (l localFS) SyncDir(name string) error { return syncDir(l.abs(name)) }
 
-func (localFS) Local() bool  { return true }
 func (localFS) Close() error { return nil }
 
 // String names the directory in messages.
@@ -112,6 +118,25 @@ func (l localFS) String() string { return l.root }
 
 // check fails if fsys is not a vaultFS (compile-time).
 var _ vaultFS = localFS{}
+
+// uncertainWriteError is a WriteFileAtomic failure after which the file
+// may hold the new contents. Its text is the failure's own.
+type uncertainWriteError struct{ err error }
+
+func (e uncertainWriteError) Error() string { return e.err.Error() }
+
+func (e uncertainWriteError) Unwrap() error { return e.err }
+
+// mayHaveWritten marks err, a WriteFileAtomic failure, as one after which
+// the file may hold the new contents.
+func mayHaveWritten(err error) error { return uncertainWriteError{err: err} }
+
+// writeUncertain reports whether err is, or wraps, a WriteFileAtomic failure
+// after which the file may hold the new contents.
+func writeUncertain(err error) bool {
+	var u uncertainWriteError
+	return errors.As(err, &u)
+}
 
 // errorf wraps err as a file error for the operation and the name it was
 // applied to, as the os package reports a local one, so that what was done

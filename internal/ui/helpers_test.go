@@ -77,7 +77,7 @@ func inlineRunner() runner {
 // testOps returns operations on run for a component built without an App:
 // progress goes to a label nobody reads, and answers report no activity.
 func testOps(t *testing.T, run runner) *operations {
-	return newOperations(test.NewTempWindow(t, nil), run, widget.NewLabel(""), func() {}, nil, &scriptedPicker{})
+	return newOperations(test.NewTempWindow(t, nil), run, widget.NewLabel(""), func() {}, nil, nil, &scriptedPicker{})
 }
 
 // queue is a runner that holds work until flush, so tests can observe the
@@ -169,7 +169,7 @@ func unlockQueued(t *testing.T, app *App, q *queue) {
 	open := q.pending[0]
 	q.pending = q.pending[1:]
 	open()
-	if app.secretList == nil {
+	if app.main == nil {
 		t.Fatal("expected the main view after the open completes")
 	}
 }
@@ -426,8 +426,8 @@ func pickerOf(app *App) *scriptedPicker {
 	}
 	p := &scriptedPicker{}
 	app.pick, app.ops.pick = p, p
-	if app.sessionOps != nil {
-		app.sessionOps.pick = p
+	if app.main != nil {
+		app.main.ops.pick = p
 	}
 	return p
 }
@@ -437,7 +437,7 @@ func pickerOf(app *App) *scriptedPicker {
 func importFile(t *testing.T, app *App, r fyne.URIReadCloser) {
 	t.Helper()
 	p := pickerOf(app)
-	test.Tap(findButton(app.mainContent, "Import File"))
+	test.Tap(findButton(app.main.content(), "Import File"))
 	p.answerFile(t, r, nil)
 }
 

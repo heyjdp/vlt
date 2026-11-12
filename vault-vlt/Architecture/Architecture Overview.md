@@ -15,7 +15,7 @@ vlt follows the layered layout from the project's `CLAUDE.md`: a thin Fyne inter
 graph TD
     subgraph Interface["Interface layer"]
         main["cmd/vlt/main.go<br/>config, logging, Fyne bootstrap"]
-        ui["internal/ui<br/>App, UnlockScreen, CreateScreen,<br/>SecretList, DetailView, FileOps, Settings, Theme"]
+        ui["internal/ui<br/>App, opener, session, UnlockScreen, CreateScreen,<br/>SecretList, DetailView, FileOps, Settings, Theme"]
     end
     subgraph Domain["Domain + storage"]
         store["internal/store<br/>Create/Open/ChangePassphrase,<br/>migration, CRUD, copy"]
@@ -44,10 +44,10 @@ graph TD
 |---|---|---|
 | `cmd/vlt` | Read env config, set up `slog`, create the Fyne app and window | `main.go` |
 | `internal/crypto` | Generate the X25519 vault key and hold it in memguard; wrap/unwrap it with the passphrase (scrypt); encrypt and decrypt secrets to it | `identity.go`, `vault.go` |
-| `internal/store` | `Secret` JSON envelope, slugs and groups, which files are secrets (the layout walker; `SecretID`, `GroupID`), CRUD, vault create/open/change-passphrase, format-1 migration, atomic writes, copy; storage on local disk or an SSH server; the vault lock | `secret.go`, `layout.go`, `store.go`, `vault.go`, `migrate.go`, `atomic.go`, `fs.go`, `location.go`, `sshfs.go`, `lock.go` |
+| `internal/store` | `Secret` JSON envelope, slugs and groups, which files are secrets (the layout walker; `SecretID`, `GroupID`), CRUD, vault create/open/change-passphrase, format-1 migration, atomic writes, copy; storage on local disk or an SSH server; the vault's lock file, held from `Open` to `Close` | `secret.go`, `layout.go`, `store.go`, `vault.go`, `migrate.go`, `atomic.go`, `fs.go`, `location.go`, `sshfs.go`, `lock.go` |
 | `internal/totp` | One-time codes (RFC 6238) from a record's base32 secret or `otpauth://` link; standard library only | `totp.go` |
 | `internal/update` | Ask GitHub for the latest release (one HTTPS GET, read only) and compare it with this build's `git describe` version | `update.go` |
-| `internal/ui` | Vault session (open/waiting store, auto-lock), screens, background runner, operations with feedback (progress, one re-entry policy, confirmations, file choosers behind the `picker` seam), clipboard TTL, file import/export, error wording (every error shown in plain words, without package prefixes), a settings module (each setting's env rule, clamping and saving to Fyne preferences; the vault location proposed, then committed after an unlock), theme and shared styling | `app.go`, `session.go`, `runner.go`, `operations.go`, `picker.go`, `errmsg.go`, `activity.go`, `clipboard.go`, `config.go`, `create.go`, `unlock.go`, `detail.go`, `list.go`, `fileops.go`, `settings.go`, `style.go`, `theme.go`, `about.go`, `updates.go`, `totp.go`, `icon.png` |
+| `internal/ui` | Opening a vault (location → unlock or create → session, holding the Waiting vault until the person answers), vault session (open store, auto-lock), screens, the main view (list, detail panel and file import/export, wired together for one session and wiped in one step on lock), background runner, operations with feedback (progress, one re-entry policy, confirmations, file choosers behind the `picker` seam), clipboard TTL, file import/export, error wording (every error shown in plain words, without package prefixes), a settings module (each setting's env rule, clamping and saving to Fyne preferences; the vault location proposed, then committed after an unlock), theme and shared styling | `app.go`, `mainview.go`, `opener.go`, `session.go`, `runner.go`, `operations.go`, `picker.go`, `errmsg.go`, `activity.go`, `clipboard.go`, `config.go`, `create.go`, `unlock.go`, `detail.go`, `list.go`, `fileops.go`, `settings.go`, `style.go`, `theme.go`, `about.go`, `updates.go`, `totp.go`, `icon.png` |
 | `internal/testutil` | Test identities and secret builders | `fixtures.go` |
 
 ## Lock state machine
@@ -73,7 +73,7 @@ stateDiagram-v2
     Unlocked --> Unlocked: user input resets timer
 ```
 
-Widget input (entries, buttons, list selection, sliders), unfocused key presses and dialog answers reset the timer. A warning shows 30 s before locking when the timeout is 60 s or more. While the vault is moved or its passphrase changed, the auto-lock waits (no warning) for up to an hour without input, then counts down in full; *Lock* still locks at once. Locking zeroes the key at once; the lock file is released in the background ([[F45 Lock without freezing]]). See [[F07 Inactivity-based auto-lock]] and [[F44 Auto-lock during long operations]].
+Widget input (entries, buttons, list selection, sliders), unfocused key presses and dialog answers reset the timer. A warning shows 30 s before locking when the timeout is 60 s or more. While the vault is moved or its passphrase changed, the auto-lock waits (no warning) for up to an hour without input, then counts down in full; *Lock* still locks at once. Locking zeroes the key at once; the lock file is released in the background ([[F45 Lock without freezing]]). The store owns the lock file from `Open` to `Close`, and a takeover (*Open Anyway*) and `Close` never overlap ([[F49 Store owns its lock file]]). Locked, Creating, Unlocking and Asking belong to the opener: it reports one outcome per attempt, holds the Waiting vault while Asking (letting it go on *Cancel*, the timeout, a replaced screen or quitting), and hands the vault to the session only on Unlocked ([[F50 Opening a vault]]). Unlocked shows the main view; locking wipes it in one step (operations ended, a pending export wiped, the one-time code stopped, forms blanked, loaded secrets emptied) and drops it ([[F52 Main view]]). See [[F07 Inactivity-based auto-lock]] and [[F44 Auto-lock during long operations]].
 
 ## Dependencies
 

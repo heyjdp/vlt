@@ -1,17 +1,22 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
-// openedVault creates a local vault and returns it open.
+// openedVault creates a local vault and returns it open, holding its lock.
 func openedVault(t *testing.T) *Store {
 	t.Helper()
 	s, err := Create(context.Background(), t.TempDir(), internalPass, quiet(), WithWorkFactor(10))
@@ -22,100 +27,176 @@ func openedVault(t *testing.T) *Store {
 	return s
 }
 
+// closedVault creates a local vault, closes it (releasing its lock) and
+// returns its folder.
+func closedVault(t *testing.T) string {
+	t.Helper()
+	s := openedVault(t)
+	s.Close()
+	<-s.Closed()
+	return s.loc.Path
+}
+
+// openAt opens the vault in dir, as a later unlock would.
+func openAt(t *testing.T, dir string, opts ...Option) *Store {
+	t.Helper()
+	s, err := Open(context.Background(), dir, internalPass, quiet(), append([]Option{WithWorkFactor(10)}, opts...)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	return s
+}
+
+// recordingLog returns a logger that keeps warnings and errors in buf.
+func recordingLog() (*slog.Logger, *syncBuffer) {
+	buf := &syncBuffer{}
+	return slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelWarn})), buf
+}
+
+// syncBuffer is a bytes.Buffer safe for concurrent use.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // plantLock writes a lock as another copy of vlt would.
 func plantLock(t *testing.T, s *Store, info *LockInfo) {
+	t.Helper()
+	plantLockAt(t, s.loc.Path, info)
+}
+
+// plantLockAt writes a lock in the vault in dir as another copy of vlt
+// would.
+func plantLockAt(t *testing.T, dir string, info *LockInfo) {
 	t.Helper()
 	data, err := json.Marshal(info)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.fs.WriteFileAtomic(lockFile, data); err != nil {
+	if err := (localFS{root: dir}).WriteFileAtomic(lockFile, data); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestLock_AcquireRecordsThisProcessAndCloseReleasesIt(t *testing.T) {
-	t.Parallel()
-	s := openedVault(t)
-	if err := s.AcquireLock(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
-	held, err := s.readLock()
+// lockAt reads the lock in the vault in dir from disk, past any faults a
+// test injects.
+func lockAt(t *testing.T, dir string) (LockInfo, error) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, lockFile))
 	if err != nil {
-		t.Fatal(err)
+		return LockInfo{}, err
 	}
-	host, _ := os.Hostname()
-	if held.Host != host || held.PID != os.Getpid() || held.Token == "" || time.Since(held.Since) > time.Minute {
-		t.Fatalf("lock = %+v", held)
-	}
-	s.Close()
-	<-s.Closed()
-	if _, err := s.fs.Stat(lockFile); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("Close should remove the lock: %v", err)
+	var info LockInfo
+	err = json.Unmarshal(data, &info)
+	return info, err
+}
+
+func TestLock_OpenAndCreateRecordThisProcessAndCloseReleasesIt(t *testing.T) {
+	t.Parallel()
+	for _, how := range []string{"Create", "Open"} {
+		t.Run(how, func(t *testing.T) {
+			t.Parallel()
+			s := openedVault(t)
+			if how == "Open" {
+				s = openAt(t, closedVault(t))
+			}
+			if _, elsewhere := s.OpenElsewhere(); elsewhere {
+				t.Fatal("a vault nobody else has open is not open elsewhere")
+			}
+			held, err := lockAt(t, s.loc.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			host, _ := os.Hostname()
+			if held.Host != host || held.PID != os.Getpid() || held.Token == "" || time.Since(held.Since) > time.Minute {
+				t.Fatalf("lock = %+v", held)
+			}
+			s.Close()
+			<-s.Closed()
+			if _, err := s.fs.Stat(lockFile); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("Close should remove the lock: %v", err)
+			}
+		})
 	}
 }
 
 func TestLock_AnotherComputersLockIsReportedAndCanBeTakenOver(t *testing.T) {
 	t.Parallel()
-	s := openedVault(t)
+	dir := closedVault(t)
 	since := time.Date(2026, 10, 29, 9, 30, 0, 0, time.UTC)
-	plantLock(t, s, &LockInfo{Host: "laptop.local", User: "me", PID: 4242, Since: since, Token: "theirs"})
+	plantLockAt(t, dir, &LockInfo{Host: "laptop.local", User: "me", PID: 4242, Since: since, Token: "theirs"})
 
-	err := s.AcquireLock(context.Background(), false)
-	var inUse *InUseError
-	if !errors.As(err, &inUse) || !errors.Is(err, ErrVaultInUse) {
-		t.Fatalf("AcquireLock = %v, want *InUseError", err)
+	s := openAt(t, dir)
+	holder, elsewhere := s.OpenElsewhere()
+	if !elsewhere || holder.Host != "laptop.local" || holder.User != "me" || holder.PID != 4242 || !holder.Since.Equal(since) {
+		t.Fatalf("OpenElsewhere = %+v, %v; want the lock held on laptop.local", holder, elsewhere)
 	}
-	if inUse.Lock.Host != "laptop.local" || inUse.Lock.PID != 4242 || !inUse.Lock.Since.Equal(since) {
-		t.Fatalf("reported lock = %+v", inUse.Lock)
-	}
-	if !strings.Contains(err.Error(), "laptop.local") || !strings.Contains(err.Error(), "29 Oct 2026 09:30 UTC") {
-		t.Fatalf("message = %q", err)
+	if held, err := lockAt(t, dir); err != nil || held.Token != "theirs" {
+		t.Fatalf("opening must leave the other copy's lock: %+v, %v", held, err)
 	}
 
-	if err := s.AcquireLock(context.Background(), true); err != nil {
-		t.Fatalf("forced AcquireLock: %v", err)
+	if err := s.TakeOver(context.Background()); err != nil {
+		t.Fatalf("TakeOver: %v", err)
 	}
-	if held, _ := s.readLock(); held.Host == "laptop.local" {
-		t.Fatal("force should take the lock over")
+	if _, elsewhere := s.OpenElsewhere(); elsewhere {
+		t.Fatal("once taken over, the vault is no longer open elsewhere")
+	}
+	if held, _ := lockAt(t, dir); held.Host == "laptop.local" {
+		t.Fatal("TakeOver should take the lock over")
+	}
+	s.Close()
+	<-s.Closed()
+	if _, err := os.Stat(filepath.Join(dir, lockFile)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Close should release the lock taken over: %v", err)
 	}
 }
 
-func TestLock_ALiveProcessOnThisComputerIsInUse(t *testing.T) {
+func TestLock_ALiveProcessOnThisComputerIsOpenElsewhere(t *testing.T) {
 	t.Parallel()
-	s := openedVault(t)
+	dir := closedVault(t)
 	host, _ := os.Hostname()
-	plantLock(t, s, &LockInfo{Host: host, PID: os.Getppid(), Token: "parent"}) // the test runner: alive
+	plantLockAt(t, dir, &LockInfo{Host: host, PID: os.Getppid(), Token: "parent"}) // the test runner: alive
 
-	if err := s.AcquireLock(context.Background(), false); !errors.Is(err, ErrVaultInUse) {
-		t.Fatalf("AcquireLock = %v, want ErrVaultInUse", err)
+	if holder, elsewhere := openAt(t, dir).OpenElsewhere(); !elsewhere || holder.Token != "parent" {
+		t.Fatalf("OpenElsewhere = %+v, %v; want the parent's lock", holder, elsewhere)
 	}
 }
 
 func TestLock_AStaleLockOnThisComputerIsTakenOver(t *testing.T) {
 	t.Parallel()
-	s := openedVault(t)
+	dir := closedVault(t)
 	host, _ := os.Hostname()
-	plantLock(t, s, &LockInfo{Host: host, PID: 1 << 30, Token: "crashed"}) // no such process
+	plantLockAt(t, dir, &LockInfo{Host: host, PID: 1 << 30, Token: "crashed"}) // no such process
 
-	if err := s.AcquireLock(context.Background(), false); err != nil {
-		t.Fatalf("a crashed copy's lock should be taken over: %v", err)
+	if _, elsewhere := openAt(t, dir).OpenElsewhere(); elsewhere {
+		t.Fatal("a crashed copy's lock should be taken over")
 	}
-	if held, _ := s.readLock(); held.PID != os.Getpid() {
+	if held, _ := lockAt(t, dir); held.PID != os.Getpid() {
 		t.Fatalf("lock = %+v", held)
 	}
 }
 
-func TestLock_ADamagedLockIsInUse(t *testing.T) {
+func TestLock_ADamagedLockIsOpenElsewhere(t *testing.T) {
 	t.Parallel()
-	s := openedVault(t)
-	if err := s.fs.WriteFileAtomic(lockFile, []byte("not json")); err != nil {
+	dir := closedVault(t)
+	if err := os.WriteFile(filepath.Join(dir, lockFile), []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := s.AcquireLock(context.Background(), false)
-	var inUse *InUseError
-	if !errors.As(err, &inUse) || inUse.Lock.Host != "" || !strings.Contains(err.Error(), "unreadable") {
-		t.Fatalf("AcquireLock = %v", err)
+	if holder, elsewhere := openAt(t, dir).OpenElsewhere(); !elsewhere || holder != (LockInfo{}) {
+		t.Fatalf("OpenElsewhere = %+v, %v; want open elsewhere, holder unknown", holder, elsewhere)
 	}
 }
 
@@ -139,7 +220,17 @@ func (f lockReadFails) ReadFile(name string) ([]byte, error) {
 	return f.vaultFS.ReadFile(name)
 }
 
-func TestLock_ALockThatCannotBeReadIsAnErrorNotInUse(t *testing.T) {
+// lockFaults wraps a store's storage so that reading the lock fails.
+func lockFaults(readErr error, times int) Option {
+	return withFS(func(f vaultFS) vaultFS {
+		return lockReadFails{vaultFS: f, err: readErr, times: times, reads: new(int)}
+	})
+}
+
+// A lock that cannot be read for a reason that says nothing about who holds
+// it does not make the vault open elsewhere: like a lock that cannot be
+// written, it is logged and the vault opens.
+func TestLock_ALockThatCannotBeReadIsLoggedNotOpenElsewhere(t *testing.T) {
 	t.Parallel()
 	for name, readErr := range map[string]error{
 		"a dropped connection": ErrConnectionLost,
@@ -147,13 +238,20 @@ func TestLock_ALockThatCannotBeReadIsAnErrorNotInUse(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			s := openedVault(t)
-			plantLock(t, s, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
-			s.fs = lockReadFails{vaultFS: s.fs, err: readErr, reads: new(int)}
+			dir := closedVault(t)
+			plantLockAt(t, dir, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
+			log, logged := recordingLog()
 
-			err := s.AcquireLock(context.Background(), false)
-			if errors.Is(err, ErrVaultInUse) || !errors.Is(err, readErr) {
-				t.Fatalf("AcquireLock = %v; want the read error, not \"open elsewhere\"", err)
+			s, err := Open(context.Background(), dir, internalPass, log, WithWorkFactor(10), lockFaults(readErr, 0))
+			if err != nil {
+				t.Fatalf("a lock that cannot be read must not keep the vault shut: %v", err)
+			}
+			t.Cleanup(s.Close)
+			if _, elsewhere := s.OpenElsewhere(); elsewhere {
+				t.Fatal("a read error is not \"open elsewhere\"")
+			}
+			if !strings.Contains(logged.String(), "cannot record that the vault is open") || !strings.Contains(logged.String(), readErr.Error()) {
+				t.Fatalf("the read error should be logged, got %q", logged)
 			}
 		})
 	}
@@ -163,37 +261,76 @@ func TestLock_ALockThatCannotBeReadIsAnErrorNotInUse(t *testing.T) {
 // held elsewhere is still found.
 func TestLock_AConnectionThatComesBackStillFindsTheLock(t *testing.T) {
 	t.Parallel()
-	s := openedVault(t)
-	plantLock(t, s, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
-	s.fs = lockReadFails{vaultFS: s.fs, err: ErrConnectionLost, times: 1, reads: new(int)}
+	dir := closedVault(t)
+	plantLockAt(t, dir, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
 
-	err := s.AcquireLock(context.Background(), false)
-	var inUse *InUseError
-	if !errors.As(err, &inUse) || inUse.Lock.Host != "laptop.local" {
-		t.Fatalf("AcquireLock = %v; want the lock held on laptop.local", err)
+	s := openAt(t, dir, lockFaults(ErrConnectionLost, 1))
+	if holder, elsewhere := s.OpenElsewhere(); !elsewhere || holder.Host != "laptop.local" {
+		t.Fatalf("OpenElsewhere = %+v, %v; want the lock held on laptop.local", holder, elsewhere)
 	}
 }
 
 // A lock vlt may not read most likely belongs to another user's copy.
-func TestLock_ALockVltMayNotReadIsInUse(t *testing.T) {
+func TestLock_ALockVltMayNotReadIsOpenElsewhere(t *testing.T) {
 	t.Parallel()
-	s := openedVault(t)
-	plantLock(t, s, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
-	s.fs = lockReadFails{vaultFS: s.fs, err: fs.ErrPermission, reads: new(int)}
+	dir := closedVault(t)
+	plantLockAt(t, dir, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
 
-	err := s.AcquireLock(context.Background(), false)
-	var inUse *InUseError
-	if !errors.As(err, &inUse) || inUse.Lock.Host != "" {
-		t.Fatalf("AcquireLock = %v; want in use, holder unknown", err)
+	s := openAt(t, dir, lockFaults(fs.ErrPermission, 0))
+	if holder, elsewhere := s.OpenElsewhere(); !elsewhere || holder != (LockInfo{}) {
+		t.Fatalf("OpenElsewhere = %+v, %v; want open elsewhere, holder unknown", holder, elsewhere)
+	}
+}
+
+// lockWriteFails makes writing the lock fail, as a read-only folder would.
+type lockWriteFails struct {
+	vaultFS
+	err error
+}
+
+func (f lockWriteFails) WriteFileExclusive(name string, data []byte) error {
+	if name == lockFile {
+		return f.err
+	}
+	return f.vaultFS.WriteFileExclusive(name, data)
+}
+
+// The lock only warns: failing to write it is logged, and the vault opens.
+func TestLock_ALockThatCannotBeWrittenIsLoggedAndTheVaultOpens(t *testing.T) {
+	t.Parallel()
+	writeErr := errors.New("read-only file system")
+	faults := withFS(func(f vaultFS) vaultFS { return lockWriteFails{vaultFS: f, err: writeErr} })
+	for _, how := range []string{"Create", "Open"} {
+		t.Run(how, func(t *testing.T) {
+			t.Parallel()
+			log, logged := recordingLog()
+			var s *Store
+			var err error
+			if how == "Create" {
+				s, err = Create(context.Background(), t.TempDir(), internalPass, log, WithWorkFactor(10), faults)
+			} else {
+				s, err = Open(context.Background(), closedVault(t), internalPass, log, WithWorkFactor(10), faults)
+			}
+			if err != nil {
+				t.Fatalf("a lock that cannot be written must not keep the vault shut: %v", err)
+			}
+			t.Cleanup(s.Close)
+			if _, elsewhere := s.OpenElsewhere(); elsewhere {
+				t.Fatal("a write error is not \"open elsewhere\"")
+			}
+			if !strings.Contains(logged.String(), "cannot record that the vault is open") || !strings.Contains(logged.String(), writeErr.Error()) {
+				t.Fatalf("the write error should be logged, got %q", logged)
+			}
+			if _, err := s.fs.Stat(lockFile); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("no lock should be written: %v", err)
+			}
+		})
 	}
 }
 
 func TestLock_CloseLeavesALockSomeoneElseTookOver(t *testing.T) {
 	t.Parallel()
 	s := openedVault(t)
-	if err := s.AcquireLock(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
 	plantLock(t, s, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
 	s.Close()
 	<-s.Closed()
@@ -205,8 +342,9 @@ func TestLock_CloseLeavesALockSomeoneElseTookOver(t *testing.T) {
 
 func TestLock_CloseWithoutALockTouchesNothing(t *testing.T) {
 	t.Parallel()
-	s := openedVault(t)
-	plantLock(t, s, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
+	dir := closedVault(t)
+	plantLockAt(t, dir, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
+	s := openAt(t, dir) // open elsewhere: the lock is not this Store's
 	s.Close()
 	<-s.Closed()
 	if _, err := s.readLock(); err != nil {
@@ -217,9 +355,6 @@ func TestLock_CloseWithoutALockTouchesNothing(t *testing.T) {
 func TestLock_LockFileIsNotPartOfTheVault(t *testing.T) {
 	t.Parallel()
 	s := openedVault(t)
-	if err := s.AcquireLock(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
 	dest := t.TempDir()
 	if err := s.CopyTo(context.Background(), dest); err != nil {
 		t.Fatal(err)
@@ -234,13 +369,13 @@ func TestLock_LockFileIsNotPartOfTheVault(t *testing.T) {
 
 func TestLock_ThisProcessesOwnLeftoverLockIsTakenOver(t *testing.T) {
 	t.Parallel()
-	s := openedVault(t)
+	dir := closedVault(t)
 	host, _ := os.Hostname()
-	plantLock(t, s, &LockInfo{Host: host, PID: os.Getpid(), Token: "earlier-session"})
-	if err := s.AcquireLock(context.Background(), false); err != nil {
-		t.Fatalf("this process's own leftover lock should be taken over: %v", err)
+	plantLockAt(t, dir, &LockInfo{Host: host, PID: os.Getpid(), Token: "earlier-session"})
+	if _, elsewhere := openAt(t, dir).OpenElsewhere(); elsewhere {
+		t.Fatal("this process's own leftover lock should be taken over")
 	}
-	if held, _ := s.readLock(); held.Token == "earlier-session" {
+	if held, _ := lockAt(t, dir); held.Token == "earlier-session" {
 		t.Fatal("the lock should now be this session's")
 	}
 }
@@ -248,9 +383,6 @@ func TestLock_ThisProcessesOwnLeftoverLockIsTakenOver(t *testing.T) {
 func TestLock_ReleaseLeavesNoTempFiles(t *testing.T) {
 	t.Parallel()
 	s := openedVault(t)
-	if err := s.AcquireLock(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
 	s.Close()
 	<-s.Closed()
 	entries, err := s.fs.ReadDir(".")
@@ -288,17 +420,17 @@ func TestLock_AReleaseStillRunningLeavesTheNextSessionsLock(t *testing.T) {
 		t.Run(when, func(t *testing.T) {
 			t.Parallel()
 			old := openedVault(t)
-			if err := old.AcquireLock(context.Background(), false); err != nil {
-				t.Fatal(err)
-			}
-			next, err := Open(context.Background(), old.loc.Path, internalPass, quiet(), WithWorkFactor(10))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(next.Close)
+			var next *Store
 			unlock := func() {
-				if err := next.AcquireLock(context.Background(), false); err != nil {
+				var err error
+				next, err = Open(context.Background(), old.loc.Path, internalPass, quiet(), WithWorkFactor(10))
+				if err != nil {
 					t.Errorf("unlocking again: %v", err)
+					return
+				}
+				t.Cleanup(next.Close)
+				if _, elsewhere := next.OpenElsewhere(); elsewhere {
+					t.Error("the old session's lock is this process's own: it should be taken over")
 				}
 			}
 			if when == "before the release started" {
@@ -309,6 +441,9 @@ func TestLock_AReleaseStillRunningLeavesTheNextSessionsLock(t *testing.T) {
 
 			old.Close()
 			<-old.Closed()
+			if next == nil {
+				t.Fatal("the vault was not unlocked again")
+			}
 
 			held, err := next.readLock()
 			if err != nil || held.Token != next.lockToken || held.Token == "" {
@@ -354,9 +489,6 @@ func TestLock_AReleaseThatFailsMidwayKeepsTheNewerLock(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			s := openedVault(t)
-			if err := s.AcquireLock(context.Background(), false); err != nil {
-				t.Fatal(err)
-			}
 			plantLock(t, s, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
 			disk := s.fs
 			faults.vaultFS = disk
@@ -382,9 +514,6 @@ func TestLock_AReleaseThatFailsMidwayKeepsTheNewerLock(t *testing.T) {
 func TestLock_AReleaseRacingAThirdCopyLeavesTheNewerLockAside(t *testing.T) {
 	t.Parallel()
 	s := openedVault(t)
-	if err := s.AcquireLock(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
 	aside := tmpPrefix + "lock-" + s.lockToken
 	plantLock(t, s, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
 	disk := s.fs
@@ -410,5 +539,110 @@ func TestLock_AReleaseRacingAThirdCopyLeavesTheNewerLockAside(t *testing.T) {
 		if err != nil || held.Token != want {
 			t.Errorf("%s = %+v, %v; want the lock %q", file, held, err, want)
 		}
+	}
+}
+
+// takeOverHook holds a takeover's write of the lock until proceed is
+// closed, after telling entered.
+type takeOverHook struct {
+	vaultFS
+	entered chan<- struct{}
+	proceed <-chan struct{}
+}
+
+func (f takeOverHook) WriteFileAtomic(name string, data []byte) error {
+	if name == lockFile {
+		f.entered <- struct{}{}
+		<-f.proceed
+	}
+	return f.vaultFS.WriteFileAtomic(name, data)
+}
+
+// Quitting or locking can close a waiting store while Open Anyway takes its
+// lock over. Close waits for the takeover, then releases the lock it took:
+// a closed Store never leaves a lock behind. The test runs in a synctest
+// bubble so that "Close has not finished" is checked once every goroutine
+// is blocked, not after a guessed delay.
+func TestLock_CloseDuringATakeOverWaitsForItAndLeavesNoLock(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := closedVault(t)
+		plantLockAt(t, dir, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
+		entered, proceed := make(chan struct{}), make(chan struct{})
+		s := openAt(t, dir, withFS(func(f vaultFS) vaultFS {
+			return takeOverHook{vaultFS: f, entered: entered, proceed: proceed}
+		}))
+
+		tookOver := make(chan error, 1)
+		go func() { tookOver <- s.TakeOver(context.Background()) }()
+		<-entered // the takeover is writing the lock
+		go s.Close()
+		synctest.Wait() // Close is blocked, or has finished
+		select {
+		case <-s.Closed():
+			t.Fatal("Close finished while the lock was being taken over")
+		default:
+		}
+		close(proceed)
+
+		if err := <-tookOver; err != nil {
+			t.Fatalf("a takeover begun before Close should finish: %v", err)
+		}
+		<-s.Closed()
+		if _, err := os.Stat(filepath.Join(dir, lockFile)); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("Close should release the lock the takeover took: %v", err)
+		}
+	})
+}
+
+// lockOverwriteFails makes replacing the lock fail, as taking it over from
+// a folder vlt may no longer write to would.
+type lockOverwriteFails struct {
+	vaultFS
+	err error
+}
+
+func (f lockOverwriteFails) WriteFileAtomic(name string, data []byte) error {
+	if name == lockFile {
+		return f.err
+	}
+	return f.vaultFS.WriteFileAtomic(name, data)
+}
+
+// A takeover that cannot write the lock fails: the vault is still open
+// elsewhere, the other copy's lock stays, and Close leaves it alone.
+func TestLock_ATakeOverThatCannotWriteTheLockFailsAndLeavesItAlone(t *testing.T) {
+	t.Parallel()
+	dir := closedVault(t)
+	plantLockAt(t, dir, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
+	writeErr := errors.New("read-only file system")
+	s := openAt(t, dir, withFS(func(f vaultFS) vaultFS { return lockOverwriteFails{vaultFS: f, err: writeErr} }))
+
+	if err := s.TakeOver(context.Background()); !errors.Is(err, writeErr) {
+		t.Fatalf("TakeOver = %v, want the write error", err)
+	}
+	if holder, elsewhere := s.OpenElsewhere(); !elsewhere || holder.Token != "theirs" {
+		t.Fatalf("OpenElsewhere = %+v, %v; a failed takeover leaves the vault open elsewhere", holder, elsewhere)
+	}
+	s.Close()
+	<-s.Closed()
+	if held, err := lockAt(t, dir); err != nil || held.Token != "theirs" {
+		t.Fatalf("a failed takeover must leave the other copy's lock: %+v, %v", held, err)
+	}
+}
+
+func TestLock_TakeOverAfterCloseFailsAndLeavesTheLockAlone(t *testing.T) {
+	t.Parallel()
+	dir := closedVault(t)
+	plantLockAt(t, dir, &LockInfo{Host: "laptop.local", PID: 7, Token: "theirs"})
+	s := openAt(t, dir)
+	s.Close()
+	<-s.Closed()
+
+	if err := s.TakeOver(context.Background()); !errors.Is(err, ErrClosed) {
+		t.Fatalf("TakeOver after Close = %v, want ErrClosed", err)
+	}
+	if held, err := lockAt(t, dir); err != nil || held.Token != "theirs" {
+		t.Fatalf("a closed Store must not take the lock: %+v, %v", held, err)
 	}
 }

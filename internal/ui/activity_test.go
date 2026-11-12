@@ -30,8 +30,8 @@ func TestAutoLock_TypingInAFormResetsTheCountdown(t *testing.T) {
 		t.Fatal("unlocking should start the auto-lock timer")
 	}
 
-	app.secretList.list.Select(0)
-	entry := firstEditableEntry(app.detailView.Content())
+	app.main.list.list.Select(0)
+	entry := firstEditableEntry(app.main.detail.Content())
 	if entry == nil {
 		t.Fatal("expected an editable entry in the secret form")
 	}
@@ -54,12 +54,12 @@ func TestAutoLock_SearchAndListSelectionCountAsActivity(t *testing.T) {
 	app, clock := newLockingApp(t)
 
 	before := clock.active(testTimeout)
-	test.Type(app.secretList.searchEntry, "g")
+	test.Type(app.main.list.searchEntry, "g")
 	if !before.stopped {
 		t.Fatal("typing in the search box must reset the countdown")
 	}
 	before = clock.active(testTimeout)
-	app.secretList.list.Select(0)
+	app.main.list.list.Select(0)
 	if !before.stopped {
 		t.Fatal("selecting a list row must reset the countdown")
 	}
@@ -94,7 +94,7 @@ func TestAutoLock_WarnsBeforeLockingAndActivityDismisses(t *testing.T) {
 		t.Fatal("expected a lock warning")
 	}
 
-	test.Type(app.secretList.searchEntry, "x")
+	test.Type(app.main.list.searchEntry, "x")
 	if app.lockWarning != nil {
 		t.Fatal("activity should dismiss the warning")
 	}
@@ -117,7 +117,7 @@ func TestAutoLock_TimeoutChangeAppliesOnNextActivity(t *testing.T) {
 	app, clock := newLockingApp(t)
 
 	app.settings.SetLockTimeout(10 * time.Minute)
-	test.Type(app.secretList.searchEntry, "x")
+	test.Type(app.main.list.searchEntry, "x")
 
 	if clock.active(10*time.Minute) == nil {
 		t.Fatal("a changed timeout should be used when the countdown restarts")
@@ -136,7 +136,7 @@ func TestAutoLock_DisabledWhenTimeoutIsZero(t *testing.T) {
 	if len(clock.timers) != 0 {
 		t.Fatalf("a zero timeout must not start timers, got %d", len(clock.timers))
 	}
-	test.Type(app.secretList.searchEntry, "x")
+	test.Type(app.main.list.searchEntry, "x")
 	if len(clock.timers) != 0 {
 		t.Fatal("activity must not start timers when auto-lock is disabled")
 	}
@@ -188,7 +188,7 @@ func TestAutoLock_StaleTimersAreIgnoredAfterActivity(t *testing.T) {
 
 	oldLock := clock.active(testTimeout)
 	oldWarn := clock.active(warnDelay(testTimeout))
-	test.Type(app.secretList.searchEntry, "x") // activity replaces both timers
+	test.Type(app.main.list.searchEntry, "x") // activity replaces both timers
 
 	// Callbacks of the replaced timers that were already running.
 	oldWarn.f()
@@ -206,7 +206,7 @@ func TestAutoLock_DialogCallbacksCountAsActivity(t *testing.T) {
 	app, clock := newLockingApp(t)
 
 	p := pickerOf(app)
-	test.Tap(findButton(app.mainContent, "Import File"))
+	test.Tap(findButton(app.main.content(), "Import File"))
 	before := clock.active(testTimeout)
 	p.answerFile(t, nil, nil) // the file chooser, cancelled
 	if !before.stopped {
@@ -219,15 +219,15 @@ func TestActivityTracker_DoesNotRetainReplacedForms(t *testing.T) {
 	app, _ := newLockingApp(t)
 
 	for range 20 {
-		app.secretList.list.UnselectAll()
-		app.secretList.list.Select(0)
+		app.main.list.list.UnselectAll()
+		app.main.list.list.Select(0)
 	}
 	// Only the current panel's widgets are remembered, not 20 old forms.
-	if n := len(app.tracker.seen); n > 40 {
+	if n := len(app.main.tracker.seen); n > 40 {
 		t.Fatalf("tracker retains %d widgets after re-rendering; old forms are leaking", n)
 	}
 	app.Lock()
-	if app.tracker != nil {
-		t.Fatal("locking should drop the activity tracker")
+	if app.main != nil {
+		t.Fatal("locking should drop the main view and its activity tracker")
 	}
 }

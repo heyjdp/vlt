@@ -62,8 +62,9 @@ func queuedSession(timeout time.Duration) (*session[*store.Store], *fakeClock, *
 // the lock released when End returns.
 func inline(f func()) { f() }
 
-// slowStore stands in for a vault on a server: Close zeroes the key at once
-// but the lock is released only when release is called.
+// slowStore stands in for a store whose release is still running (a slow
+// server, say): Close returns, but Closed reports the lock released only
+// when release is called.
 type slowStore struct {
 	closedAt int // how many Close calls
 	zeroed   int // how many ZeroKey calls
@@ -374,56 +375,6 @@ func TestSession_EndDuringAPauseLocksAndALateResumeDoesNothing(t *testing.T) {
 	}
 }
 
-func TestSession_APendingStoreIsClosedWhenTheTimeoutPasses(t *testing.T) {
-	t.Parallel()
-	sess, clock, _, posted := queuedSession(sessionTimeout)
-	st := openTestStore(t)
-	expired := 0
-	sess.Hold(st, func() { expired++ })
-
-	clock.active(sessionTimeout).f()
-	if !isClosed(st) || sess.Pending() != nil || sess.Take(st) {
-		t.Fatal("an unanswered question should close the waiting store at once")
-	}
-	if expired != 0 || len(*posted) != 1 {
-		t.Fatal("the app hears about it on the main goroutine")
-	}
-	(*posted)[0]()
-	if expired != 1 {
-		t.Fatal("the expiry callback should run")
-	}
-}
-
-func TestSession_WithAutoLockOffAPendingStoreWaitsForAnAnswer(t *testing.T) {
-	t.Parallel()
-	sess, clock, _ := newTestSession(0)
-	st := openTestStore(t)
-	sess.Hold(st, func() { t.Error("no timeout, no expiry") })
-	if len(clock.timers) != 0 || sess.Pending() != st {
-		t.Fatalf("with auto-lock off Hold arms %d timers, want none", len(clock.timers))
-	}
-}
-
-func TestSession_HoldingAnotherStoreClosesTheFirst(t *testing.T) {
-	t.Parallel()
-	sess, clock, _ := newTestSession(sessionTimeout)
-	first, second := openTestStore(t), openTestStore(t)
-	sess.Hold(first, func() {})
-	firstTimer := clock.active(sessionTimeout)
-	sess.Hold(second, func() {})
-	if !isClosed(first) || !firstTimer.stopped || sess.Pending() != second {
-		t.Fatal("a store replaced while waiting must not keep its key")
-	}
-}
-
-func TestSession_TakeNilIsFalse(t *testing.T) {
-	t.Parallel()
-	sess, _, _ := newTestSession(sessionTimeout)
-	if sess.Take(nil) {
-		t.Fatal("nothing is pending, so there is nothing to take")
-	}
-}
-
 func TestSession_BeginningAgainEndsTheOpenSession(t *testing.T) {
 	t.Parallel()
 	sess, _, _ := newTestSession(sessionTimeout)
@@ -454,45 +405,25 @@ func TestSession_WarningNeedsTwiceTheLead(t *testing.T) {
 	}
 }
 
-func TestSession_TakingAPendingStoreStopsItsTimer(t *testing.T) {
+func TestSession_CloseClosesTheOpenAndDiscardedStoresAndWaits(t *testing.T) {
 	t.Parallel()
 	sess, clock, _ := newTestSession(sessionTimeout)
-	st := openTestStore(t)
-	expired := 0
-	sess.Hold(st, func() { expired++ })
-	timer := clock.active(sessionTimeout)
-	if sess.Pending() != st {
-		t.Fatal("the held store should be pending")
-	}
-
-	if !sess.Take(st) || sess.Take(st) || sess.Pending() != nil {
-		t.Fatal("a pending store is taken exactly once")
-	}
-	timer.f() // already firing when it was taken
-	if !timer.stopped || expired != 0 || isClosed(st) {
-		t.Fatal("a taken store is the caller's; the timer must leave it alone")
-	}
-}
-
-func TestSession_CloseClosesTheOpenAndPendingStoresAndWaits(t *testing.T) {
-	t.Parallel()
-	sess, clock, _ := newTestSession(sessionTimeout)
-	open, pending := openTestStore(t), openTestStore(t)
+	open, discarded := openTestStore(t), openTestStore(t)
 	ctx := sess.Begin(open)
-	sess.Hold(pending, func() {})
+	sess.Discard(discarded)
 
 	timer := clock.active(sessionTimeout)
 	if !sess.Close(closeWait) {
 		t.Fatal("local stores release their locks at once")
 	}
-	if !isClosed(open) || !isClosed(pending) || ctx.Err() == nil || sess.Store() != nil || sess.Take(pending) || !timer.stopped {
-		t.Fatal("Close should end the session, close both stores and stop the waiting store's timer")
+	if !isClosed(open) || !isClosed(discarded) || ctx.Err() == nil || sess.Store() != nil || !timer.stopped {
+		t.Fatal("Close should end the session, close both stores and stop the countdown")
 	}
 }
 
 func TestSession_CloseWaitsForStoresToReleaseTheirLocks(t *testing.T) {
 	t.Parallel()
-	for _, which := range []string{"open", "pending", "ended earlier"} {
+	for _, which := range []string{"open", "discarded", "ended earlier"} {
 		t.Run(which, func(t *testing.T) {
 			t.Parallel()
 			clock := &fakeClock{}
@@ -502,8 +433,8 @@ func TestSession_CloseWaitsForStoresToReleaseTheirLocks(t *testing.T) {
 			switch which {
 			case "open":
 				sess.Begin(st)
-			case "pending":
-				sess.Hold(st, func() {})
+			case "discarded":
+				sess.Discard(st)
 			case "ended earlier":
 				sess.Begin(st)
 				sess.End()
@@ -537,7 +468,7 @@ func TestSession_CloseWaitsForAStoreEndedEarlier(t *testing.T) {
 // release waits, in the background, and quitting still waits for it.
 func TestSession_EndingZeroesTheKeyAtOnceAndReleasesTheLockInTheBackground(t *testing.T) {
 	t.Parallel()
-	for _, how := range []string{"lock", "auto-lock", "unlock again", "discard a waiting vault", "hold another"} {
+	for _, how := range []string{"lock", "auto-lock", "unlock again", "discard"} {
 		t.Run(how, func(t *testing.T) {
 			t.Parallel()
 			clock := &fakeClock{}
@@ -558,22 +489,14 @@ func TestSession_EndingZeroesTheKeyAtOnceAndReleasesTheLockInTheBackground(t *te
 			case "unlock again":
 				sess.Begin(st)
 				end = func() { sess.Begin(next) }
-			case "discard a waiting vault":
-				sess.Hold(st, func() {})
-				end = func() {
-					if sess.Take(st) {
-						sess.Discard(st)
-					}
-				}
-			case "hold another":
-				sess.Hold(st, func() {})
-				end = func() { sess.Hold(next, func() {}) }
+			case "discard":
+				end = func() { sess.Discard(st) }
 			}
 
 			if !returnsPromptly(end) {
 				t.Fatal("ending waited for the store to release its lock")
 			}
-			if !st.zeroed.Load() || sess.Store() == st || sess.Pending() == st {
+			if !st.zeroed.Load() || sess.Store() == st {
 				t.Fatal("the key should be zeroed and the store let go before ending returns")
 			}
 			if !returnsPromptly(sess.Activity) {
@@ -587,109 +510,5 @@ func TestSession_EndingZeroesTheKeyAtOnceAndReleasesTheLockInTheBackground(t *te
 				t.Fatal("once the lock is released, quitting goes ahead")
 			}
 		})
-	}
-}
-
-// A waiting store's time can run out while vlt quits. Whichever goes first,
-// quitting must wait for that store's release: the timer must not take the
-// store (out of the quit's reach) and only then let it go. The window is
-// narrow; the loop finds it reliably under the race detector (go test -race).
-func TestSession_QuitWhileAWaitingStoreTimesOutWaitsForItsRelease(t *testing.T) {
-	t.Parallel()
-	for range 20000 {
-		clock := &fakeClock{}
-		sess := newSession[*slowStore](clock.factory, func(func()) {}, inline,
-			func() time.Duration { return sessionTimeout }, sessionCallbacks{Warn: func() {}, TimedOut: func() {}})
-		st := newSlowStore() // never releases its lock
-		sess.Hold(st, func() {})
-		expire := clock.active(sessionTimeout).f
-		expired := make(chan struct{})
-		go func() {
-			defer close(expired)
-			expire()
-		}()
-		quitWaited := !sess.Close(0)
-		<-expired
-		if !quitWaited {
-			t.Fatal("quitting did not wait for the release of a store whose time ran out meanwhile")
-		}
-	}
-}
-
-// Open Anyway takes a waiting store's lock over in the background. Until
-// that ends the store stays the session's: being let go (quit, its time
-// running out, another store held) zeroes its key at once, but its Close
-// (which must not run during the takeover) waits for Idle, and quitting
-// waits for that Close.
-func TestSession_ABusyStoreLetGoIsClosedOnceIdle(t *testing.T) {
-	t.Parallel()
-	for _, how := range []string{"quit", "time runs out", "hold another"} {
-		t.Run(how, func(t *testing.T) {
-			t.Parallel()
-			clock := &fakeClock{}
-			sess := newSession[*slowStore](clock.factory, func(f func()) { f() }, inline,
-				func() time.Duration { return sessionTimeout }, sessionCallbacks{Warn: func() {}, TimedOut: func() {}})
-			st := newSlowStore()
-			expired := 0
-			sess.Hold(st, func() { expired++ })
-			if !sess.Busy(st) {
-				t.Fatal("a waiting store can be made busy")
-			}
-
-			switch how {
-			case "quit":
-				if sess.Close(20 * time.Millisecond) {
-					t.Fatal("quitting should wait for the busy store's release")
-				}
-			case "time runs out":
-				clock.active(sessionTimeout).f()
-				if expired != 1 {
-					t.Fatal("the store's time ran out; onExpire should run")
-				}
-			case "hold another":
-				other := newSlowStore()
-				other.release()
-				sess.Hold(other, func() {})
-			}
-			if st.zeroed == 0 || st.closedAt != 0 {
-				t.Fatalf("letting a busy store go zeroes its key at once and leaves Close for later (zeroed %d, closed %d)", st.zeroed, st.closedAt)
-			}
-
-			sess.Idle(st)
-			if st.closedAt != 1 || sess.Take(st) {
-				t.Fatalf("once idle, a store let go is closed (closed %d) and no longer the session's", st.closedAt)
-			}
-			if sess.Close(20 * time.Millisecond) {
-				t.Fatal("quitting should wait for the store's release")
-			}
-			st.release()
-			if !sess.Close(closeWait) {
-				t.Fatal("once the store has released its lock, quitting goes ahead")
-			}
-		})
-	}
-}
-
-func TestSession_ABusyStoreNotLetGoIsTheCallersOnceTaken(t *testing.T) {
-	t.Parallel()
-	sess, clock, _ := newTestSession(sessionTimeout)
-	st, other := openTestStore(t), openTestStore(t)
-	if sess.Busy(other) {
-		t.Fatal("only a waiting store can be made busy")
-	}
-	sess.Hold(st, func() {})
-	if !sess.Busy(st) {
-		t.Fatal("a waiting store can be made busy")
-	}
-	sess.Idle(st)
-	if isClosed(st) || sess.Pending() != st {
-		t.Fatal("a store not let go stays waiting once idle")
-	}
-	if !sess.Take(st) || !clock.timers[0].stopped {
-		t.Fatal("the store is then taken as usual")
-	}
-	sess.Idle(st) // again: does nothing
-	if isClosed(st) {
-		t.Fatal("a taken store is the caller's")
 	}
 }

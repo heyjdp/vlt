@@ -500,22 +500,30 @@ func writeNew(c *sftpConn, target string, data []byte) error {
 
 // WriteFileAtomic writes a temp file and renames it over name with
 // posix-rename, which replaces the target atomically.
+// A connection lost once the rename was sent is marked with mayHaveWritten:
+// the server may have made the rename though its reply never came.
 func (r *remoteFS) WriteFileAtomic(name string, data []byte) error {
+	renameSent := false
 	err := r.do(func(c *sftpConn) error {
 		tmp, err := r.writeTemp(c, data)
 		if err != nil {
 			return err
 		}
+		renameSent = true
 		if err := c.client.PosixRename(tmp, r.abs(name)); err != nil {
 			_ = c.client.Remove(tmp)
 			return err
 		}
 		return nil
 	})
-	if err != nil {
-		return errorf("write", name, err)
+	if err == nil {
+		return nil
 	}
-	return nil
+	err = errorf("write", name, err)
+	if renameSent && errors.Is(err, ErrConnectionLost) {
+		return mayHaveWritten(err)
+	}
+	return err
 }
 
 // WriteFileExclusive writes a temp file and hard-links it into place; the
@@ -560,8 +568,6 @@ func (r *remoteFS) WriteFileExclusive(name string, data []byte) error {
 // can therefore undo the most recent rename (leaving the previous version of
 // that file), but never leave a partial file.
 func (r *remoteFS) SyncDir(string) error { return nil }
-
-func (r *remoteFS) Local() bool { return false }
 
 // Close ends the session. Later operations fail.
 func (r *remoteFS) Close() error {

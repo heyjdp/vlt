@@ -47,8 +47,12 @@ To choose a vault to use, or, of another copy of vlt, to have it unlocked ("open
 _Avoid_: using it to mean unlock
 
 **Auto-lock**:
-Locking that happens by itself after a period without input, usually preceded by a warning. It is held off while the vault is being moved or its passphrase changed.
+Locking that happens by itself after a period without input, usually preceded by a warning. It is held off during a vault change.
 _Avoid_: timeout (on its own), sleep
+
+**Vault change**:
+A change to the whole vault: changing its passphrase, moving it, or switching to another. One runs at a time, the auto-lock waits for it, and the vault locks once it has taken effect. A passphrase change's outcome is changed, not changed, or, when vlt can't tell, "may or may not have been saved", and is told even if the vault locked first.
+_Avoid_: migration (that is the format upgrade), operation (on its own)
 
 **Open elsewhere**:
 A vault another copy of vlt has unlocked, as recorded in its lock file; vlt asks before showing it, unless that copy was on this computer and has stopped running.

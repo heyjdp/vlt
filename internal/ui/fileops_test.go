@@ -99,24 +99,18 @@ func TestPrepareImport_EncodesAndDigests(t *testing.T) {
 	}
 }
 
-func TestApp_FailingImportSavesNothing(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
-	unlock(app)
-
+func TestFileOps_FailingImportSavesNothing(t *testing.T) {
+	f := newView(t)
 	r := &fakeURIReader{Reader: failingReader(4096), uri: storage.NewFileURI("/tmp/id_rsa")}
-	importFile(t, app, r)
+	f.importFile(t, r)
 
-	secrets, err := app.session.Store().Contents(t.Context())
+	secrets, err := f.store.Contents(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(secrets.Secrets) != 0 || len(app.secretList.secrets) != 0 {
+	if len(secrets.Secrets) != 0 || len(f.listed()) != 0 {
 		t.Fatal("a failed read must not save anything")
 	}
-	app.Lock()
 }
 
 // fakeWriter is an io.WriteCloser whose Close can fail. It keeps the
@@ -151,24 +145,17 @@ func TestWriteExport(t *testing.T) {
 	}
 }
 
-func TestApp_FailingImportShowsErrorNotGroupForm(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
-	unlock(app)
+func TestFileOps_FailingImportShowsErrorNotGroupForm(t *testing.T) {
+	f := newView(t)
+	f.importFile(t, &fakeURIReader{Reader: failingReader(10), uri: storage.NewFileURI("/tmp/x")})
 
-	importFile(t, app, &fakeURIReader{Reader: failingReader(10), uri: storage.NewFileURI("/tmp/x")})
-
-	top := w.Canvas().Overlays().Top()
+	top := f.window.Canvas().Overlays().Top()
 	if top == nil {
 		t.Fatal("a failed import should show an error dialog")
 	}
 	if findType[*widget.SelectEntry](top) != nil {
 		t.Fatal("a failed import must not ask for a group")
 	}
-	app.Lock()
 }
 
 // closeFailingReader reads fine but fails to close.
@@ -233,12 +220,19 @@ func exportApp(t *testing.T) (*App, fyne.Window, *scriptedPicker) {
 	return app, w, p
 }
 
+// exportView is a main view over a vault holding one file secret, "notes"
+// (notes.txt, "hello").
+func exportView(t *testing.T) *viewFixture {
+	t.Helper()
+	return newView(t, testutil.FileSecret("notes", "notes.txt", "aGVsbG8=", "docs"))
+}
+
 // startExport shows the secret and taps Export File, which leaves the save
 // dialog open.
 func startExport(t *testing.T, app *App) {
 	t.Helper()
-	app.secretList.list.Select(0)
-	test.Tap(findButton(app.detailView.Content(), "Export File"))
+	app.main.list.list.Select(0)
+	test.Tap(findButton(app.main.detail.Content(), "Export File"))
 }
 
 func TestApp_ExportAfterLockWritesNothing(t *testing.T) {
@@ -256,37 +250,31 @@ func TestApp_ExportAfterLockWritesNothing(t *testing.T) {
 
 // A lock while the file is being decoded drops the export: no save dialog
 // is asked for and nothing is shown.
-func TestApp_LockDuringExportDecodeAsksNothing(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir, testutil.FileSecret("notes", "notes.txt", "aGVsbG8=", "docs"))
-	w := test.NewTempWindow(t, nil)
-	q := &queue{}
-	app := newApp(a, w, settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
-	q.flush()
-	unlockQueued(t, app, q)
-	q.flush() // the list loads
-	p := pickerOf(app)
-	startExport(t, app)
+func TestFileOps_LockDuringExportDecodeAsksNothing(t *testing.T) {
+	f := exportView(t)
+	q := f.hold()
+	f.selectRow(0)
+	f.tap(t, "Export File")
 
-	app.Lock() // while the decode is in flight
+	f.lock() // while the decode is in flight
 	q.flush()
 
-	if len(p.saves) != 0 || w.Canvas().Overlays().Top() != nil {
-		t.Fatalf("an export the lock overtook asked %d save dialogs and showed a dialog: %v", len(p.saves), w.Canvas().Overlays().Top() != nil)
+	if len(f.pick.saves) != 0 || f.window.Canvas().Overlays().Top() != nil {
+		t.Fatalf("an export the lock overtook asked %d save dialogs and showed a dialog: %v", len(f.pick.saves), f.window.Canvas().Overlays().Top() != nil)
 	}
 }
 
-func TestApp_ExportWipesWhatItWrote(t *testing.T) {
-	app, w, p := exportApp(t)
-	startExport(t, app)
+func TestFileOps_ExportWipesWhatItWrote(t *testing.T) {
+	f := exportView(t)
+	f.selectRow(0)
+	f.tap(t, "Export File")
 
 	out := memWriter(t, "notes.txt")
-	if name := p.answerSave(t, out, nil); name != "notes.txt" {
+	if name := f.pick.answerSave(t, out, nil); name != "notes.txt" {
 		t.Fatalf("the save dialog suggested %q, want the original file name", name)
 	}
 
-	if out.String() != "hello" || !visibleText(w.Canvas().Overlays().Top(), "Exported \"notes.txt\" (5 bytes)") {
+	if out.String() != "hello" || !visibleText(f.window.Canvas().Overlays().Top(), "Exported \"notes.txt\" (5 bytes)") {
 		t.Fatalf("export wrote %q", out.String())
 	}
 	for _, p := range out.given {
@@ -294,71 +282,67 @@ func TestApp_ExportWipesWhatItWrote(t *testing.T) {
 			t.Fatal("the decoded file must be wiped once it is written")
 		}
 	}
-	app.Lock()
 }
 
 // The decoded file is wiped whichever way an export ends.
 func TestFileOps_ExportWipesThePlaintextWhicheverWayItEnds(t *testing.T) {
 	tests := []struct {
 		name string
-		end  func(t *testing.T, app *App, p *scriptedPicker)
+		end  func(t *testing.T, f *viewFixture)
 	}{
-		{"cancelled", func(t *testing.T, _ *App, p *scriptedPicker) { p.answerSave(t, nil, nil) }},
-		{"the save dialog fails", func(t *testing.T, _ *App, p *scriptedPicker) {
-			p.answerSave(t, nil, errors.New("no such folder"))
+		{"cancelled", func(t *testing.T, f *viewFixture) { f.pick.answerSave(t, nil, nil) }},
+		{"the save dialog fails", func(t *testing.T, f *viewFixture) {
+			f.pick.answerSave(t, nil, errors.New("no such folder"))
 		}},
-		{"locked with the dialog open", func(_ *testing.T, app *App, _ *scriptedPicker) { app.Lock() }},
-		{"the write fails", func(t *testing.T, _ *App, p *scriptedPicker) {
-			p.answerSave(t, &writeFailingURIWriter{fakeURIWriter: *memWriter(t, "out.txt")}, nil)
+		{"locked with the dialog open", func(_ *testing.T, f *viewFixture) { f.lock() }},
+		{"the write fails", func(t *testing.T, f *viewFixture) {
+			f.pick.answerSave(t, &writeFailingURIWriter{fakeURIWriter: *memWriter(t, "out.txt")}, nil)
 		}},
-		{"written", func(t *testing.T, _ *App, p *scriptedPicker) { p.answerSave(t, memWriter(t, "out.txt"), nil) }},
+		{"written", func(t *testing.T, f *viewFixture) { f.pick.answerSave(t, memWriter(t, "out.txt"), nil) }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			app, _, p := exportApp(t)
+			f := exportView(t)
 			data := []byte("decoded file content")
 
-			app.detailView.fileOps.exportDecoded("n", "out.txt", data)
-			tt.end(t, app, p)
+			f.view.files.exportDecoded("n", "out.txt", data)
+			tt.end(t, f)
 
 			if !bytes.Equal(data, make([]byte, len(data))) {
 				t.Fatalf("%s: the decoded file must be wiped", tt.name)
 			}
-			app.Lock()
 		})
 	}
 }
 
 func TestFileOps_ExportRefusesASecretThatIsNotAFile(t *testing.T) {
-	app, w, p := exportApp(t)
+	f := exportView(t)
 
-	app.detailView.fileOps.ExportFile(testutil.PasswordSecret("gh", "x", "work"))
+	f.view.files.ExportFile(testutil.PasswordSecret("gh", "x", "work"))
 
-	if text := dialogText(t, w); !strings.Contains(text, `Couldn't export "gh": it is not a file secret`) {
+	if text := dialogText(t, f.window); !strings.Contains(text, `Couldn't export "gh": it is not a file secret`) {
 		t.Fatalf("error dialog says %q", text)
 	}
-	if len(p.saves) != 0 {
+	if len(f.pick.saves) != 0 {
 		t.Fatal("a secret that is not a file must not ask where to save")
 	}
-	app.Lock()
 }
 
 // A failure to save an imported file other than the name being taken is
 // shown in words, with no question about replacing.
 func TestFileOps_ImportThatFailsToSaveSaysWhy(t *testing.T) {
-	app, w, _ := exportApp(t)
+	f := exportView(t)
 	secret := testutil.FileSecret(strings.Repeat("n", 300), "big.txt", "aGVsbG8=", "docs")
 
-	app.detailView.fileOps.importSecret(secret, importedFile{})
+	f.view.files.importSecret(secret, importedFile{})
 
-	text := dialogText(t, w)
+	text := dialogText(t, f.window)
 	if !strings.Contains(text, "Couldn't import") || !strings.Contains(text, "255") {
 		t.Fatalf("error dialog says %q, want why the import failed", text)
 	}
-	if findButton(w.Canvas().Overlays().Top(), "Yes") != nil {
+	if findButton(f.window.Canvas().Overlays().Top(), "Yes") != nil {
 		t.Fatal("a failed import must not ask to replace anything")
 	}
-	app.Lock()
 }
 
 // writeFailingURIWriter is a fakeURIWriter whose writes fail.

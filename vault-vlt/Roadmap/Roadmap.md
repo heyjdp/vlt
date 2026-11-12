@@ -174,6 +174,13 @@ Added 2026-11-12, from the rest of the Go skills audit. Goal: close the remainin
 - [[F47 Workflow linters]]
 - [[F48 nolintlint]]
 
+### Phase 13: Deepening, third pass
+Added 2026-11-12, from the third architecture review. Goal: the store owns its lock file, one module opens a vault, vault-wide changes report their outcome, and one module owns the main view.
+- [[F49 Store owns its lock file]]
+- [[F50 Opening a vault]]
+- [[F51 Vault-wide changes]]
+- [[F52 Main view]]
+
 ## Tracker
 
 ![[Roadmap.base]]
@@ -200,3 +207,7 @@ Each fix note's `status` property is one of `todo`, `in-progress`, or `done`. Th
 
 > [!success] Phase 12 is done (2026-11-12)
 > [[F43 Scrypt work factor cap]], [[F44 Auto-lock during long operations]], [[F45 Lock without freezing]], [[F46 Tests on every OS]], [[F47 Workflow linters]] and [[F48 nolintlint]] each went through code, documentation and tooling verification and were merged into `main` and pushed. The first CI run on Windows found a real bug (a file given as the vault location read as an empty folder), fixed and verified the same way; CI is now green on Linux, macOS and Windows.
+
+> [!success] Phase 13 is done (2026-11-12)
+> [[F49 Store owns its lock file]], [[F50 Opening a vault]], [[F51 Vault-wide changes]] and [[F52 Main view]] were built on the branch `refactor/deepen-open-and-lock`, each with its tests, documentation and lint passing, then went through independent code, documentation and tooling verification and were merged into `main`. Besides the deeper modules (the store owning its lock file, one module opening a vault, vault changes reporting their outcome, one main-view module with one wipe), they fix a passphrase change's outcome being guessed from the error (a change that lost its server connection before the new key was sent is now reported as a failed change, and a local change whose folder couldn't be synced as possibly saved).
+> Verification found no regressions and no flaky tests. It added tests for a failed takeover (in the store and in *Open Anyway*), removed dead lock-error code, replaced a timed wait in a lock test with a `synctest` bubble, and corrected the documentation of the lock order, the vault-change outcomes and quitting during an unlock.

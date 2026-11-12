@@ -257,7 +257,7 @@ func TestSettings_RefusesABadLocation(t *testing.T) {
 	app, _ := newFlowApp(t)
 	unlock(app)
 	before := app.settings.Vault()
-	ss := app.openSettings(app.session.Store(), app.sessionOps)
+	ss := app.main.openSettings()
 	box := ss.buildVaultLocation()
 	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")
 
@@ -273,30 +273,6 @@ func TestSettings_RefusesABadLocation(t *testing.T) {
 	app.Lock()
 }
 
-func TestApp_CancelClosesTheWaitingVault(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	plantLock(t, dir)
-	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
-
-	unlock(app)
-	waiting := app.session.Pending()
-	if waiting == nil {
-		t.Fatal("the opened vault should wait for an answer")
-	}
-	test.Tap(dialogButton(t, w, "Cancel"))
-	select {
-	case <-waiting.Closed():
-	default:
-		t.Fatal("Cancel must close the waiting vault (its key is in memory)")
-	}
-	if app.session.Pending() != nil {
-		t.Fatal("nothing should be pending after Cancel")
-	}
-}
-
 func TestApp_UnansweredOpenElsewhereDialogLocksAfterTheTimeout(t *testing.T) {
 	a := test.NewTempApp(t)
 	dir := t.TempDir()
@@ -307,17 +283,11 @@ func TestApp_UnansweredOpenElsewhereDialogLocksAfterTheTimeout(t *testing.T) {
 	app := newApp(a, w, settingsAt(a, dir, withLockTimeoutMs(60_000)), quietLog(), inlineRunner(), clock.factory, testKDF)
 
 	unlock(app)
-	waiting := app.session.Pending()
 	timer := clock.active(time.Minute)
-	if waiting == nil || timer == nil {
+	if w.Canvas().Overlays().Top() == nil || timer == nil {
 		t.Fatal("the dialog should be guarded by the auto-lock timeout")
 	}
 	timer.f()
-	select {
-	case <-waiting.Closed():
-	default:
-		t.Fatal("an unanswered dialog must close the vault after the timeout")
-	}
 	if w.Canvas().Overlays().Top() != nil || app.unlockScreen.unlockBtn.Disabled() {
 		t.Fatal("the dialog should be gone and the unlock screen usable")
 	}
@@ -335,7 +305,7 @@ func TestApp_QuitReleasesTheLock(t *testing.T) {
 	if lockHolder(t, dir) == "" {
 		t.Fatal("expected a lock while unlocked")
 	}
-	app.session.Close(closeWait) // what quit does before exiting
+	app.closeVaults(closeWait) // what quit does before exiting
 	if got := lockHolder(t, dir); got != "" {
 		t.Fatalf("quitting while unlocked must remove vlt.lock, held by %q", got)
 	}
@@ -347,7 +317,7 @@ func TestSettings_SwitchToTheSameLocationWrittenDifferently(t *testing.T) {
 	app, _ := newFlowApp(t)
 	unlock(app)
 	app.settings.useLocation("ssh://me@nas:2222/srv/my vault") // as saved by an older version
-	ss := app.openSettings(app.session.Store(), app.sessionOps)
+	ss := app.main.openSettings()
 	box := ss.buildVaultLocation()
 	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")
 
@@ -385,36 +355,6 @@ func queuedLockApp(t *testing.T, dir string) (*App, fyne.Window, *queue) {
 	return app, w, q
 }
 
-// releasedInTheBackground checks that a store let go by the app is closed
-// through the session, not on the main goroutine: its release is still
-// queued (holder is still the lock's holder, or the store is not yet
-// closed), and once the queue runs the lock is gone and quitting has
-// nothing left to wait for.
-func releasedInTheBackground(t *testing.T, app *App, q *queue, dir, holder string, closed <-chan struct{}) {
-	t.Helper()
-	if got := lockHolder(t, dir); got != holder {
-		t.Fatalf("the lock should still be held by %q until the release runs, held by %q", holder, got)
-	}
-	if closed != nil && isClosedChan(closed) {
-		t.Fatal("the store was closed on the main goroutine, not through the session")
-	}
-	q.flush()
-	if closed != nil && !isClosedChan(closed) {
-		t.Fatal("the store let go was never closed")
-	}
-	if holder != "laptop.local" {
-		if got := lockHolder(t, dir); got != "" {
-			t.Fatalf("the store let go should have released its lock, held by %q", got)
-		}
-	}
-	if !app.session.Close(closeWait) {
-		t.Fatal("quitting should find every store released")
-	}
-	if app.session.Store() != nil {
-		t.Fatal("the vault must stay locked")
-	}
-}
-
 // Unlocking finished after the screen was replaced (a vault switch): the
 // opened store is let go.
 func TestApp_AnUnlockFinishingAfterAVaultSwitchIsDiscarded(t *testing.T) {
@@ -426,50 +366,13 @@ func TestApp_AnUnlockFinishingAfterAVaultSwitchIsDiscarded(t *testing.T) {
 	app.showUnlockScreen() // as switching vaults does, while scrypt runs
 	runNext(t, q)          // the open finishes
 
-	host, _ := os.Hostname()
-	releasedInTheBackground(t, app, q, dir, host, nil)
+	letGoInTheBackground(t, app.session, q, dir, "")
 }
 
-// Creating finished after the create screen was replaced: the new vault's
-// store is let go.
-func TestApp_ACreateFinishingAfterTheScreenWasReplacedIsDiscarded(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "vault")
-	app, _, q := queuedLockApp(t, dir)
-	if app.createScreen == nil {
-		t.Fatal("expected the create screen")
-	}
-
-	test.Type(app.createScreen.entry, testPassphrase)
-	test.Type(app.createScreen.confirm, testPassphrase)
-	test.Tap(app.createScreen.createBtn)
-	app.showUnlockScreen() // the screen is replaced while scrypt runs
-	runNext(t, q)          // the create finishes
-
-	host, _ := os.Hostname()
-	releasedInTheBackground(t, app, q, dir, host, nil)
-}
-
-// Cancel on "Vault Already Open" lets the waiting store go.
-func TestApp_CancelOnVaultAlreadyOpenDiscardsTheStore(t *testing.T) {
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	plantLock(t, dir)
-	app, w, q := queuedLockApp(t, dir)
-
-	unlock(app)
-	runNext(t, q) // the open finishes; the question is asked
-	waiting := app.session.Pending()
-	if waiting == nil {
-		t.Fatal("the opened vault should wait for an answer")
-	}
-	test.Tap(dialogButton(t, w, "Cancel"))
-
-	releasedInTheBackground(t, app, q, dir, "laptop.local", waiting.Closed())
-}
-
-// "Open Anyway", then the screen is replaced before the takeover ends: the
-// store, now holding the lock, is let go.
-func TestApp_ATakeoverFinishingAfterTheScreenWasReplacedIsDiscarded(t *testing.T) {
+// "Open Anyway" answered after the waiting store was let go (vlt is
+// quitting, which leaves the dialog up) does nothing: no takeover starts,
+// and the screen is not left busy.
+func TestApp_OpenAnywayAfterTheWaitingStoreWasLetGoDoesNothing(t *testing.T) {
 	dir := t.TempDir()
 	newVaultWith(t, dir)
 	plantLock(t, dir)
@@ -477,44 +380,17 @@ func TestApp_ATakeoverFinishingAfterTheScreenWasReplacedIsDiscarded(t *testing.T
 
 	unlock(app)
 	runNext(t, q)
-	waiting := app.session.Pending()
+	app.closeVaults(0) // quitting lets the waiting vault go
 	test.Tap(dialogButton(t, w, "Open Anyway"))
-	app.showUnlockScreen() // the screen is replaced during the takeover
-	runNext(t, q)          // the takeover finishes
+	q.flush()
 
-	host, _ := os.Hostname()
-	releasedInTheBackground(t, app, q, dir, host, waiting.Closed())
-}
-
-// Quitting while "Open Anyway" takes the lock over: the store being taken
-// over is still the session's, so quitting waits for its release, which
-// follows the takeover.
-func TestApp_QuitDuringATakeoverWaitsForTheStoresRelease(t *testing.T) {
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	plantLock(t, dir)
-	app, w, q := queuedLockApp(t, dir)
-
-	unlock(app)
-	runNext(t, q)
-	waiting := app.session.Pending()
-	test.Tap(dialogButton(t, w, "Open Anyway"))
-
-	if app.session.Close(0) {
-		t.Fatal("quitting must wait for the vault being taken over")
+	if app.unlockScreen == nil || app.unlockScreen.entry.Disabled() {
+		t.Fatal("the unlock screen should not be left busy")
 	}
-	if isClosedChan(waiting.Closed()) {
-		t.Fatal("the store must not be closed while its lock is taken over")
+	if got := lockHolder(t, dir); got != "laptop.local" {
+		t.Fatalf("no takeover should run, the lock is held by %q", got)
 	}
-	q.flush() // the takeover ends; the store is then closed
-
-	if !isClosedChan(waiting.Closed()) || app.session.Store() != nil {
-		t.Fatal("after quitting, the store taken over is closed and the vault stays locked")
-	}
-	if got := lockHolder(t, dir); got != "" {
-		t.Fatalf("the lock taken over should be released, held by %q", got)
-	}
-	if !app.session.Close(closeWait) {
-		t.Fatal("quitting should then find every store released")
+	if !app.closeVaults(closeWait) || app.session.Store() != nil {
+		t.Fatal("the vault must stay locked, with every store released")
 	}
 }

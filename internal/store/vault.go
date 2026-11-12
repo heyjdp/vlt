@@ -85,6 +85,9 @@ type options struct {
 	// onKDF, when set, is called before every scrypt derivation. It exists
 	// so internal tests can count derivations.
 	onKDF func()
+	// wrapFS, when set, wraps the location's storage. It exists so internal
+	// tests can inject faults into Open and Create.
+	wrapFS func(vaultFS) vaultFS
 }
 
 // WithWorkFactor sets the scrypt work factor (log2 N) used when wrapping the
@@ -97,6 +100,11 @@ func WithWorkFactor(logN int) Option {
 // withDial replaces the ssh client for remote locations (tests only).
 func withDial(d dialFunc) Option {
 	return func(o *options) { o.dial = d }
+}
+
+// withFS wraps the location's storage (tests only).
+func withFS(wrap func(vaultFS) vaultFS) Option {
+	return func(o *options) { o.wrapFS = wrap }
 }
 
 func buildOptions(opts []Option) options {
@@ -181,7 +189,8 @@ func existsIn(fsys vaultFS) (bool, error) {
 // Create initialises a new vault at location: it generates a random vault
 // key, stores it encrypted to passphrase in vlt.age, and writes the format
 // marker. It returns ErrVaultExists if the location already holds a vault or
-// secret files, and ErrNotAFolder if it is a file.
+// secret files, and ErrNotAFolder if it is a file. Like Open, it takes the
+// vault's lock file before returning (see OpenElsewhere).
 func Create(ctx context.Context, location, passphrase string, log *slog.Logger, opts ...Option) (*Store, error) {
 	o := buildOptions(opts)
 	fsys, loc, err := openLocation(ctx, location, o)
@@ -193,6 +202,7 @@ func Create(ctx context.Context, location, passphrase string, log *slog.Logger, 
 		_ = fsys.Close()
 		return nil, err
 	}
+	s.lock(ctx)
 	return s, nil
 }
 
@@ -246,6 +256,12 @@ func create(fsys vaultFS, loc Location, passphrase string, log *slog.Logger, o o
 // ErrVaultNotFound if the location holds no vault, ErrKeyMissing if a
 // format-2 vault has lost vlt.age, and ErrUnsupportedFormat for a newer
 // format. For a vault on a server it keeps the connection open until Close.
+//
+// Before returning, Open records in the vault's lock file (vlt.lock) that
+// this Store has it open, until Close. A vault another copy of vlt has open
+// is still opened, without taking its lock: OpenElsewhere says so, and
+// TakeOver takes the lock over. A lock that cannot be written is logged
+// and does not stop Open.
 func Open(ctx context.Context, location, passphrase string, log *slog.Logger, opts ...Option) (*Store, error) {
 	o := buildOptions(opts)
 	fsys, loc, err := openLocation(ctx, location, o)
@@ -257,6 +273,7 @@ func Open(ctx context.Context, location, passphrase string, log *slog.Logger, op
 		_ = fsys.Close()
 		return nil, err
 	}
+	s.lock(ctx)
 	return s, nil
 }
 
@@ -374,42 +391,117 @@ func encryptedToPassphrase(data []byte) bool {
 	return bytes.Contains(header, []byte("\n-> scrypt "))
 }
 
+// Change says how a change to the vault ended (see ChangeOf). The zero
+// Change is not an outcome.
+type Change int
+
+const (
+	// Unchanged means the vault is as it was before the change.
+	Unchanged Change = iota + 1
+	// Changed means the change took effect.
+	Changed
+	// MaybeChanged means whether the change took effect is not known. Its
+	// write was made or sent but not confirmed: the server's reply to the
+	// rename that replaces the file was lost, or a local rename was made
+	// but could not be made durable.
+	MaybeChanged
+)
+
+// ChangeError is a change to the vault that failed: Change says whether the
+// vault is as it was (Unchanged) or may have changed all the same
+// (MaybeChanged), and Err why it failed. Its text is Err's.
+type ChangeError struct {
+	Change Change
+	Err    error
+}
+
+// Error returns Err's text.
+func (e *ChangeError) Error() string { return e.Err.Error() }
+
+// Unwrap returns Err.
+func (e *ChangeError) Unwrap() error { return e.Err }
+
+// ChangeOf says how the change that returned err ended: Changed for nil,
+// Unchanged for a *ChangeError that says so, and MaybeChanged for any other
+// error, since an error that does not say leaves the vault's state unknown.
+func ChangeOf(err error) Change {
+	if err == nil {
+		return Changed
+	}
+	var ce *ChangeError
+	if errors.As(err, &ce) && ce.Change == Unchanged {
+		return Unchanged
+	}
+	return MaybeChanged
+}
+
 // ChangePassphrase re-encrypts the vault key from oldPass to newPass. Only
 // vlt.age is rewritten, atomically, so an interrupted change leaves the old
-// passphrase working. It returns ErrWrongPassphrase if oldPass is incorrect.
-// ctx is checked before the final write.
+// passphrase working. It returns nil once the change took effect, and
+// otherwise a *ChangeError that says whether the vault changed (ChangeOf):
+//
+//   - Unchanged for every failure before vlt.age is replaced: a wrong
+//     oldPass (ErrWrongPassphrase), ctx cancelled (checked just before the
+//     write), the vault key zeroed by ZeroKey or Close (ErrClosed), a
+//     vlt.age that can't be read or holds another vault's key, a server
+//     that can't be reached or a connection lost before the rename is sent,
+//     and a write the storage refused.
+//   - MaybeChanged when the rename replacing vlt.age was sent to the server
+//     and the connection was lost before its reply (ErrConnectionLost), or
+//     was made on this computer but the folder could not be synced. Either
+//     passphrase may then unlock the vault.
 func (s *Store) ChangePassphrase(ctx context.Context, oldPass, newPass string) error {
+	err := s.changePassphrase(ctx, oldPass, newPass)
+	if err == nil {
+		s.log.Info("passphrase changed", "location", s.loc.String())
+		return nil
+	}
+	change := Unchanged
+	if writeUncertain(err) {
+		change = MaybeChanged
+	}
+	return &ChangeError{Change: change, Err: fmt.Errorf("store.ChangePassphrase: %w", err)}
+}
+
+// changePassphrase is ChangePassphrase's work. A vault key zeroed meanwhile
+// is ErrClosed.
+func (s *Store) changePassphrase(ctx context.Context, oldPass, newPass string) error {
 	data, err := s.fs.ReadFile(keyFile)
 	if err != nil {
-		return fmt.Errorf("store.ChangePassphrase: %w", err)
+		return err
 	}
 	s.opts.kdf()
 	current, err := crypto.UnwrapIdentity(oldPass, data)
 	if err != nil {
-		return fmt.Errorf("store.ChangePassphrase: %w", err)
+		return err
 	}
 	defer current.Zero()
 
 	same, err := sameKey(current, s.id)
 	if err != nil {
-		return fmt.Errorf("store.ChangePassphrase: %w", err)
+		return closedIfZeroed(err)
 	}
 	if !same {
-		return fmt.Errorf("store.ChangePassphrase: %w", errors.New("vlt.age does not hold this vault's key"))
+		return errors.New("vlt.age does not hold this vault's key")
 	}
 
 	wrapped, err := s.opts.wrap(newPass, s.id)
 	if err != nil {
-		return fmt.Errorf("store.ChangePassphrase: %w", err)
+		return closedIfZeroed(err)
 	}
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("store.ChangePassphrase: %w", err)
+		return err
 	}
-	if err := s.fs.WriteFileAtomic(keyFile, wrapped); err != nil {
-		return fmt.Errorf("store.ChangePassphrase: %w", err)
+	return s.fs.WriteFileAtomic(keyFile, wrapped)
+}
+
+// closedIfZeroed is ErrClosed for err if err says the vault key was zeroed
+// (the Store was closed, or its key zeroed, meanwhile), and err otherwise.
+func closedIfZeroed(err error) error {
+	if errors.Is(err, crypto.ErrIdentityZeroed) {
+		return ErrClosed
 	}
-	s.log.Info("passphrase changed", "location", s.loc.String())
-	return nil
+	return err
 }
 
 // ZeroKey zeroes the vault key at once, without touching the vault's
@@ -420,28 +512,25 @@ func (s *Store) ZeroKey() {
 }
 
 // Close zeroes the vault key at once, then releases the vault's lock file
-// (if this Store holds it) and, for a vault on a server, ends the
-// connection. For a local vault that cleanup is done before Close returns,
-// so it can block on a network folder that stops answering (the UI's
-// session therefore calls ZeroKey, then Close on another goroutine); for a
-// remote one it runs in the background, so a dead network cannot hold up
-// locking. Closed reports when it has finished. The Store must not be
-// used after Close; calling Close again does nothing.
+// (if this Store holds it; a TakeOver still running is waited for first,
+// and none starts after Close) and, for a vault on a server, ends the
+// connection. That cleanup is done before Close returns, for a local vault
+// and a remote one alike, so Close can block on storage that stops
+// answering (a network folder, a server that has gone away): callers that
+// must not wait, such as the UI's session, call ZeroKey and run Close on
+// another goroutine. Closed reports when it has finished. The Store must
+// not be used after Close; calling Close again returns once the first
+// call has finished.
 func (s *Store) Close() {
 	s.id.Zero()
 	s.closeOnce.Do(func() {
-		cleanup := func() {
-			s.releaseLock()
-			if err := s.fs.Close(); err != nil {
-				s.log.Warn("closing the vault's connection", "err", err)
-			}
-			close(s.closed)
+		s.refuseTakeOvers()
+		s.takeOvers.Wait()
+		s.releaseLock()
+		if err := s.fs.Close(); err != nil {
+			s.log.Warn("closing the vault's connection", "err", err)
 		}
-		if s.fs.Local() {
-			cleanup()
-			return
-		}
-		go cleanup()
+		close(s.closed)
 	})
 }
 

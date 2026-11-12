@@ -24,7 +24,7 @@ created: 2026-10-27
 | TOTP secrets | Vault compromise | Stored encrypted like every field ([[F32 TOTP codes]]); a copied code is cleared like any secret | Kept with the password under one passphrase: whoever unlocks the vault has both factors |
 | Update check | Network observer, GitHub | Off unless asked for or turned on; one HTTPS GET; nothing downloaded or run; the link is built from a tag that must be `vX.Y.Z`; redirects only to `api.github.com` ([[F29 Check for updates]]) | GitHub and the network learn the user's IP address and that they run vlt |
 | Two copies editing one vault | Lost edit | `vlt.lock` warns before a second unlock ([[F26 Vault lock file]]); creates never overwrite | Same-secret edits are last-writer-wins; two computers with the same host name count as one; a lock that can't be read (a connection that stays down, a disk error) is skipped, and the vault opens without a warning ([[F37 Lock read errors]]) |
-| Vault integrity | Crash mid-write, partial re-encrypt | Per-file atomic writes ([[F02 Atomic file writes]]); passphrase change rewrites one file and migration is resumable ([[F01 Scrypt-wrapped identity]]) | Concurrent writers other than migration are not coordinated |
+| Vault integrity | Crash mid-write, partial re-encrypt | Per-file atomic writes ([[F02 Atomic file writes]]); passphrase change rewrites one file and migration is resumable ([[F01 Scrypt-wrapped identity]]) | Concurrent writers other than migration are not coordinated; a passphrase change whose confirmation was lost may or may not have taken effect: vlt says so and suggests trying both passphrases ([[F51 Vault-wide changes]]) |
 | Tampered or swapped file | Hostile server, shared folder, bad disk | age authenticates each file; a secret must be stored at the path its name and group give, and must have a name and a known type ([[F34 Tampered vault files]]) | The list leaves such a file out, and counts it under the list with its path in *Details…* ([[F38 Secret list errors]]) |
 
 ## Where key material lives (after F01)
@@ -42,7 +42,7 @@ flowchart TB
     style X fill:#c62828,color:#fff
 ```
 
-The passphrase is no longer held for the session. It is used once to unwrap `vlt.age` and then dropped. The long-lived secret is the vault key. Its encoded form is in the green buffer, but age's parsed `X25519Identity` (and one transient string copy) sit on the Go heap. `Identity.Zero()` destroys the buffer and drops the pointer, but it cannot wipe the heap copy. It never waits for a passphrase change: the scrypt derivation runs without the identity's mutex, so a lock mid-change zeroes the key at once and the change fails. Nor does a lock wait for the vault's storage: the key is zeroed first, and the lock file is released afterwards in the background ([[F45 Lock without freezing]]).
+The passphrase is no longer held for the session. It is used once to unwrap `vlt.age` and then dropped. The long-lived secret is the vault key. Its encoded form is in the green buffer, but age's parsed `X25519Identity` (and one transient string copy) sit on the Go heap. `Identity.Zero()` destroys the buffer and drops the pointer, but it cannot wipe the heap copy. It never waits for a passphrase change: the scrypt derivation runs without the identity's mutex, so a lock mid-change zeroes the key at once and the change is reported as not changed. Nor does a lock wait for the vault's storage: the key is zeroed first, and the lock file is released afterwards in the background ([[F45 Lock without freezing]]).
 
 ## Realistic goal
 

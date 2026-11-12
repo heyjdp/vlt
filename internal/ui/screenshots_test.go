@@ -57,10 +57,10 @@ func TestScreenshots(t *testing.T) {
 		w.Resize(size)
 		// A fixed clock, so the one-time code (and its countdown) is the same
 		// in every render.
-		app.detailView.now = func() time.Time { return time.Unix(1_800_000_011, 0).UTC() }
-		for i, s := range app.secretList.filtered {
+		app.main.detail.now = func() time.Time { return time.Unix(1_800_000_011, 0).UTC() }
+		for i, s := range app.main.list.filtered {
 			if s.Type == store.TypeRecord {
-				app.secretList.list.Select(i)
+				app.main.list.list.Select(i)
 				break
 			}
 		}
