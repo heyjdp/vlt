@@ -19,10 +19,6 @@ import (
 // the same secret wins. It holds no secrets, only who has the vault open.
 const lockFile = "vlt.lock"
 
-// errVaultInUse is matched (errors.Is) by the *inUseError acquireLock
-// returns when another copy of vlt has the vault open.
-var errVaultInUse = errors.New("the vault is open elsewhere")
-
 // ErrClosed is returned by TakeOver once Close has been called, and by
 // ChangePassphrase once the vault key has been zeroed (ZeroKey or Close).
 var ErrClosed = errors.New("the vault has been closed")
@@ -38,21 +34,13 @@ type LockInfo struct {
 }
 
 // inUseError reports the lock found by acquireLock. Lock is zero if the lock
-// file could not be parsed, or this user may not read it.
+// file could not be parsed, or this user may not read it. Only lock reads
+// it, through errors.As; it never reaches a caller of the package.
 type inUseError struct {
 	Lock LockInfo
 }
 
-func (e *inUseError) Error() string {
-	if e.Lock.Host == "" {
-		return "the vault is open elsewhere (its lock file is unreadable)"
-	}
-	return fmt.Sprintf("the vault is open on %s (user %s, process %d) since %s",
-		e.Lock.Host, e.Lock.User, e.Lock.PID, e.Lock.Since.UTC().Format("2 Jan 2006 15:04 UTC"))
-}
-
-// Is makes errors.Is(err, errVaultInUse) match.
-func (e *inUseError) Is(target error) bool { return target == errVaultInUse }
+func (e *inUseError) Error() string { return "the vault is open elsewhere" }
 
 // lock records in vlt.lock that this Store has the vault open, until Close.
 // Open and Create call it before returning the Store. If another copy of
