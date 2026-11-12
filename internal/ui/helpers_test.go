@@ -96,6 +96,17 @@ func (q *queue) flush() {
 	}
 }
 
+// runNext runs the first piece of work q holds.
+func runNext(t *testing.T, q *queue) {
+	t.Helper()
+	if len(q.pending) == 0 {
+		t.Fatal("no work queued")
+	}
+	next := q.pending[0]
+	q.pending = q.pending[1:]
+	next()
+}
+
 // fakeTimer is a stoppableTimer that only fires when a test says so.
 type fakeTimer struct {
 	d       time.Duration
@@ -430,15 +441,6 @@ func pickerOf(app *App) *scriptedPicker {
 		app.main.ops.pick = p
 	}
 	return p
-}
-
-// importFile imports r through the main view's Import File button and the
-// file chooser.
-func importFile(t *testing.T, app *App, r fyne.URIReadCloser) {
-	t.Helper()
-	p := pickerOf(app)
-	test.Tap(findButton(app.main.content(), "Import File"))
-	p.answerFile(t, r, nil)
 }
 
 // closeWait bounds a session Close that a test expects to succeed. Close

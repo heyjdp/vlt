@@ -14,7 +14,6 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/heyjdp/vlt/internal/store"
 	"github.com/heyjdp/vlt/internal/testutil"
 )
 
@@ -207,20 +206,6 @@ func memWriter(t *testing.T, name string) *fakeURIWriter {
 	return &fakeURIWriter{uri: uri}
 }
 
-// exportApp is an unlocked app whose vault holds one file secret, "notes"
-// (notes.txt, "hello"), with a scripted picker.
-func exportApp(t *testing.T) (*App, fyne.Window, *scriptedPicker) {
-	t.Helper()
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir, testutil.FileSecret("notes", "notes.txt", "aGVsbG8=", "docs"))
-	w := test.NewTempWindow(t, nil)
-	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
-	p := pickerOf(app)
-	unlock(app)
-	return app, w, p
-}
-
 // exportView is a main view over a vault holding one file secret, "notes"
 // (notes.txt, "hello").
 func exportView(t *testing.T) *viewFixture {
@@ -228,21 +213,15 @@ func exportView(t *testing.T) *viewFixture {
 	return newView(t, testutil.FileSecret("notes", "notes.txt", "aGVsbG8=", "docs"))
 }
 
-// startExport shows the secret and taps Export File, which leaves the save
-// dialog open.
-func startExport(t *testing.T, app *App) {
-	t.Helper()
-	app.main.list.list.Select(0)
-	test.Tap(findButton(app.main.detail.Content(), "Export File"))
-}
-
 func TestApp_ExportAfterLockWritesNothing(t *testing.T) {
-	app, _, p := exportApp(t)
-	startExport(t, app)
-	app.Lock() // the save dialog was still open when the vault locked
+	r := newAppRig(t, withSecrets(testutil.FileSecret("notes", "notes.txt", "aGVsbG8=", "docs")))
+	r.unlock()
+	r.selectSecret(0)
+	test.Tap(findButton(r.detail(), "Export File")) // the save dialog stays open
+	r.lock()                                        // the save dialog was still open when the vault locked
 
 	w := memWriter(t, "notes.txt")
-	p.answerSave(t, w, nil) // a path chosen too late
+	r.pick.answerSave(t, w, nil) // a path chosen too late
 
 	if w.Len() != 0 || !w.closed {
 		t.Fatalf("an export confirmed after lock must write nothing (wrote %d bytes) and close the file (%v)", w.Len(), w.closed)
@@ -352,15 +331,12 @@ type writeFailingURIWriter struct{ fakeURIWriter }
 func (w *writeFailingURIWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
 
 func TestApp_LockDismissesOpenDialogs(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	w := test.NewTempWindow(t, nil)
-	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
-	unlock(app)
+	r := newAppRig(t)
+	w := r.window
+	r.unlock()
 
 	dialog.ShowInformation("open", "a dialog left open", w)
-	app.Lock()
+	r.lock()
 
 	if w.Canvas().Overlays().Top() != nil {
 		t.Fatal("locking must dismiss dialogs left open in the session")

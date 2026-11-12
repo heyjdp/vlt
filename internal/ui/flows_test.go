@@ -10,39 +10,26 @@ import (
 	"strings"
 	"testing"
 
-	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/test"
 
-	"github.com/heyjdp/vlt/internal/store"
 	"github.com/heyjdp/vlt/internal/testutil"
 )
 
 // F15: end-to-end flows through the real widgets and dialogs, headless.
 
-func newFlowApp(t *testing.T, secrets ...*store.Secret) (*App, fyne.Window) {
-	t.Helper()
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir, secrets...)
-	w := test.NewTempWindow(t, nil)
-	app := newApp(&AppDeps{FyneApp: a, Window: w, Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
-	return app, w
-}
-
 func TestFlow_WrongPassphraseShowsError(t *testing.T) {
-	app, _ := newFlowApp(t)
+	r := newAppRig(t)
 
-	test.Type(app.unlockScreen.entry, "not the passphrase")
-	test.Tap(app.unlockScreen.unlockBtn)
+	r.unlockWith("not the passphrase")
 
-	if app.session.Store() != nil {
+	if !r.locked() {
 		t.Fatal("a wrong passphrase must not unlock the vault")
 	}
-	if !app.unlockScreen.errorLabel.Visible() || app.unlockScreen.errorLabel.Text != "Incorrect passphrase" {
-		t.Fatalf("expected \"Incorrect passphrase\", got %q", app.unlockScreen.errorLabel.Text)
+	if got := r.screenError(); got != "Incorrect passphrase" {
+		t.Fatalf("expected \"Incorrect passphrase\", got %q", got)
 	}
-	if app.unlockScreen.entry.Text != "" {
+	if r.passphraseLeft() != "" {
 		t.Fatal("the entry must be cleared after a failed attempt")
 	}
 }
@@ -50,15 +37,14 @@ func TestFlow_WrongPassphraseShowsError(t *testing.T) {
 // A vault without vlt.age may be a move cut short; the unlock screen says
 // how to finish it, and that a vault changed since needs the folder gone.
 func TestFlow_AVaultWithoutItsKeyFileSaysHowToFinishAMove(t *testing.T) {
-	app, _ := newFlowApp(t, testutil.PasswordSecret("gh", "x", "work"))
-	if err := os.Remove(filepath.Join(app.settings.Vault().Path, "vlt.age")); err != nil {
+	r := newAppRig(t, withSecrets(testutil.PasswordSecret("gh", "x", "work")))
+	if err := os.Remove(filepath.Join(r.dir, "vlt.age")); err != nil {
 		t.Fatal(err)
 	}
 
-	test.Type(app.unlockScreen.entry, testPassphrase)
-	test.Tap(app.unlockScreen.unlockBtn)
+	r.unlock()
 
-	text := app.unlockScreen.errorLabel.Text
+	text := r.screenError()
 	for _, want := range []string{"switch back to the original vault and move it here again", "delete this folder first", "restore vlt.age from a backup"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("the unlock screen says %q; want it to say %q", text, want)
@@ -67,37 +53,39 @@ func TestFlow_AVaultWithoutItsKeyFileSaysHowToFinishAMove(t *testing.T) {
 }
 
 func TestFlow_DeleteAsksForConfirmation(t *testing.T) {
-	app, w := newFlowApp(t, testutil.PasswordSecret("gh", "x", "work"))
-	unlock(app)
-	app.main.list.list.Select(0)
+	r := newAppRig(t, withSecrets(testutil.PasswordSecret("gh", "x", "work")))
+	w := r.window
+	r.unlock()
+	r.selectSecret(0)
 
-	test.Tap(findButton(app.main.detail.Content(), "Delete"))
+	test.Tap(findButton(r.detail(), "Delete"))
 	test.Tap(dialogButton(t, w, "No"))
-	if len(app.main.list.secrets) != 1 {
+	if len(r.listed()) != 1 {
 		t.Fatal("answering No must not delete the secret")
 	}
 
-	test.Tap(findButton(app.main.detail.Content(), "Delete"))
+	test.Tap(findButton(r.detail(), "Delete"))
 	test.Tap(dialogButton(t, w, "Yes"))
-	if len(app.main.list.secrets) != 0 {
+	if len(r.listed()) != 0 {
 		t.Fatal("answering Yes should delete the secret")
 	}
-	if _, err := app.session.Store().Get(context.Background(), "gh", "work"); err == nil {
+	if _, err := r.store().Get(context.Background(), "gh", "work"); err == nil {
 		t.Fatal("the secret should be gone from the vault")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestFlow_ImportAsksForGroupThenConfirmsReplace(t *testing.T) {
-	app, w := newFlowApp(t)
-	unlock(app)
+	r := newAppRig(t)
+	w := r.window
+	r.unlock()
 
-	importFile(t, app, &fakeURIReader{Reader: strings.NewReader("v1"), uri: storage.NewFileURI("/tmp/id_rsa")})
+	r.importFile(&fakeURIReader{Reader: strings.NewReader("v1"), uri: storage.NewFileURI("/tmp/id_rsa")})
 	test.Type(dialogEntry(t, w), "keys")
 	test.Tap(dialogButton(t, w, "Import"))
 	test.Tap(dialogButton(t, w, "OK")) // the completion message
 
-	got, err := app.session.Store().Get(context.Background(), "id_rsa", "keys")
+	got, err := r.store().Get(context.Background(), "id_rsa", "keys")
 	if err != nil {
 		t.Fatalf("imported file not saved in the chosen group: %v", err)
 	}
@@ -107,54 +95,56 @@ func TestFlow_ImportAsksForGroupThenConfirmsReplace(t *testing.T) {
 
 	// Importing a file with the same name asks before replacing it; "No"
 	// keeps the original.
-	importFile(t, app, &fakeURIReader{Reader: strings.NewReader("v2"), uri: storage.NewFileURI("/tmp/id_rsa")})
+	r.importFile(&fakeURIReader{Reader: strings.NewReader("v2"), uri: storage.NewFileURI("/tmp/id_rsa")})
 	test.Type(dialogEntry(t, w), "keys")
 	test.Tap(dialogButton(t, w, "Import"))
 	test.Tap(dialogButton(t, w, "No"))
-	if got, _ := app.session.Store().Get(context.Background(), "id_rsa", "keys"); got.Value != "djE=" {
+	if got, _ := r.store().Get(context.Background(), "id_rsa", "keys"); got.Value != "djE=" {
 		t.Fatalf("answering No must keep the original file, got %q", got.Value)
 	}
 
-	importFile(t, app, &fakeURIReader{Reader: strings.NewReader("v2"), uri: storage.NewFileURI("/tmp/id_rsa")})
+	r.importFile(&fakeURIReader{Reader: strings.NewReader("v2"), uri: storage.NewFileURI("/tmp/id_rsa")})
 	test.Type(dialogEntry(t, w), "keys")
 	test.Tap(dialogButton(t, w, "Import"))
 	test.Tap(dialogButton(t, w, "Yes")) // replace
 
-	got, err = app.session.Store().Get(context.Background(), "id_rsa", "keys")
+	got, err = r.store().Get(context.Background(), "id_rsa", "keys")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Value != "djI=" { // base64("v2")
 		t.Fatalf("confirmed replace did not store the new content: %q", got.Value)
 	}
-	app.Lock()
+	r.lock()
 }
 
 // An import whose file name is taken by a differently named secret (one
 // that differs only in case or punctuation) is refused, not replaced.
 func TestFlow_ImportOverADifferentlyNamedSecretIsRefused(t *testing.T) {
-	app, w := newFlowApp(t, testutil.PasswordSecret("GitHub Key", "pw", "keys"))
-	unlock(app)
+	r := newAppRig(t, withSecrets(testutil.PasswordSecret("GitHub Key", "pw", "keys")))
+	w := r.window
+	r.unlock()
 
-	importFile(t, app, &fakeURIReader{Reader: strings.NewReader("k"), uri: storage.NewFileURI("/tmp/github-key")})
+	r.importFile(&fakeURIReader{Reader: strings.NewReader("k"), uri: storage.NewFileURI("/tmp/github-key")})
 	test.Type(dialogEntry(t, w), "keys")
 	test.Tap(dialogButton(t, w, "Import"))
 
 	if top := w.Canvas().Overlays().Top(); top == nil || !visibleText(top, "already used by \"GitHub Key\"") {
 		t.Fatal("the import should be refused, naming the secret that holds the file")
 	}
-	if got, err := app.session.Store().Get(context.Background(), "GitHub Key", "keys"); err != nil || got.Value != "pw" {
+	if got, err := r.store().Get(context.Background(), "GitHub Key", "keys"); err != nil || got.Value != "pw" {
 		t.Fatalf("the existing secret must be kept: %+v, %v", got, err)
 	}
-	app.Lock()
+	r.lock()
 }
 
 // An import whose file is taken by a file that can't be read says so, and
 // leaves that file alone.
 func TestFlow_ImportOverAnUnreadableFileIsRefused(t *testing.T) {
-	app, w := newFlowApp(t)
-	unlock(app)
-	taken := filepath.Join(app.session.Store().Dir(), "keys", "id-rsa.age")
+	r := newAppRig(t)
+	w := r.window
+	r.unlock()
+	taken := filepath.Join(r.store().Dir(), "keys", "id-rsa.age")
 	if err := os.MkdirAll(filepath.Dir(taken), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +152,7 @@ func TestFlow_ImportOverAnUnreadableFileIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	importFile(t, app, &fakeURIReader{Reader: strings.NewReader("k"), uri: storage.NewFileURI("/tmp/id_rsa")})
+	r.importFile(&fakeURIReader{Reader: strings.NewReader("k"), uri: storage.NewFileURI("/tmp/id_rsa")})
 	test.Type(dialogEntry(t, w), "keys")
 	test.Tap(dialogButton(t, w, "Import"))
 
@@ -172,32 +162,34 @@ func TestFlow_ImportOverAnUnreadableFileIsRefused(t *testing.T) {
 	if data, _ := os.ReadFile(taken); string(data) != "damaged" {
 		t.Fatal("the unreadable file must be left alone")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestFlow_ImportUsesTheExistingGroupSpelling(t *testing.T) {
-	app, w := newFlowApp(t, testutil.PasswordSecret("gh", "x", "SSH Keys"))
-	unlock(app)
+	r := newAppRig(t, withSecrets(testutil.PasswordSecret("gh", "x", "SSH Keys")))
+	w := r.window
+	r.unlock()
 
-	importFile(t, app, &fakeURIReader{Reader: strings.NewReader("k"), uri: storage.NewFileURI("/tmp/id_ed25519")})
+	r.importFile(&fakeURIReader{Reader: strings.NewReader("k"), uri: storage.NewFileURI("/tmp/id_ed25519")})
 	test.Type(dialogEntry(t, w), "ssh keys")
 	test.Tap(dialogButton(t, w, "Import"))
 	test.Tap(dialogButton(t, w, "OK")) // the completion message
 
-	got, err := app.session.Store().Get(context.Background(), "id_ed25519", "ssh-keys")
+	got, err := r.store().Get(context.Background(), "id_ed25519", "ssh-keys")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Group != "SSH Keys" {
 		t.Fatalf("imported into group %q, want the existing spelling", got.Group)
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestFlow_ChangePassphraseThroughSettings(t *testing.T) {
-	app, w := newFlowApp(t, testutil.PasswordSecret("gh", "x", "work"))
-	unlock(app)
-	ss := app.main.openSettings()
+	r := newAppRig(t, withSecrets(testutil.PasswordSecret("gh", "x", "work")))
+	w := r.window
+	r.unlock()
+	ss := r.openSettings()
 	box := ss.buildChangePassphrase()
 	current := entryWithPlaceholder(t, box, "Current passphrase")
 	newPass := entryWithPlaceholder(t, box, "New passphrase")
@@ -208,28 +200,27 @@ func TestFlow_ChangePassphraseThroughSettings(t *testing.T) {
 	test.Type(confirm, "an even better passphrase")
 	test.Tap(findButton(box, "Change Passphrase"))
 
-	if app.session.Store() != nil || app.unlockScreen == nil {
+	if !r.locked() || r.shownScreen() != screenUnlock {
 		t.Fatal("a passphrase change should relock the vault")
 	}
 	test.Tap(dialogButton(t, w, "OK")) // "Passphrase Changed"
 
-	test.Type(app.unlockScreen.entry, "correct horse battery")
-	test.Tap(app.unlockScreen.unlockBtn)
-	if app.session.Store() != nil {
+	r.unlockWith("correct horse battery")
+	if !r.locked() {
 		t.Fatal("the old passphrase must no longer unlock the vault")
 	}
-	test.Type(app.unlockScreen.entry, "an even better passphrase")
-	test.Tap(app.unlockScreen.unlockBtn)
-	if app.session.Store() == nil {
+	r.unlockWith("an even better passphrase")
+	if r.locked() {
 		t.Fatal("the new passphrase should unlock the vault")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestFlow_SwitchVaultThroughSettings(t *testing.T) {
-	app, w := newFlowApp(t)
-	unlock(app)
-	ss := app.main.openSettings()
+	r := newAppRig(t)
+	w := r.window
+	r.unlock()
+	ss := r.openSettings()
 	box := ss.buildVaultLocation()
 	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")
 	newDir := filepath.Join(t.TempDir(), "other")
@@ -238,58 +229,57 @@ func TestFlow_SwitchVaultThroughSettings(t *testing.T) {
 	test.Tap(findButton(box, "Switch Vault (no copy)"))
 	test.Tap(dialogButton(t, w, "Yes"))
 
-	if app.settings.Vault() != localAt(newDir) || app.createScreen == nil {
+	if r.settings.Vault() != localAt(newDir) || r.shownScreen() != screenCreate {
 		t.Fatal("switching to an empty folder should relock into the create screen for it")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestFlow_ExportWritesTheFile(t *testing.T) {
-	app, _ := newFlowApp(t, testutil.FileSecret("notes", "notes.txt", "aGVsbG8=", "docs")) // "hello"
-	unlock(app)
+	r := newAppRig(t, withSecrets(testutil.FileSecret("notes", "notes.txt", "aGVsbG8=", "docs"))) // "hello"
+	r.unlock()
 	out := storage.NewFileURI(filepath.Join(t.TempDir(), "notes.txt"))
 
-	exportTo(t, app, out.Path())
+	exportTo(t, r, out.Path())
 
-	r, err := storage.Reader(out)
+	f, err := storage.Reader(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
-	got, err := io.ReadAll(r)
+	defer f.Close()
+	got, err := io.ReadAll(f)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(got) != "hello" {
 		t.Fatalf("exported file holds %q", got)
 	}
-	app.Lock()
+	r.lock()
 }
 
 // exportTo exports the app's first secret to path through Export File and
 // the save dialog. As Fyne's dialog does once a path is picked, the file
 // has already been created (or truncated) with os.Create.
-func exportTo(t *testing.T, app *App, path string) {
+func exportTo(t *testing.T, r *appRig, path string) {
 	t.Helper()
-	p := pickerOf(app)
-	app.main.list.list.Select(0)
-	test.Tap(findButton(app.main.detail.Content(), "Export File"))
+	r.selectSecret(0)
+	test.Tap(findButton(r.detail(), "Export File"))
 	writer, err := storage.Writer(storage.NewFileURI(path))
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.answerSave(t, writer, nil)
+	r.pick.answerSave(t, writer, nil)
 }
 
 func TestFlow_ExportIsReadableOnlyByTheUser(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows has no Unix file modes")
 	}
-	app, _ := newFlowApp(t, testutil.FileSecret("key", "id_ed25519", "aGVsbG8=", "ssh")) // "hello"
-	unlock(app)
+	r := newAppRig(t, withSecrets(testutil.FileSecret("key", "id_ed25519", "aGVsbG8=", "ssh"))) // "hello"
+	r.unlock()
 	path := filepath.Join(t.TempDir(), "id_ed25519")
 
-	exportTo(t, app, path)
+	exportTo(t, r, path)
 
 	info, err := os.Stat(path)
 	if err != nil {
@@ -298,7 +288,7 @@ func TestFlow_ExportIsReadableOnlyByTheUser(t *testing.T) {
 	if mode := info.Mode().Perm(); mode != 0o600 {
 		t.Fatalf("exported file has mode %v; want 0600, like the vault's files", mode)
 	}
-	app.Lock()
+	r.lock()
 }
 
 // Fyne creates the file before vlt sees it, so another user could open it
@@ -307,8 +297,8 @@ func TestFlow_ExportReplacesAFileSomeoneElseHasOpen(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows writes in place; its folder's ACL decides who can read")
 	}
-	app, _ := newFlowApp(t, testutil.FileSecret("key", "id_ed25519", "aGVsbG8=", "ssh")) // "hello"
-	unlock(app)
+	r := newAppRig(t, withSecrets(testutil.FileSecret("key", "id_ed25519", "aGVsbG8=", "ssh"))) // "hello"
+	r.unlock()
 	path := filepath.Join(t.TempDir(), "id_ed25519")
 	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
 		t.Fatal(err)
@@ -319,7 +309,7 @@ func TestFlow_ExportReplacesAFileSomeoneElseHasOpen(t *testing.T) {
 	}
 	defer snoop.Close()
 
-	exportTo(t, app, path)
+	exportTo(t, r, path)
 
 	seen, err := io.ReadAll(snoop)
 	if err != nil {
@@ -332,7 +322,7 @@ func TestFlow_ExportReplacesAFileSomeoneElseHasOpen(t *testing.T) {
 	if err != nil || string(got) != "hello" {
 		t.Fatalf("exported file holds %q, %v", got, err)
 	}
-	app.Lock()
+	r.lock()
 }
 
 // A file planted at the path, say a symlink in a shared folder, is
@@ -342,8 +332,8 @@ func TestFlow_ExportReplacesASymlinkRatherThanFollowingIt(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlinks need privileges on Windows")
 	}
-	app, _ := newFlowApp(t, testutil.FileSecret("key", "id_ed25519", "aGVsbG8=", "ssh")) // "hello"
-	unlock(app)
+	r := newAppRig(t, withSecrets(testutil.FileSecret("key", "id_ed25519", "aGVsbG8=", "ssh"))) // "hello"
+	r.unlock()
 	dir := t.TempDir()
 	target := filepath.Join(dir, "elsewhere")
 	if err := os.WriteFile(target, []byte("theirs"), 0o644); err != nil {
@@ -354,7 +344,7 @@ func TestFlow_ExportReplacesASymlinkRatherThanFollowingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	exportTo(t, app, path)
+	exportTo(t, r, path)
 
 	if got, err := os.ReadFile(target); err != nil || bytes.Contains(got, []byte("hello")) {
 		t.Fatalf("the symlink's target holds %q, %v; the export must not write through it", got, err)
@@ -363,7 +353,7 @@ func TestFlow_ExportReplacesASymlinkRatherThanFollowingIt(t *testing.T) {
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
 		t.Fatalf("path is %v, %v; want a regular 0600 file", info.Mode(), err)
 	}
-	app.Lock()
+	r.lock()
 }
 
 // In a folder that takes no new files, the file the dialog created (and
@@ -372,8 +362,8 @@ func TestFlow_ExportIntoAReadOnlyFolderWritesInPlace(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("needs Unix folder permissions that apply to this user")
 	}
-	app, _ := newFlowApp(t, testutil.FileSecret("key", "id_ed25519", "aGVsbG8=", "ssh")) // "hello"
-	unlock(app)
+	r := newAppRig(t, withSecrets(testutil.FileSecret("key", "id_ed25519", "aGVsbG8=", "ssh"))) // "hello"
+	r.unlock()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "id_ed25519")
 	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
@@ -384,7 +374,7 @@ func TestFlow_ExportIntoAReadOnlyFolderWritesInPlace(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	exportTo(t, app, path)
+	exportTo(t, r, path)
 
 	got, err := os.ReadFile(path)
 	if err != nil || string(got) != "hello" {
@@ -397,5 +387,5 @@ func TestFlow_ExportIntoAReadOnlyFolderWritesInPlace(t *testing.T) {
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("folder holds %v, %v; want only the export", entries, err)
 	}
-	app.Lock()
+	r.lock()
 }

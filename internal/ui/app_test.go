@@ -2,113 +2,87 @@ package ui
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
-
-	"fyne.io/fyne/v2/test"
 
 	"github.com/heyjdp/vlt/internal/store"
 	"github.com/heyjdp/vlt/internal/testutil"
 )
 
 func TestApp_UnlockLoadsSecretsIntoList(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir,
+	r := newAppRig(t, withSecrets(
 		testutil.PasswordSecret("gh", "x", "work"),
 		testutil.PasswordSecret("bank", "y", "personal"),
-	)
-	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: inlineRunner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
+	))
 
-	unlock(app)
+	r.unlock()
 
-	if app.main == nil {
+	if r.shownScreen() != screenMain {
 		t.Fatal("expected the main view after unlocking")
 	}
-	if got := len(app.main.list.secrets); got != 2 {
+	if got := len(r.listed()); got != 2 {
 		t.Fatalf("expected 2 secrets in the list, got %d", got)
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestApp_UnlockRunsOffTheMainGoroutine(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	q := &queue{}
-	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: q.runner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
-	q.flush() // the Exists check
+	r := newAppRig(t, withQueuedRunner())
 
-	unlock(app)
+	r.unlock()
 
-	if app.session.Store() != nil {
+	if !r.locked() {
 		t.Fatal("unlock must not open the vault synchronously in the tap handler")
 	}
-	if !app.unlockScreen.unlockBtn.Disabled() || app.unlockScreen.progress.Hidden {
+	if !r.busy() {
 		t.Fatal("unlock screen should show progress and disable input while opening")
 	}
 
-	q.flush()
-	if app.session.Store() == nil || app.main == nil {
+	r.flush()
+	if r.locked() || r.shownScreen() != screenMain {
 		t.Fatal("expected the vault to be open once background work completes")
 	}
-	app.Lock()
-	q.flush()
+	r.lock()
+	r.flush()
 }
 
 func TestApp_StaleUnlockIsDiscardedAfterVaultSwitch(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	q := &queue{}
-	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: q.runner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
-	q.flush()
+	r := newAppRig(t, withQueuedRunner())
 
-	unlock(app)
+	r.unlock()
 	// Before the open completes, the vault directory changes and the app relocks.
-	app.settings.ProposeVault(localAt(t.TempDir()))
-	app.Lock()
-	q.flush()
+	r.settings.ProposeVault(localAt(t.TempDir()))
+	r.lock()
+	r.flush()
 
-	if app.session.Store() != nil {
+	if !r.locked() {
 		t.Fatal("an unlock result for a superseded screen must be discarded")
 	}
-	if app.createScreen == nil {
+	if r.shownScreen() != screenCreate {
 		t.Fatal("expected the create screen for the newly selected empty directory")
 	}
 }
 
 func TestApp_SaveCompletingAfterLockIsDropped(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	q := &queue{}
-	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: q.runner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
-	q.flush()
-	unlockQueued(t, app, q)
-	q.flush() // initial list load
+	r := newAppRig(t, withQueuedRunner())
+	r.unlockOpening()
+	r.flush() // initial list load
 
-	app.main.detail.saveSecret(testutil.PasswordSecret("late", "v", "work"), true, saveButton(), func() {})
-	app.Lock()
-	q.flush()
+	r.mainView().detail.saveSecret(testutil.PasswordSecret("late", "v", "work"), true, saveButton(), func() {})
+	r.lock()
+	r.flush()
 
-	if got := app.statusBar.Text; got != "Locked" {
+	if got := r.status(); got != "Locked" {
 		t.Fatalf("a save finishing after lock must not touch the UI; status bar says %q", got)
 	}
 }
 
 func TestApp_LockCancelsInitialListLoad(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir, testutil.PasswordSecret("gh", "x", "work"))
-	q := &queue{}
-	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: q.runner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
-	q.flush()
-	unlockQueued(t, app, q)
-	list := app.main.list
+	r := newAppRig(t, withQueuedRunner(), withSecrets(testutil.PasswordSecret("gh", "x", "work")))
+	r.unlockOpening()
+	list := r.mainView().list
 
-	app.Lock()
-	q.flush()
+	r.lock()
+	r.flush()
 
 	if len(list.secrets) != 0 {
 		t.Fatal("a list load cancelled by Lock must not populate the list")
@@ -116,26 +90,20 @@ func TestApp_LockCancelsInitialListLoad(t *testing.T) {
 }
 
 func TestApp_CreateRunsOffTheMainGoroutine(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := filepath.Join(t.TempDir(), "vault")
-	q := &queue{}
-	app := newApp(&AppDeps{FyneApp: a, Window: test.NewTempWindow(t, nil), Settings: settingsAt(a, dir), Log: quietLog(), run: q.runner(), timers: noTimers, storeOpts: []store.Option{testKDF}})
-	q.flush()
+	r := newAppRig(t, withQueuedRunner(), withoutVault())
 
-	test.Type(app.createScreen.entry, "correct horse battery")
-	test.Type(app.createScreen.confirm, "correct horse battery")
-	test.Tap(app.createScreen.createBtn)
+	r.createConfirming(testPassphrase)
 
-	if exists, _ := store.Exists(context.Background(), dir); exists {
+	if exists, _ := store.Exists(context.Background(), r.dir); exists {
 		t.Fatal("create must not run synchronously in the tap handler")
 	}
-	if !app.createScreen.createBtn.Disabled() || app.createScreen.progress.Hidden {
+	if !r.busy() {
 		t.Fatal("create screen should show progress and disable input while creating")
 	}
-	q.flush()
-	if app.main == nil {
+	r.flush()
+	if r.shownScreen() != screenMain {
 		t.Fatal("expected the main view once the vault is created")
 	}
-	app.Lock()
-	q.flush()
+	r.lock()
+	r.flush()
 }
