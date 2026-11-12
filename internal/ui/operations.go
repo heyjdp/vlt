@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"io"
+	"path/filepath"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -303,7 +304,8 @@ func (o *operations) pickFolder(use func(path string)) {
 		case err != nil:
 			showError(o.window, "Couldn't choose a folder", err)
 		case uri != nil:
-			use(uri.Path())
+			// Fyne's file URIs use forward slashes on Windows too (C:/vault).
+			use(filepath.FromSlash(uri.Path()))
 		}
 	})
 }

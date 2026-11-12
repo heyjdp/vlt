@@ -267,7 +267,7 @@ func (fo *FileOps) writeFile(w fyne.URIWriteCloser, data []byte) (int, error) {
 	n, err := fo.writePrivateExport(w, data)
 	if err != nil {
 		if delErr := storage.Delete(w.URI()); delErr != nil && !errors.Is(delErr, fs.ErrNotExist) {
-			return 0, fmt.Errorf("%w (the file at %s may be incomplete)", err, w.URI().Path())
+			return 0, fmt.Errorf("%w (the file at %s may be incomplete)", err, filepath.FromSlash(w.URI().Path()))
 		}
 	}
 	return n, err

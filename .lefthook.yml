@@ -1,3 +1,6 @@
+# Git hooks: lefthook install. They check, and never rewrite, the staged
+# files (make fmt formats). They need golangci-lint, shellcheck,
+# detect-secrets, actionlint and zizmor on the PATH (see README.md).
 pre-commit:
   parallel: true
   commands:
@@ -6,16 +9,24 @@ pre-commit:
       run: golangci-lint fmt --diff ./...
     golangci-lint:
       glob: "*.go"
-      run: golangci-lint run --fix
+      run: golangci-lint run ./...
     shellcheck:
       glob: "*.sh"
       run: shellcheck {staged_files}
+    actionlint:
+      glob: ".github/workflows/*.{yml,yaml}"
+      run: actionlint {staged_files}
+    zizmor:
+      glob: ".github/{dependabot.yml,workflows/*.yml,workflows/*.yaml}"
+      run: zizmor {staged_files}
     detect-secrets:
       run: detect-secrets-hook {staged_files}
 
 pre-push:
   commands:
+    lint:
+      run: golangci-lint run ./...
     test-race:
-      run: go test -race ./...
+      run: go test -race -shuffle=on -timeout 10m ./...
     govulncheck:
       run: govulncheck ./...

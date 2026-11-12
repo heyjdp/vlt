@@ -482,7 +482,7 @@ func TestSession_CloseClosesTheOpenAndPendingStoresAndWaits(t *testing.T) {
 	sess.Hold(pending, func() {})
 
 	timer := clock.active(sessionTimeout)
-	if !sess.Close(time.Second) {
+	if !sess.Close(closeWait) {
 		t.Fatal("local stores release their locks at once")
 	}
 	if !isClosed(open) || !isClosed(pending) || ctx.Err() == nil || sess.Store() != nil || sess.Take(pending) || !timer.stopped {
@@ -512,7 +512,7 @@ func TestSession_CloseWaitsForStoresToReleaseTheirLocks(t *testing.T) {
 				t.Fatal("Close should close the store, then give up waiting after the deadline")
 			}
 			st.release()
-			if !sess.Close(time.Second) {
+			if !sess.Close(closeWait) {
 				t.Fatal("once the store has released its lock, Close succeeds")
 			}
 		})
@@ -525,7 +525,7 @@ func TestSession_CloseWaitsForAStoreEndedEarlier(t *testing.T) {
 	st := openTestStore(t)
 	sess.Begin(st)
 	sess.End()
-	if !sess.Close(time.Second) {
+	if !sess.Close(closeWait) {
 		t.Fatal("the store ended earlier has released its lock")
 	}
 }
@@ -583,7 +583,7 @@ func TestSession_EndingZeroesTheKeyAtOnceAndReleasesTheLockInTheBackground(t *te
 				t.Fatal("quitting should wait for the lock to be released")
 			}
 			st.unstick()
-			if !sess.Close(time.Second) {
+			if !sess.Close(closeWait) {
 				t.Fatal("once the lock is released, quitting goes ahead")
 			}
 		})
@@ -663,7 +663,7 @@ func TestSession_ABusyStoreLetGoIsClosedOnceIdle(t *testing.T) {
 				t.Fatal("quitting should wait for the store's release")
 			}
 			st.release()
-			if !sess.Close(time.Second) {
+			if !sess.Close(closeWait) {
 				t.Fatal("once the store has released its lock, quitting goes ahead")
 			}
 		})

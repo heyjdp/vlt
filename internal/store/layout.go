@@ -97,7 +97,7 @@ type groupFolder struct {
 func groupFolders(fsys vaultFS) ([]groupFolder, error) {
 	entries, err := fsys.ReadDir(".")
 	if err != nil {
-		return nil, err //nolint:wrapcheck // callers wrap, and check for fs.ErrNotExist
+		return nil, err // callers wrap, and check for fs.ErrNotExist
 	}
 	var groups []groupFolder
 	for _, e := range entries {

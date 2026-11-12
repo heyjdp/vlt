@@ -170,7 +170,7 @@ func (k Key) step(t time.Time) (n int64, into time.Duration) {
 func (k Key) Code(t time.Time) string {
 	n, _ := k.step(t)
 	var msg [8]byte
-	binary.BigEndian.PutUint64(msg[:], uint64(n)) //nolint:gosec // RFC 6238's counter is the two's-complement value
+	binary.BigEndian.PutUint64(msg[:], uint64(n)) // RFC 6238's counter is the two's-complement value
 	mac := hmac.New(k.hash, k.secret)
 	mac.Write(msg[:])
 	sum := mac.Sum(nil)

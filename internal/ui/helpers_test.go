@@ -440,3 +440,8 @@ func importFile(t *testing.T, app *App, r fyne.URIReadCloser) {
 	test.Tap(findButton(app.mainContent, "Import File"))
 	p.answerFile(t, r, nil)
 }
+
+// closeWait bounds a session Close that a test expects to succeed. Close
+// returns as soon as every store is released, so a passing test never waits
+// this long; the headroom is for slow CI runners (Windows, -race).
+const closeWait = 5 * time.Second

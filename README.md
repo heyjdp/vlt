@@ -174,7 +174,11 @@ Three secret types share this structure:
 |------|---------|---------|
 | golangci-lint | Linting and formatting (gofumpt, goimports) | `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0` |
 | govulncheck | Vulnerability scanning | `go install golang.org/x/vuln/cmd/govulncheck@v1.9.0` |
-| lefthook | Git hooks | `go install github.com/evilmartians/lefthook@latest` |
+| actionlint | GitHub Actions workflow checks (runs shellcheck on `run:` blocks) | `go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12` |
+| zizmor | GitHub Actions security audit | `pipx install zizmor==1.32.0`, `uv tool install zizmor@1.32.0`, or `brew install zizmor` (unpinned; CI pins 1.32.0) |
+| shellcheck | Shell script checks | `brew install shellcheck` or `apt install shellcheck` |
+| detect-secrets | Secret scanning (pre-commit hook) | `pipx install detect-secrets` |
+| lefthook | Git hooks (`lefthook install`) | `go install github.com/evilmartians/lefthook@latest` |
 
 ## Clone and Build
 
@@ -239,8 +243,8 @@ make package-linux  # dist/vlt-<version>-x86_64.AppImage, on Linux (needs curl a
 # Run all tests
 go test ./...
 
-# Run tests with race detector (recommended, used in CI)
-go test -race ./...
+# Run tests as CI does (-race -shuffle=on -timeout 10m)
+make test-race
 
 # Run a specific package
 go test -race ./internal/crypto/...
@@ -284,7 +288,7 @@ The test suite covers:
   - *Memory hygiene*: passphrase entries cleared on read; lock empties secrets, blanks forms and wipes a pending export
   - *End-to-end flows through the real dialogs*: delete confirmation (Yes and No), import with group selection and replace (Yes and No), an import refused over a differently named secret or a file that can't be read, passphrase change then re-unlock, switch vault, *Browse…* in Settings, export to a file (file choosers scripted)
 
-Crypto, store, totp and update tests run in parallel (`t.Parallel()`). Most ui tests run serially, because `fyne/test` replaces the process-global current app. Every test uses `t.TempDir()` for filesystem isolation, and CI runs the whole suite under the race detector.
+Crypto, store, totp and update tests run in parallel (`t.Parallel()`). Most ui tests run serially, because `fyne/test` replaces the process-global current app. Every test uses `t.TempDir()` for filesystem isolation, and CI runs the whole suite under the race detector, in a random order (`-shuffle=on`), on Linux, macOS and Windows. Tests that need Unix file modes, symlinks, folder permissions that bind the current user, or a shell script standing in for `ssh` skip on Windows (or as root) and say why.
 
 ## Linting and Static Analysis
 
@@ -301,25 +305,33 @@ golangci-lint run ./...
 # Vulnerability scan (requires govulncheck)
 govulncheck ./...
 
-# Run everything
+# The workflow and shell scripts: actionlint, zizmor, shellcheck
+make workflow-lint
+
+# Run everything CI runs (needs the optional tools above, except lefthook and detect-secrets)
 make check
 ```
 
+`make check` only checks; it changes no file (`make fmt` formats). It runs `go vet`, golangci-lint, `go mod tidy -diff` and `go mod verify`, the release-notes script's tests, actionlint, zizmor and shellcheck, the tests under the race detector in a random order (`-shuffle=on -timeout 10m`, as CI), and govulncheck. Without `GH_TOKEN` set, zizmor skips its online audits (impostor commits, known-vulnerable actions); CI runs them.
+
+The lefthook hooks (`lefthook install`) run, before each commit, golangci-lint and its formatting check on the whole module (`./...`) when Go files are staged, and shellcheck, actionlint, zizmor and detect-secrets on the staged files they apply to; before each push, golangci-lint, the race-detector tests and govulncheck. Like `make check`, they never rewrite a file.
+
 Use golangci-lint v2.14 or later: earlier releases cannot read the export data of the Go 1.27 standard library this module's toolchain uses, and fail with "export data version" errors.
 
-The linter set (`.golangci.yml`) is golangci-lint's `standard` set plus `bodyclose`, `dupl`, `errorlint`, `gocritic`, `gosec`, `misspell`, `nilerr`, `revive`, `unconvert` and `unparam`. Two gosec rule groups are excluded for `internal/store`, with the reasons recorded in the config: file paths there are slugified names inside the user's vault directory, and the secret envelope's `password` field exists to be encrypted.
+The linter set (`.golangci.yml`) is golangci-lint's `standard` set plus `bodyclose`, `dupl`, `errorlint`, `gocritic`, `gosec`, `misspell`, `nilerr`, `nolintlint`, `revive`, `unconvert` and `unparam`. A `//nolint` directive must name its linter and give a reason (`//nolint:gosec // why`), and `nolintlint` reports one that no longer suppresses anything, so remove it. It can't see a directive for a linter that isn't enabled, so name only enabled ones. Two gosec rule groups are excluded for `internal/store`, with the reasons recorded in the config: file paths there are slugified names inside the user's vault directory, and the secret envelope's `password` field exists to be encrypted. golangci-lint checks only the files built for the OS it runs on (Linux in CI), so `internal/store/*_windows.go` are not linted; CI's Windows test job runs `go vet` on them.
 
 ### Continuous integration
 
 `.github/workflows/ci.yml` runs on pushes and pull requests to `main`, on `v*` tags, and every Monday (so a newly published vulnerability is reported even when nothing changed; GitHub turns the weekly run off after 60 days without activity in the repository, and *Actions → CI → Enable workflow* turns it back on):
 - **lint** — golangci-lint (pinned), which also checks formatting, and the tests of `packaging/release-notes.sh`; on a tag, also checks that `CHANGELOG.md` has a dated section for it
-- **test** — `go vet` and `go test -race` on Linux (the UI tests are headless)
+- **workflow-lint** — actionlint (pinned; it also runs shellcheck on every `run:` block), zizmor (pinned, through `zizmorcore/zizmor-action`, which installs it from a hash-pinned wheel; with the read-only job token for its online audits; findings become annotations), and shellcheck on `packaging/`'s scripts
+- **test** — on Linux, macOS and Windows: `go vet` and `go test -race -shuffle=on -timeout 10m` (the UI tests are headless; the random order catches a test that relies on another). On Linux only: `go mod tidy -diff` and `go mod verify` (go.mod and go.sum are tidy and match the module proxy), and coverage, whose total is in the job summary and whose profile is a `coverage` artifact
 - **vuln** — `govulncheck` (pinned)
 - **build** — native builds on Linux, macOS and Windows with cgo enabled, since Fyne cannot be cross-compiled with `CGO_ENABLED=0`
-- **package-macos**, **package-linux** — on pushes to `main` and tags, once lint, test and vuln pass: `vlt.app` (zipped) and the AppImage, uploaded as workflow artifacts. These jobs don't use the Go cache, so a shipped package is always built from scratch
+- **package-macos**, **package-linux** — on pushes to `main` and tags, once lint, workflow-lint, test and vuln pass: `vlt.app` (zipped) and the AppImage, uploaded as workflow artifacts. These jobs don't use the Go cache, so a shipped package is always built from scratch
 - **release** — on `v*` tags: a GitHub release with both packages and their checksums, and the tag's `CHANGELOG.md` section as its notes (on a tag without a dated section, lint fails, so nothing is packaged or published)
 
-Every action is pinned to a commit SHA, checkout does not persist credentials, and the workflow only has read access to the repository, except the release job, which can write releases. `actionlint` and `zizmor` report no findings.
+Every action is pinned to a commit SHA, checkout does not persist credentials, and the workflow only has read access to the repository, except the release job, which can write releases. The workflow-lint job keeps it that way: actionlint and zizmor (regular persona) must report no findings.
 
 ### Dependency updates
 
@@ -331,7 +343,7 @@ A release must be at least 7 days old before it is proposed (`cooldown`), so a b
 
 Security updates, which Dependabot opens as soon as an advisory affects a dependency, need *Dependabot alerts* and *Dependabot security updates* turned on in the repository's settings (*Settings → Advanced Security*); `dependabot.yml` alone doesn't enable them.
 
-Dependabot doesn't cover the tool versions pinned in `ci.yml` (`GOLANGCI_LINT_VERSION`, `GOVULNCHECK_VERSION`), the Go toolchain in `go.mod`, or the `appimagetool` and runtime versions and checksums in `packaging/linux/build-appimage.sh`; update those by hand.
+Dependabot doesn't cover the tool versions pinned in `ci.yml` (`GOLANGCI_LINT_VERSION`, `GOVULNCHECK_VERSION`, `ACTIONLINT_VERSION`, `ZIZMOR_VERSION`; zizmor-action only knows zizmor versions released before it, so update the two together), the Go toolchain in `go.mod`, or the `appimagetool` and runtime versions and checksums in `packaging/linux/build-appimage.sh`; update those by hand.
 
 ## Releasing
 
@@ -339,8 +351,8 @@ Releases are cut from `main` by pushing a `vX.Y.Z` tag; CI does the rest. Versio
 
 1. **Start from a green `main`.** Merge the Dependabot pull requests you want, and check that CI passed on the last commit. Pull, so your `main` is the remote's.
 2. **Date the changelog.** In `CHANGELOG.md`, rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` (today, UTC) and add an empty `## [Unreleased]` above it. Preview the release notes with `make release-notes TAG=vX.Y.Z`: CI publishes exactly that text, and *Check for Updates…* shows it as plain text (Markdown marks visible), cut to 2000 characters. (`packaging/release-notes.sh` prints the section; `make test-release-notes`, which CI runs, tests it.)
-3. **Commit and push**: `git commit -am "chore: release X.Y.Z"`, then `git push origin main`, and wait for CI to pass.
-4. **Tag and push the tag**: `git tag -a vX.Y.Z -m "vlt X.Y.Z"`, then `git push origin vX.Y.Z`. CI checks the changelog section; once lint, test and vuln pass, it builds both packages from scratch (no Go cache) and publishes the release with their `.sha256` files. (The three-OS build job runs too, but doesn't hold the release back.)
+3. **Commit and push**: run `make check` (it runs what CI runs), `git commit -am "chore: release X.Y.Z"`, then `git push origin main`, and wait for CI to pass.
+4. **Tag and push the tag**: `git tag -a vX.Y.Z -m "vlt X.Y.Z"`, then `git push origin vX.Y.Z`. CI checks the changelog section; once lint, workflow-lint, test and vuln pass, it builds both packages from scratch (no Go cache) and publishes the release with their `.sha256` files. (The three-OS build job runs too, but doesn't hold the release back.)
 5. **Check the release.** On the [releases page](https://github.com/heyjdp/vlt/releases): both packages and both checksum files are there, and the notes match the changelog. Download a package, check it (see [Updating vlt](#updating-vlt)), open it, and confirm that *About* shows the new version. If the changelog's *Changed* entries affect upgrades, install it over the previous version and check them (for the release after 0.1.0: that the vault location, auto-lock timeout and clipboard TTL carry over). A previous version that has *Help → Check for Updates…* (any after 0.1.0) should offer the release; to try it otherwise, run the commit before the tag (`git checkout vX.Y.Z~1 && make run`), which counts as older.
 
 **If something goes wrong.** If a job failed for a reason outside the code (a network error, say), re-run it: a re-run of the release job replaces the release's files and notes. Otherwise, if CI fails before the release is published, fix the problem on `main`, then delete the tag (`git tag -d vX.Y.Z` and `git push origin :refs/tags/vX.Y.Z`) and tag again. Once a release is published, people may have it: don't move its tag; fix forward with the next patch release.
