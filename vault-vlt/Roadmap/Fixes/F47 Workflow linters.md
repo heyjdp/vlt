@@ -6,7 +6,7 @@ aliases:
 tags:
   - fix
 severity: low
-status: in-progress
+status: done
 phase: 12
 area: ci
 review_finding: Go skills audit 2026-11-11, item 10
@@ -48,11 +48,13 @@ Residual risk: zizmor's online audits (impostor commits, known-vulnerable action
 
 Done once the first CI run on GitHub is green on all three OSes.
 
+**First CI runs (2026-11-12):** the `workflow-lint` job (actionlint, zizmor with online audits, shellcheck) passed on both pushes.
+
 ## Acceptance criteria
 - [x] actionlint v1.7.12, zizmor 1.32.0 (regular and auditor personas: only informational "job has no name") and shellcheck 0.11.0 report nothing locally
 - [x] `lefthook validate` passes; the actionlint, zizmor and shellcheck hooks pick up the right files (`lefthook run pre-commit --all-files`)
 - [x] `make check` passes locally with the pinned tools
-- [ ] The workflow-lint job passes on GitHub, including zizmor's online audits (only checkable once pushed)
+- [x] The workflow-lint job passes on GitHub, including zizmor's online audits (only checkable once pushed)
 
 ## Related
 - [[Roadmap]]
