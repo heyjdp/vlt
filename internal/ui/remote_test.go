@@ -257,7 +257,7 @@ func TestSettings_RefusesABadLocation(t *testing.T) {
 	app, _ := newFlowApp(t)
 	unlock(app)
 	before := app.settings.Vault()
-	ss := app.openSettings(app.session.Store(), app.sessionOps)
+	ss := app.main.openSettings()
 	box := ss.buildVaultLocation()
 	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")
 
@@ -317,7 +317,7 @@ func TestSettings_SwitchToTheSameLocationWrittenDifferently(t *testing.T) {
 	app, _ := newFlowApp(t)
 	unlock(app)
 	app.settings.useLocation("ssh://me@nas:2222/srv/my vault") // as saved by an older version
-	ss := app.openSettings(app.session.Store(), app.sessionOps)
+	ss := app.main.openSettings()
 	box := ss.buildVaultLocation()
 	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")
 

@@ -39,14 +39,15 @@ type FileOps struct {
 	onSaved    func(*store.Secret)
 }
 
-// NewFileOps creates a file operations handler. groups supplies group
-// suggestions and onSaved is called with each imported secret.
-func NewFileOps(window fyne.Window, s *store.Store, log *slog.Logger, ops *operations, groups func() []string, onSaved func(*store.Secret)) *FileOps {
+// newFileOps creates the main view's file import and export over d.store,
+// run through d.ops. groups supplies group suggestions and onSaved is called
+// with each imported secret.
+func newFileOps(d *mainViewDeps, groups func() []string, onSaved func(*store.Secret)) *FileOps {
 	return &FileOps{
-		window:     window,
-		vaultStore: s,
-		log:        log,
-		ops:        ops,
+		window:     d.window,
+		vaultStore: d.store,
+		log:        d.log,
+		ops:        d.ops,
 		groups:     groups,
 		onSaved:    onSaved,
 	}

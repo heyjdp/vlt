@@ -27,10 +27,14 @@ type DetailView struct {
 	statusBar *widget.Label
 	log       *slog.Logger
 	// ops runs saves and deletes, and asks before deleting.
-	ops       *operations
+	ops *operations
+	// groups, onSaved, onDeleted, export and onRender connect the panel to
+	// the rest of the main view (see detailHooks).
 	groups    func() []string
 	onSaved   func(*store.Secret)
 	onDeleted func(*store.Secret)
+	export    func(*store.Secret)
+	onRender  func(fyne.CanvasObject)
 
 	content *fyne.Container
 	// panel is content in a scroll container, as placed in the window.
@@ -38,15 +42,11 @@ type DetailView struct {
 	// current is the existing secret shown in the panel, or nil when the
 	// panel shows a new-secret form, a message, or settings.
 	current *store.Secret
-	// onRender, if set, is called with the panel after each render (the app
-	// uses it to track user activity in newly built forms).
-	onRender func(fyne.CanvasObject)
-	fileOps  *FileOps
 
-	// newTimer and now drive the one-time code's countdown (the app passes
-	// its timer factory; tests also fix the clock). totpTimer is the
-	// running tick, totpGen its generation and totpStop wipes the shown
-	// code (see startTOTP).
+	// newTimer and now drive the one-time code's countdown (the main
+	// view's timer factory and clock). totpTimer is the running tick,
+	// totpGen its generation and totpStop wipes the shown code (see
+	// startTOTP).
 	newTimer  timerFactory
 	now       func() time.Time
 	totpTimer stoppableTimer
@@ -54,20 +54,38 @@ type DetailView struct {
 	totpStop  func()
 }
 
-// NewDetailView creates a new detail panel. copyValue puts a secret value on
-// the clipboard; the app's clipboardClearer clears it after the TTL. ops
-// runs its saves and deletes (the session's operations).
-func NewDetailView(window fyne.Window, s *store.Store, copyValue func(string), statusBar *widget.Label, log *slog.Logger, ops *operations) *DetailView {
+// detailHooks connect a detail panel to the rest of the main view.
+type detailHooks struct {
+	// groups supplies group suggestions for a new secret.
+	groups func() []string
+	// saved and deleted are called after each save and delete, whether the
+	// secret is new or was selected from the list.
+	saved, deleted func(*store.Secret)
+	// export exports a file secret (Export File).
+	export func(*store.Secret)
+	// rendered is called with the panel after each render (to track user
+	// activity in newly built forms).
+	rendered func(fyne.CanvasObject)
+}
+
+// newDetailView creates the main view's detail panel over d.store. Its
+// saves and deletes run through d.ops, its copy buttons go through d.copy,
+// and its one-time codes tick on d.timers by d.now.
+func newDetailView(d *mainViewDeps, h detailHooks) *DetailView {
 	dv := &DetailView{
-		window:    window,
-		store:     s,
-		copyValue: copyValue,
-		statusBar: statusBar,
-		log:       log,
-		ops:       ops,
-		groups:    func() []string { return nil },
-		newTimer:  realTimers,
-		now:       func() time.Time { return time.Now().UTC() },
+		window:    d.window,
+		store:     d.store,
+		copyValue: d.copy,
+		statusBar: d.status,
+		log:       d.log,
+		ops:       d.ops,
+		groups:    h.groups,
+		onSaved:   h.saved,
+		onDeleted: h.deleted,
+		export:    h.export,
+		onRender:  h.rendered,
+		newTimer:  d.timers,
+		now:       d.now,
 	}
 
 	dv.content = container.NewVBox(nothingSelected())
@@ -91,14 +109,6 @@ func (dv *DetailView) Panel() fyne.CanvasObject {
 func nothingSelected() fyne.CanvasObject {
 	return emptyState(lockIcon, "Select a secret",
 		"Choose a secret from the list, or add one with the buttons above.")
-}
-
-// SetCallbacks sets the functions called after a secret is saved or deleted
-// (used to update the list) and the source of group suggestions. They are
-// set once, when the main view is built, so every save and delete, whether
-// of a new secret or one selected from the list, reaches the list.
-func (dv *DetailView) SetCallbacks(onSaved, onDeleted func(*store.Secret), groups func() []string) {
-	dv.onSaved, dv.onDeleted, dv.groups = onSaved, onDeleted, groups
 }
 
 // ShowContent replaces the panel with obj (for example the settings screen).
@@ -126,11 +136,6 @@ func (dv *DetailView) RefreshIfShowing(secret *store.Secret) {
 	if dv.current != nil && dv.current.ID() == secret.ID() {
 		dv.ShowSecret(secret)
 	}
-}
-
-// SetFileOps sets the file operations handler for import/export.
-func (dv *DetailView) SetFileOps(fo *FileOps) {
-	dv.fileOps = fo
 }
 
 // ShowSecret renders the detail view for a secret.
@@ -383,7 +388,7 @@ func (dv *DetailView) deleteButton(secret *store.Secret) *widget.Button {
 // showFileDetail renders a file secret detail view.
 func (dv *DetailView) showFileDetail(secret *store.Secret) {
 	exportBtn := widget.NewButtonWithIcon("Export File", theme.DownloadIcon(), func() {
-		dv.exportFile(secret)
+		dv.export(secret)
 	})
 	exportBtn.Importance = widget.HighImportance
 
@@ -489,15 +494,6 @@ func (dv *DetailView) deleteSecret(secret *store.Secret) {
 				dv.onDeleted(deleted)
 			}
 		})
-}
-
-// exportFile exports a file secret to disk via the file operations handler.
-func (dv *DetailView) exportFile(secret *store.Secret) {
-	if dv.fileOps == nil {
-		showError(dv.window, "Couldn't export the file", errors.New("file operations are not available"))
-		return
-	}
-	dv.fileOps.ExportFile(secret)
 }
 
 // parseTags splits a comma-separated string into tags, trimming whitespace

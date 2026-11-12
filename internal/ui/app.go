@@ -50,21 +50,18 @@ type App struct {
 	// pick shows the file and folder choosers (Fyne's dialogs; tests
 	// answer them).
 	pick picker
-	// ops runs what is asked of the app itself (update checks) and
-	// sessionOps what is done to the open vault (nil while locked).
-	ops        *operations
-	sessionOps *operations
+	// ops runs what is asked of the app itself (update checks); what is
+	// done to the open vault runs through the main view's operations.
+	ops *operations
 
 	// UI components
 	lockWarning  *dialog.ConfirmDialog
-	tracker      *activityTracker
 	clipboard    *clipboardClearer
 	unlockScreen *UnlockScreen
 	createScreen *CreateScreen
-	mainContent  *fyne.Container
-	secretList   *SecretList
-	detailView   *DetailView
-	statusBar    *widget.Label
+	// main is the main view while the vault is unlocked, nil while locked.
+	main      *mainView
+	statusBar *widget.Label
 }
 
 // NewApp creates the main application controller. version is the build's
@@ -366,85 +363,34 @@ func (a *App) unlocked(ctx context.Context, s *store.Store) {
 	}
 }
 
-// showMainView displays the main secret browser for the unlocked store s.
-// It takes s explicitly rather than calling a.session.Store(), which the
-// auto-lock may clear concurrently. work is bound to the session context:
-// work still in flight when the vault locks has its result dropped.
+// showMainView displays the main view for the unlocked store s. It takes s
+// explicitly rather than calling a.session.Store(), which the auto-lock may
+// clear concurrently. work is bound to the session context: work still in
+// flight when the vault locks has its result dropped.
 func (a *App) showMainView(s *store.Store, work runner) {
-	a.sessionOps = newOperations(a.window, work, a.statusBar, a.resetLockTimer, a.session.Pause, a.Lock, a.pick)
-	ops := a.sessionOps
-	a.detailView = NewDetailView(a.window, s, a.clipboard.Copy, a.statusBar, a.log, ops)
-	a.detailView.newTimer = a.newTimer
-	a.secretList = NewSecretList(a.window, s, a.detailView, a.log, work)
-
-	// Every save, delete and import updates the list in place, whether the
-	// secret is new or was selected from the list.
-	onSaved := a.secretList.Upsert
-	a.detailView.SetCallbacks(onSaved, a.secretList.Remove, a.secretList.Groups)
-	// An import may replace the secret whose form is open; re-render it.
-	onImported := func(sec *store.Secret) {
-		a.secretList.Upsert(sec)
-		a.detailView.RefreshIfShowing(sec)
-	}
-	fileOps := NewFileOps(a.window, s, a.log, ops, a.secretList.Groups, onImported)
-	a.detailView.SetFileOps(fileOps)
-
-	toolButton := func(label string, icon fyne.Resource, tapped func()) *widget.Button {
-		b := widget.NewButtonWithIcon(label, icon, tapped)
-		b.Importance = widget.LowImportance
-		return b
-	}
-	lockBtn := widget.NewButtonWithIcon("Lock", lockIcon, func() { a.Lock() })
-	brand := widget.NewLabel("vlt")
-	brand.TextStyle = fyne.TextStyle{Bold: true}
-	header := panelBackground(container.NewVBox(
-		padded(container.NewBorder(nil, nil,
-			container.NewHBox(brandMark(22), brand),
-			container.NewHBox(
-				toolButton("Add Password", keyIcon, a.detailView.ShowNewPassword),
-				toolButton("Add Record", theme.AccountIcon(), a.detailView.ShowNewRecord),
-				toolButton("Import File", theme.UploadIcon(), fileOps.ImportFile),
-				toolButton("Settings", theme.SettingsIcon(), func() { a.openSettings(s, ops) }),
-				lockBtn,
-			)), 4),
-		widget.NewSeparator(),
-	))
-
-	// Split: list on left, detail on right
-	split := container.NewHSplit(
-		a.secretList.Content(),
-		a.detailView.Panel(),
-	)
-	split.SetOffset(0.32)
-
-	a.mainContent = container.NewBorder(
-		header,
-		a.statusRow(),
-		nil,
-		nil,
-		split,
-	)
-
-	a.window.SetContent(a.mainContent)
+	ops := newOperations(a.window, work, a.statusBar, a.resetLockTimer, a.session.Pause, a.Lock, a.pick)
+	a.main = newMainView(&mainViewDeps{
+		window:   a.window,
+		store:    s,
+		ops:      ops,
+		copy:     a.clipboard.Copy,
+		status:   a.statusBar,
+		log:      a.log,
+		timers:   a.newTimer,
+		now:      utcNow,
+		activity: a.resetLockTimer,
+		footer:   a.statusRow(),
+		lock:     a.Lock,
+		settings: func() *SettingsScreen { return a.settingsScreen(s, ops) },
+	})
+	a.window.SetContent(a.main.content())
 	a.statusBar.SetText("Unlocked")
 
-	// Any input in the main view resets the auto-lock countdown. The detail
-	// panel re-instruments its widgets each time it renders a new form.
-	a.tracker = newActivityTracker(a.resetLockTimer)
-	a.tracker.instrument(a.mainContent)
-	a.detailView.onRender = func(panel fyne.CanvasObject) {
-		if a.tracker != nil {
-			a.tracker.forget()
-			a.tracker.instrument(panel)
-		}
-	}
-	// Dialogs and file pickers are not part of the instrumented tree; the
-	// session's operations report the answers to them.
+	// Any input in the main view resets the auto-lock countdown (the view
+	// tracks its widgets). Dialogs and file pickers are not part of the
+	// view; the session's operations report the answers to them.
 	a.window.Canvas().SetOnTypedKey(func(*fyne.KeyEvent) { a.resetLockTimer() })
 	a.window.Canvas().SetOnTypedRune(func(rune) { a.resetLockTimer() })
-
-	// Load secrets in the background; Lock cancels the session context.
-	a.secretList.Refresh()
 }
 
 // Lock zeros the vault key, cancels the session, clears any secret vlt copied
@@ -467,35 +413,21 @@ func (a *App) Lock() {
 	})
 }
 
-// openSettings shows the Settings screen in the detail panel; its vault
-// changes run through ops, which relocks after them.
-func (a *App) openSettings(s *store.Store, ops *operations) *SettingsScreen {
+// settingsScreen builds the Settings screen for the open vault s; its
+// vault changes run through ops (the session's), which relocks after them.
+func (a *App) settingsScreen(s *store.Store, ops *operations) *SettingsScreen {
 	settings := NewSettingsScreen(a.window, a.settings, s, a.statusBar, a.log, ops)
 	settings.checkUpdates = a.checkForUpdates
-	a.detailView.ShowContent(settings.Content())
 	return settings
 }
 
-// dropSession releases the references vlt holds to decrypted secrets: it
-// empties every loaded secret struct (so anything still pointing at one,
-// such as a closure in a widget held by Fyne's renderer cache, reaches only
-// empty fields), blanks the detail form's entries, wipes a pending export
-// buffer, and drops the list, detail panel, main view and activity tracker.
-// Go cannot wipe the strings themselves; they become unreachable and are
-// reclaimed by the garbage collector. Background work still in flight holds
-// its own copy until it completes and its result is dropped. It runs on the
-// main goroutine.
+// dropSession wipes the main view (see mainView.wipe), drops it and removes
+// the session's key handlers. It runs on the main goroutine.
 func (a *App) dropSession() {
-	if a.sessionOps != nil {
-		a.sessionOps.end() // wipes an export waiting on its save dialog
+	if a.main != nil {
+		a.main.wipe()
+		a.main = nil
 	}
-	if a.detailView != nil {
-		a.detailView.clear()
-	}
-	if a.secretList != nil {
-		a.secretList.clear()
-	}
-	a.secretList, a.detailView, a.mainContent, a.tracker, a.sessionOps = nil, nil, nil, nil, nil
 	a.window.Canvas().SetOnTypedKey(nil)
 	a.window.Canvas().SetOnTypedRune(nil)
 }

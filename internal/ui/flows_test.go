@@ -69,17 +69,17 @@ func TestFlow_AVaultWithoutItsKeyFileSaysHowToFinishAMove(t *testing.T) {
 func TestFlow_DeleteAsksForConfirmation(t *testing.T) {
 	app, w := newFlowApp(t, testutil.PasswordSecret("gh", "x", "work"))
 	unlock(app)
-	app.secretList.list.Select(0)
+	app.main.list.list.Select(0)
 
-	test.Tap(findButton(app.detailView.Content(), "Delete"))
+	test.Tap(findButton(app.main.detail.Content(), "Delete"))
 	test.Tap(dialogButton(t, w, "No"))
-	if len(app.secretList.secrets) != 1 {
+	if len(app.main.list.secrets) != 1 {
 		t.Fatal("answering No must not delete the secret")
 	}
 
-	test.Tap(findButton(app.detailView.Content(), "Delete"))
+	test.Tap(findButton(app.main.detail.Content(), "Delete"))
 	test.Tap(dialogButton(t, w, "Yes"))
-	if len(app.secretList.secrets) != 0 {
+	if len(app.main.list.secrets) != 0 {
 		t.Fatal("answering Yes should delete the secret")
 	}
 	if _, err := app.session.Store().Get(context.Background(), "gh", "work"); err == nil {
@@ -197,7 +197,7 @@ func TestFlow_ImportUsesTheExistingGroupSpelling(t *testing.T) {
 func TestFlow_ChangePassphraseThroughSettings(t *testing.T) {
 	app, w := newFlowApp(t, testutil.PasswordSecret("gh", "x", "work"))
 	unlock(app)
-	ss := app.openSettings(app.session.Store(), app.sessionOps)
+	ss := app.main.openSettings()
 	box := ss.buildChangePassphrase()
 	current := entryWithPlaceholder(t, box, "Current passphrase")
 	newPass := entryWithPlaceholder(t, box, "New passphrase")
@@ -229,7 +229,7 @@ func TestFlow_ChangePassphraseThroughSettings(t *testing.T) {
 func TestFlow_SwitchVaultThroughSettings(t *testing.T) {
 	app, w := newFlowApp(t)
 	unlock(app)
-	ss := app.openSettings(app.session.Store(), app.sessionOps)
+	ss := app.main.openSettings()
 	box := ss.buildVaultLocation()
 	path := entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server")
 	newDir := filepath.Join(t.TempDir(), "other")
@@ -272,8 +272,8 @@ func TestFlow_ExportWritesTheFile(t *testing.T) {
 func exportTo(t *testing.T, app *App, path string) {
 	t.Helper()
 	p := pickerOf(app)
-	app.secretList.list.Select(0)
-	test.Tap(findButton(app.detailView.Content(), "Export File"))
+	app.main.list.list.Select(0)
+	test.Tap(findButton(app.main.detail.Content(), "Export File"))
 	writer, err := storage.Writer(storage.NewFileURI(path))
 	if err != nil {
 		t.Fatal(err)

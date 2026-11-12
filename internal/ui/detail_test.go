@@ -35,7 +35,7 @@ func TestParseTags(t *testing.T) {
 
 func TestSecretList_GroupsAreSortedAndDistinct(t *testing.T) {
 	test.NewTempApp(t)
-	sl := NewSecretList(test.NewTempWindow(t, nil), nil, &DetailView{}, quietLog(), inlineRunner())
+	sl := listOver(t, nil, inlineRunner())
 	sl.secrets = []*store.Secret{
 		{Name: "a", Group: "work"}, {Name: "b", Group: "personal"}, {Name: "c", Group: "work"},
 	}
@@ -60,7 +60,7 @@ func openOnly(t *testing.T, sec *store.Secret) *App {
 	newVaultWith(t, dir, sec)
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
-	app.secretList.list.Select(0)
+	app.main.list.list.Select(0)
 	return app
 }
 
@@ -70,7 +70,7 @@ func TestDetailView_RecordFormMasksSecretsAndSavesEveryField(t *testing.T) {
 	app := openOnly(t, rec)
 
 	// name, URL, username, password, TOTP, tags, notes
-	e := formEntries(app.detailView)
+	e := formEntries(app.main.detail)
 	if len(e) != 7 {
 		t.Fatalf("expected 7 entries in a record form, got %d", len(e))
 	}
@@ -90,7 +90,7 @@ func TestDetailView_RecordFormMasksSecretsAndSavesEveryField(t *testing.T) {
 	totp.SetText("NEWTOTPSECRET234")
 	tags.SetText("money, home")
 	notes.SetText("rotated")
-	test.Tap(findButton(app.detailView.Content(), "Save"))
+	test.Tap(findButton(app.main.detail.Content(), "Save"))
 
 	got, err := app.session.Store().Get(t.Context(), "bank", "work")
 	if err != nil {
@@ -111,13 +111,13 @@ func TestDetailView_RecordFormMasksSecretsAndSavesEveryField(t *testing.T) {
 func TestDetailView_PasswordFormMasksAndSavesValue(t *testing.T) {
 	app := openOnly(t, testutil.PasswordSecret("gh", "ghp_old", "work"))
 
-	e := formEntries(app.detailView) // name, value, tags, notes
+	e := formEntries(app.main.detail) // name, value, tags, notes
 	value := e[1]
 	if !value.Password || value.Text != "ghp_old" {
 		t.Fatal("the password value must be shown masked")
 	}
 	value.SetText("ghp_new")
-	test.Tap(findButton(app.detailView.Content(), "Save"))
+	test.Tap(findButton(app.main.detail.Content(), "Save"))
 
 	got, err := app.session.Store().Get(t.Context(), "gh", "work")
 	if err != nil {
@@ -131,7 +131,7 @@ func TestDetailView_PasswordFormMasksAndSavesValue(t *testing.T) {
 
 func TestDetailView_ExistingFormHasDeleteAndEnabledCopy(t *testing.T) {
 	app := openOnly(t, testutil.RecordSecret("bank", "me", "pw", "", "work"))
-	form := app.detailView.Content()
+	form := app.main.detail.Content()
 
 	if findButton(form, "Delete") == nil {
 		t.Fatal("an existing secret should offer Delete")
@@ -147,8 +147,8 @@ func TestDetailView_ExistingFormHasDeleteAndEnabledCopy(t *testing.T) {
 func TestDetailView_NewFormHasNoDeleteAndDisabledCopy(t *testing.T) {
 	app := openOnly(t, testutil.PasswordSecret("gh", "x", "work"))
 
-	app.detailView.ShowNewRecord()
-	form := app.detailView.Content()
+	app.main.detail.ShowNewRecord()
+	form := app.main.detail.Content()
 
 	if findButton(form, "Delete") != nil {
 		t.Fatal("a new, unsaved secret must not offer Delete")
@@ -158,7 +158,7 @@ func TestDetailView_NewFormHasNoDeleteAndDisabledCopy(t *testing.T) {
 			t.Fatalf("%q should be disabled until the secret is saved", label)
 		}
 	}
-	if name := formEntries(app.detailView)[0]; name.Disabled() {
+	if name := formEntries(app.main.detail)[0]; name.Disabled() {
 		t.Fatal("a new secret's name must be editable")
 	}
 	app.Lock()
@@ -168,11 +168,11 @@ func TestDetailView_CopyButtonsCopyTheRightValue(t *testing.T) {
 	app := openOnly(t, testutil.RecordSecret("bank", "the-user", "the-pass", "", "work"))
 	clip := app.fyneApp.Clipboard()
 
-	test.Tap(findButton(app.detailView.Content(), "Copy Username"))
+	test.Tap(findButton(app.main.detail.Content(), "Copy Username"))
 	if clip.Content() != "the-user" {
 		t.Fatalf("Copy Username copied %q", clip.Content())
 	}
-	test.Tap(findButton(app.detailView.Content(), "Copy Password"))
+	test.Tap(findButton(app.main.detail.Content(), "Copy Password"))
 	if clip.Content() != "the-pass" {
 		t.Fatalf("Copy Password copied %q", clip.Content())
 	}
@@ -182,9 +182,9 @@ func TestDetailView_CopyButtonsCopyTheRightValue(t *testing.T) {
 func TestDetailView_NewSecretUsesTheExistingGroupSpelling(t *testing.T) {
 	app := openOnly(t, testutil.PasswordSecret("gh", "x", "Personal Finance"))
 
-	app.detailView.ShowNewPassword()
-	form := app.detailView.Content()
-	e := formEntries(app.detailView) // name, value, tags, notes
+	app.main.detail.ShowNewPassword()
+	form := app.main.detail.Content()
+	e := formEntries(app.main.detail) // name, value, tags, notes
 	e[0].SetText("bank")
 	e[1].SetText("pw")
 	findType[*widget.SelectEntry](form).SetText("personal finance")
@@ -216,7 +216,7 @@ func TestDetailView_SaveOverAFileNowHeldByAnotherSecretNamesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	test.Tap(findButton(app.detailView.Content(), "Save"))
+	test.Tap(findButton(app.main.detail.Content(), "Save"))
 
 	want := `Couldn't save the secret: its file is now held by the secret "github-key"`
 	if text := dialogText(t, app.window); !strings.Contains(text, want) {

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"fyne.io/fyne/v2/test"
-	"fyne.io/fyne/v2/widget"
 
 	"github.com/heyjdp/vlt/internal/store"
 	"github.com/heyjdp/vlt/internal/testutil"
@@ -23,10 +22,10 @@ func TestApp_UnlockLoadsSecretsIntoList(t *testing.T) {
 
 	unlock(app)
 
-	if app.secretList == nil {
+	if app.main == nil {
 		t.Fatal("expected the main view after unlocking")
 	}
-	if got := len(app.secretList.secrets); got != 2 {
+	if got := len(app.main.list.secrets); got != 2 {
 		t.Fatalf("expected 2 secrets in the list, got %d", got)
 	}
 	app.Lock()
@@ -50,7 +49,7 @@ func TestApp_UnlockRunsOffTheMainGoroutine(t *testing.T) {
 	}
 
 	q.flush()
-	if app.session.Store() == nil || app.secretList == nil {
+	if app.session.Store() == nil || app.main == nil {
 		t.Fatal("expected the vault to be open once background work completes")
 	}
 	app.Lock()
@@ -86,12 +85,12 @@ func TestApp_SaveFromListSelectionUpdatesList(t *testing.T) {
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
-	sec := app.secretList.secrets[0]
+	sec := app.main.list.secrets[0]
 	edited := *sec
 	edited.Value = "new"
-	app.detailView.saveSecret(&edited, false, saveButton(), func() { *sec = edited })
+	app.main.detail.saveSecret(&edited, false, saveButton(), func() { *sec = edited })
 
-	if app.secretList.secrets[0].Value != "new" {
+	if app.main.list.secrets[0].Value != "new" {
 		t.Fatal("saving a secret selected from the list should update the list")
 	}
 	app.Lock()
@@ -105,10 +104,10 @@ func TestApp_SaveNewSecretAddsItToList(t *testing.T) {
 	unlock(app)
 
 	sec := testutil.PasswordSecret("new-one", "v", "work")
-	app.detailView.saveSecret(sec, true, saveButton(), func() {})
+	app.main.detail.saveSecret(sec, true, saveButton(), func() {})
 
-	if len(app.secretList.secrets) != 1 || app.secretList.secrets[0].Name != "new-one" {
-		t.Fatalf("a newly created secret should be added to the list, got %d entries", len(app.secretList.secrets))
+	if len(app.main.list.secrets) != 1 || app.main.list.secrets[0].Name != "new-one" {
+		t.Fatalf("a newly created secret should be added to the list, got %d entries", len(app.main.list.secrets))
 	}
 	app.Lock()
 }
@@ -121,15 +120,15 @@ func TestApp_DeleteRemovesSecretFromList(t *testing.T) {
 	unlock(app)
 
 	var target *store.Secret
-	for _, s := range app.secretList.secrets {
+	for _, s := range app.main.list.secrets {
 		if s.Name == "gone" {
 			target = s
 		}
 	}
-	app.detailView.deleteSecret(target)
+	app.main.detail.deleteSecret(target)
 
-	if len(app.secretList.secrets) != 1 || app.secretList.secrets[0].Name != "kept" {
-		t.Fatalf("deleted secret should leave the list, got %d entries", len(app.secretList.secrets))
+	if len(app.main.list.secrets) != 1 || app.main.list.secrets[0].Name != "kept" {
+		t.Fatalf("deleted secret should leave the list, got %d entries", len(app.main.list.secrets))
 	}
 	app.Lock()
 }
@@ -141,9 +140,9 @@ func TestApp_ImportAddsSecretToList(t *testing.T) {
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
-	app.detailView.fileOps.importSecret(testutil.FileSecret("id_rsa", "id_rsa", "eA==", "keys"), importedFile{size: 1})
+	app.main.files.importSecret(testutil.FileSecret("id_rsa", "id_rsa", "eA==", "keys"), importedFile{size: 1})
 
-	if len(app.secretList.secrets) != 1 || app.secretList.secrets[0].Name != "id_rsa" {
+	if len(app.main.list.secrets) != 1 || app.main.list.secrets[0].Name != "id_rsa" {
 		t.Fatal("an imported file should be added to the list")
 	}
 	app.Lock()
@@ -159,7 +158,7 @@ func TestApp_SaveCompletingAfterLockIsDropped(t *testing.T) {
 	unlockQueued(t, app, q)
 	q.flush() // initial list load
 
-	app.detailView.saveSecret(testutil.PasswordSecret("late", "v", "work"), true, saveButton(), func() {})
+	app.main.detail.saveSecret(testutil.PasswordSecret("late", "v", "work"), true, saveButton(), func() {})
 	app.Lock()
 	q.flush()
 
@@ -176,7 +175,7 @@ func TestApp_LockCancelsInitialListLoad(t *testing.T) {
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
 	q.flush()
 	unlockQueued(t, app, q)
-	list := app.secretList
+	list := app.main.list
 
 	app.Lock()
 	q.flush()
@@ -204,7 +203,7 @@ func TestApp_CreateRunsOffTheMainGoroutine(t *testing.T) {
 		t.Fatal("create screen should show progress and disable input while creating")
 	}
 	q.flush()
-	if app.secretList == nil {
+	if app.main == nil {
 		t.Fatal("expected the main view once the vault is created")
 	}
 	app.Lock()
@@ -222,8 +221,7 @@ func TestSecretList_SaveDuringFirstLoadSurvivesLoad(t *testing.T) {
 	defer s.Close()
 
 	q := &queue{}
-	dv := NewDetailView(test.NewTempWindow(t, nil), s, nil, widget.NewLabel(""), quietLog(), testOps(t, q.runner()))
-	sl := NewSecretList(test.NewTempWindow(t, nil), s, dv, quietLog(), q.runner())
+	sl := listOver(t, s, q.runner())
 
 	sl.Refresh() // queued: as if the load read the vault before the save below
 	sl.Upsert(testutil.PasswordSecret("saved-meanwhile", "v", "work"))

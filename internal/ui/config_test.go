@@ -330,7 +330,7 @@ func settingsApp(t *testing.T, clock timerFactory, opts ...func(*Settings)) (*Ap
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "x", "work"))
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir, opts...), quietLog(), inlineRunner(), clock, testKDF)
 	unlock(app)
-	ss := app.openSettings(app.session.Store(), app.sessionOps)
+	ss := app.main.openSettings()
 	return app, ss
 }
 
@@ -347,7 +347,7 @@ func TestSettings_EnvironmentValuesAreNotSavedBySliderChanges(t *testing.T) {
 	newVaultWith(t, dir)
 	app := newApp(a, test.NewTempWindow(t, nil), cfg, quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
-	ss := app.openSettings(app.session.Store(), app.sessionOps)
+	ss := app.main.openSettings()
 
 	ttl := findType[*widget.Slider](ss.buildClipboardTTL())
 	ttl.SetValue(60)
@@ -509,9 +509,9 @@ func TestSettings_LockTimeoutSliderIsSaved(t *testing.T) {
 func TestSettings_AutoLockCanBeTurnedOffAndOn(t *testing.T) {
 	clock := &fakeClock{}
 	app, ss := settingsApp(t, clock.factory, withLockTimeoutMs(DefaultLockTimeoutMs))
-	app.tracker.instrument(app.detailView.Content())
+	app.main.tracker.instrument(app.main.detail.Content())
 	check, slider := lockControls(ss)
-	app.tracker.instrument(check)
+	app.main.tracker.instrument(check)
 
 	check.SetChecked(false)
 	if app.settings.LockTimeout() != 0 || !slider.Disabled() {
@@ -694,7 +694,7 @@ func queuedSettingsWith(t *testing.T, timers timerFactory, opts ...func(*Setting
 	q.flush()
 	unlockQueued(t, app, q)
 	q.flush() // the first load of the list
-	ss := app.openSettings(app.session.Store(), app.sessionOps)
+	ss := app.main.openSettings()
 	return app, w, q, ss.buildVaultLocation()
 }
 
@@ -715,7 +715,7 @@ func TestSettings_MoveVaultIsNotStartedTwice(t *testing.T) {
 	tapAndConfirm(t, w, box, "Move Vault")
 	tapAndConfirm(t, w, box, "Move Vault") // again, while the copy runs
 	// Settings opened again shows fresh buttons; the copy still runs.
-	again := app.openSettings(app.session.Store(), app.sessionOps).buildVaultLocation()
+	again := app.main.openSettings().buildVaultLocation()
 	entryWithPlaceholder(t, again, "Folder, or user@host:/path on an SSH server").SetText(filepath.Join(t.TempDir(), "other"))
 	tapAndConfirm(t, w, again, "Move Vault")
 
@@ -754,7 +754,7 @@ func TestSettings_PassphraseChangeWaitsForAMoveToFinish(t *testing.T) {
 	entryWithPlaceholder(t, box, "Folder, or user@host:/path on an SSH server").SetText(filepath.Join(t.TempDir(), "moved"))
 	tapAndConfirm(t, w, box, "Move Vault")
 
-	card := app.openSettings(app.session.Store(), app.sessionOps).buildChangePassphrase()
+	card := app.main.openSettings().buildChangePassphrase()
 	test.Type(entryWithPlaceholder(t, card, "Current passphrase"), testPassphrase)
 	test.Type(entryWithPlaceholder(t, card, "New passphrase"), "an even better passphrase")
 	test.Type(entryWithPlaceholder(t, card, "Confirm new passphrase"), "an even better passphrase")
@@ -782,7 +782,7 @@ func TestSettings_TheAutoLockWaitsForAMoveOrPassphraseChange(t *testing.T) {
 			tapAndConfirm(t, w, box, "Move Vault")
 		}},
 		{"passphrase change", func(t *testing.T, app *App, _ fyne.Window, _ fyne.CanvasObject) {
-			card := app.openSettings(app.session.Store(), app.sessionOps).buildChangePassphrase()
+			card := app.main.openSettings().buildChangePassphrase()
 			test.Type(entryWithPlaceholder(t, card, "Current passphrase"), "not the passphrase")
 			test.Type(entryWithPlaceholder(t, card, "New passphrase"), "an even better passphrase")
 			test.Type(entryWithPlaceholder(t, card, "Confirm new passphrase"), "an even better passphrase")
@@ -844,7 +844,7 @@ func TestSettings_LockingDuringAMoveStopsIt(t *testing.T) {
 // on the unlock screen: here the lock came first, so nothing changed.
 func TestSettings_APassphraseChangeCutOffByALockIsReported(t *testing.T) {
 	app, w, q, _ := queuedSettings(t)
-	card := app.openSettings(app.session.Store(), app.sessionOps).buildChangePassphrase()
+	card := app.main.openSettings().buildChangePassphrase()
 	test.Type(entryWithPlaceholder(t, card, "Current passphrase"), testPassphrase)
 	test.Type(entryWithPlaceholder(t, card, "New passphrase"), "an even better passphrase")
 	test.Type(entryWithPlaceholder(t, card, "Confirm new passphrase"), "an even better passphrase")
@@ -883,7 +883,7 @@ func (fakeVault) CopyTo(context.Context, string) error { return errors.New("not 
 // passphrase of a vault faked by v, on app's queued runner.
 func changePassphraseOn(t *testing.T, app *App, v fakeVault) fyne.CanvasObject {
 	t.Helper()
-	ss := app.openSettings(app.session.Store(), app.sessionOps)
+	ss := app.main.openSettings()
 	ss.store = v
 	card := ss.buildChangePassphrase()
 	test.Type(entryWithPlaceholder(t, card, "Current passphrase"), testPassphrase)

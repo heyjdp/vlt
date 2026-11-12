@@ -113,7 +113,7 @@ func TestApp_FailingImportSavesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(secrets.Secrets) != 0 || len(app.secretList.secrets) != 0 {
+	if len(secrets.Secrets) != 0 || len(app.main.list.secrets) != 0 {
 		t.Fatal("a failed read must not save anything")
 	}
 	app.Lock()
@@ -237,8 +237,8 @@ func exportApp(t *testing.T) (*App, fyne.Window, *scriptedPicker) {
 // dialog open.
 func startExport(t *testing.T, app *App) {
 	t.Helper()
-	app.secretList.list.Select(0)
-	test.Tap(findButton(app.detailView.Content(), "Export File"))
+	app.main.list.list.Select(0)
+	test.Tap(findButton(app.main.detail.Content(), "Export File"))
 }
 
 func TestApp_ExportAfterLockWritesNothing(t *testing.T) {
@@ -318,7 +318,7 @@ func TestFileOps_ExportWipesThePlaintextWhicheverWayItEnds(t *testing.T) {
 			app, _, p := exportApp(t)
 			data := []byte("decoded file content")
 
-			app.detailView.fileOps.exportDecoded("n", "out.txt", data)
+			app.main.files.exportDecoded("n", "out.txt", data)
 			tt.end(t, app, p)
 
 			if !bytes.Equal(data, make([]byte, len(data))) {
@@ -332,7 +332,7 @@ func TestFileOps_ExportWipesThePlaintextWhicheverWayItEnds(t *testing.T) {
 func TestFileOps_ExportRefusesASecretThatIsNotAFile(t *testing.T) {
 	app, w, p := exportApp(t)
 
-	app.detailView.fileOps.ExportFile(testutil.PasswordSecret("gh", "x", "work"))
+	app.main.files.ExportFile(testutil.PasswordSecret("gh", "x", "work"))
 
 	if text := dialogText(t, w); !strings.Contains(text, `Couldn't export "gh": it is not a file secret`) {
 		t.Fatalf("error dialog says %q", text)
@@ -349,7 +349,7 @@ func TestFileOps_ImportThatFailsToSaveSaysWhy(t *testing.T) {
 	app, w, _ := exportApp(t)
 	secret := testutil.FileSecret(strings.Repeat("n", 300), "big.txt", "aGVsbG8=", "docs")
 
-	app.detailView.fileOps.importSecret(secret, importedFile{})
+	app.main.files.importSecret(secret, importedFile{})
 
 	text := dialogText(t, w)
 	if !strings.Contains(text, "Couldn't import") || !strings.Contains(text, "255") {

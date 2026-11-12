@@ -21,11 +21,12 @@ import (
 // Its methods must be called on the Fyne main goroutine; the vault is read
 // in the background (see Refresh).
 type SecretList struct {
-	window     fyne.Window
-	store      *store.Store
-	detailView *DetailView
-	log        *slog.Logger
-	run        runner
+	window fyne.Window
+	store  *store.Store
+	// show shows the secret selected in the list (in the detail panel).
+	show func(*store.Secret)
+	log  *slog.Logger
+	run  runner
 
 	searchEntry *widget.Entry
 	list        *widget.List
@@ -55,14 +56,16 @@ type SecretList struct {
 	reselecting bool
 }
 
-// NewSecretList creates a new secret browser panel.
-func NewSecretList(window fyne.Window, s *store.Store, detail *DetailView, log *slog.Logger, run runner) *SecretList {
+// newSecretList creates the main view's secret browser over d.store; its
+// loads run on d.ops' runner, so a lock drops their results. show is called
+// with the secret the user selects.
+func newSecretList(d *mainViewDeps, show func(*store.Secret)) *SecretList {
 	sl := &SecretList{
-		window:     window,
-		store:      s,
-		detailView: detail,
-		log:        log,
-		run:        run,
+		window: d.window,
+		store:  d.store,
+		show:   show,
+		log:    d.log,
+		run:    d.ops.run,
 	}
 
 	sl.searchEntry = widget.NewEntry()
@@ -91,7 +94,7 @@ func NewSecretList(window fyne.Window, s *store.Store, detail *DetailView, log *
 		}
 		sec := sl.filtered[id]
 		sl.selected = sec
-		sl.detailView.ShowSecret(sec)
+		sl.show(sec)
 	}
 	sl.list.OnUnselected = func(widget.ListItemID) {
 		if !sl.reselecting {

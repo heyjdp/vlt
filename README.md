@@ -396,7 +396,8 @@ internal/
 ├── update/
 │   └── update.go            Asks GitHub for the latest release; compares versions
 ├── ui/
-│   ├── app.go               Screen switching (unlock, create, main view), header bar, layout
+│   ├── app.go               Screen switching (unlock, create, main view), status bar
+│   ├── mainview.go          Main view: header bar, list, detail panel and file ops, wired together; wiped on lock
 │   ├── opener.go            Opening a vault: location → unlock or create → session, holding the Waiting vault
 │   ├── session.go           Vault session: the open store, auto-lock countdown and warning
 │   ├── about.go             About dialog: build details, Copy Details, Report a Bug

@@ -65,8 +65,8 @@ func openRecordAt59(t *testing.T, rec *store.Secret) (*App, *fakeClock, *clockAt
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), timers.factory, testKDF)
 	unlock(app)
 	clock := &clockAt{t: time.Unix(59, 0).UTC()}
-	app.detailView.now = clock.now
-	app.secretList.list.Select(0)
+	app.main.detail.now = clock.now
+	app.main.list.list.Select(0)
 	return app, timers, clock
 }
 
@@ -90,7 +90,7 @@ func codeAt(t *testing.T, unix int64) string {
 
 func TestTOTP_ShowsTheCodeAndTicksToTheNext(t *testing.T) {
 	app, timers, clock := openRecordAt59(t, totpRecord(rfcSecret))
-	panel := app.detailView.Content()
+	panel := app.main.detail.Content()
 	if !hasLabel(panel, "287 082") || !hasLabel(panel, "Changes in 1 s") {
 		t.Fatal("the record should show its current code and when it changes")
 	}
@@ -112,7 +112,7 @@ func TestTOTP_ShowsTheCodeAndTicksToTheNext(t *testing.T) {
 func TestTOTP_TicksAlignToWholeSeconds(t *testing.T) {
 	app, timers, clock := openRecordAt59(t, totpRecord(rfcSecret))
 	clock.t = time.Unix(59, 750_000_000)
-	app.detailView.ShowSecret(app.detailView.current)
+	app.main.detail.ShowSecret(app.main.detail.current)
 	if timers.active(250*time.Millisecond) == nil {
 		t.Fatal("the first tick should come at the next whole second")
 	}
@@ -121,7 +121,7 @@ func TestTOTP_TicksAlignToWholeSeconds(t *testing.T) {
 
 func TestTOTP_CopyCodeCopiesTheDigits(t *testing.T) {
 	app, _, _ := openRecordAt59(t, totpRecord(rfcSecret))
-	test.Tap(findButton(app.detailView.Content(), "Copy Code"))
+	test.Tap(findButton(app.main.detail.Content(), "Copy Code"))
 	if got := app.fyneApp.Clipboard().Content(); got != "287082" {
 		t.Fatalf("clipboard = %q, want 287082", got)
 	}
@@ -138,18 +138,18 @@ func TestTOTP_StopsWhenThePanelChangesOrTheVaultLocks(t *testing.T) {
 	app, timers, clock := openRecordAt59(t, totpRecord(rfcSecret))
 	tick := timers.active(time.Second)
 
-	app.detailView.ShowNewPassword()
+	app.main.detail.ShowNewPassword()
 	if !tick.stopped {
 		t.Fatal("showing another form should stop the code's ticking")
 	}
 	clock.t = time.Unix(60, 0)
 	tick.f() // a tick already queued when the panel changed
-	if hasLabel(app.detailView.Content(), codeAt(t, 60)) || timers.active(time.Second) != nil {
+	if hasLabel(app.main.detail.Content(), codeAt(t, 60)) || timers.active(time.Second) != nil {
 		t.Fatal("a stale tick must not update or reschedule anything")
 	}
 
-	app.secretList.list.Unselect(0)
-	app.secretList.list.Select(0)
+	app.main.list.list.Unselect(0)
+	app.main.list.list.Select(0)
 	tick = timers.active(time.Second)
 	if tick == nil {
 		t.Fatal("selecting the record again should restart the code")
@@ -162,7 +162,7 @@ func TestTOTP_StopsWhenThePanelChangesOrTheVaultLocks(t *testing.T) {
 
 func TestTOTP_AnUnreadableSecretIsReported(t *testing.T) {
 	app, timers, _ := openRecordAt59(t, totpRecord("not base32!"))
-	panel := app.detailView.Content()
+	panel := app.main.detail.Content()
 	if findDeep(panel, func(o fyne.CanvasObject) bool {
 		l, ok := o.(*widget.Label)
 		return ok && strings.HasPrefix(l.Text, "Can't make codes: the TOTP secret is not valid base32")
@@ -177,11 +177,11 @@ func TestTOTP_AnUnreadableSecretIsReported(t *testing.T) {
 
 func TestTOTP_NoPanelWithoutASecretOrOnANewRecord(t *testing.T) {
 	app, _, _ := openRecordAt59(t, totpRecord(""))
-	if hasLabel(app.detailView.Content(), "One-Time Code") {
+	if hasLabel(app.main.detail.Content(), "One-Time Code") {
 		t.Fatal("a record without a TOTP secret shows no code")
 	}
-	app.detailView.ShowNewRecord()
-	if hasLabel(app.detailView.Content(), "One-Time Code") {
+	app.main.detail.ShowNewRecord()
+	if hasLabel(app.main.detail.Content(), "One-Time Code") {
 		t.Fatal("a new record shows no code until it is saved")
 	}
 	app.Lock()
@@ -189,10 +189,10 @@ func TestTOTP_NoPanelWithoutASecretOrOnANewRecord(t *testing.T) {
 
 func TestTOTP_AnInvalidSecretIsNotSaved(t *testing.T) {
 	app, _, _ := openRecordAt59(t, totpRecord(rfcSecret))
-	e := formEntries(app.detailView)
+	e := formEntries(app.main.detail)
 	totpEntry := e[4]
 	totpEntry.SetText("not base32!")
-	test.Tap(findButton(app.detailView.Content(), "Save"))
+	test.Tap(findButton(app.main.detail.Content(), "Save"))
 
 	if top := app.window.Canvas().Overlays().Top(); top == nil || !hasLabel(top, "Couldn't save the secret: the TOTP secret is not valid base32 (letters A–Z and digits 2–7)") {
 		t.Fatal("saving an invalid TOTP secret should explain why it was refused")
@@ -207,20 +207,20 @@ func TestTOTP_AnInvalidSecretIsNotSaved(t *testing.T) {
 func TestTOTP_ALinkIsSavedTrimmedAndShowsItsCode(t *testing.T) {
 	app, _, _ := openRecordAt59(t, totpRecord(""))
 	link := "otpauth://totp/Bank:me?secret=" + rfcSecret + "&issuer=Bank"
-	formEntries(app.detailView)[4].SetText("  " + link + "\n")
-	test.Tap(findButton(app.detailView.Content(), "Save"))
+	formEntries(app.main.detail)[4].SetText("  " + link + "\n")
+	test.Tap(findButton(app.main.detail.Content(), "Save"))
 
 	got, err := app.session.Store().Get(context.Background(), "bank", "work")
 	if err != nil || got.TOTPSecret != link {
 		t.Fatalf("stored %q, %v; want the trimmed link", got.TOTPSecret, err)
 	}
-	if !hasLabel(app.detailView.Content(), "287 082") {
+	if !hasLabel(app.main.detail.Content(), "287 082") {
 		t.Fatal("saving a TOTP secret should show its code straight away")
 	}
 
-	formEntries(app.detailView)[4].SetText("")
-	test.Tap(findButton(app.detailView.Content(), "Save"))
-	if hasLabel(app.detailView.Content(), "One-Time Code") {
+	formEntries(app.main.detail)[4].SetText("")
+	test.Tap(findButton(app.main.detail.Content(), "Save"))
+	if hasLabel(app.main.detail.Content(), "One-Time Code") {
 		t.Fatal("removing the TOTP secret should remove the code")
 	}
 	app.Lock()
@@ -229,8 +229,8 @@ func TestTOTP_ALinkIsSavedTrimmedAndShowsItsCode(t *testing.T) {
 func TestTOTP_TheCountdownRoundsUp(t *testing.T) {
 	app, _, clock := openRecordAt59(t, totpRecord(rfcSecret))
 	clock.t = time.Unix(30, 250_000_000) // 29.75 s left
-	app.detailView.ShowSecret(app.detailView.current)
-	if !hasLabel(app.detailView.Content(), "Changes in 30 s") {
+	app.main.detail.ShowSecret(app.main.detail.current)
+	if !hasLabel(app.main.detail.Content(), "Changes in 30 s") {
 		t.Fatal("29.75 s left should read 30 s, as a tick just after the second does")
 	}
 	app.Lock()
@@ -238,11 +238,11 @@ func TestTOTP_TheCountdownRoundsUp(t *testing.T) {
 
 func TestTOTP_LockingWipesTheShownCode(t *testing.T) {
 	app, _, _ := openRecordAt59(t, totpRecord(rfcSecret))
-	label := findDeep(app.detailView.Content(), func(o fyne.CanvasObject) bool {
+	label := findDeep(app.main.detail.Content(), func(o fyne.CanvasObject) bool {
 		l, ok := o.(*widget.Label)
 		return ok && l.Text == "287 082"
 	}).(*widget.Label)
-	copyCode := findButton(app.detailView.Content(), "Copy Code")
+	copyCode := findButton(app.main.detail.Content(), "Copy Code")
 	app.Lock()
 	if label.Text != "" {
 		t.Fatalf("the code label still shows %q after the lock", label.Text)
@@ -256,8 +256,8 @@ func TestTOTP_LockingWipesTheShownCode(t *testing.T) {
 
 func TestTOTP_AnUnchangedUnreadableSecretDoesNotBlockSaving(t *testing.T) {
 	app, _, _ := openRecordAt59(t, totpRecord("on my phone!"))
-	formEntries(app.detailView)[3].SetText("new password")
-	test.Tap(findButton(app.detailView.Content(), "Save"))
+	formEntries(app.main.detail)[3].SetText("new password")
+	test.Tap(findButton(app.main.detail.Content(), "Save"))
 
 	got, err := app.session.Store().Get(context.Background(), "bank", "work")
 	if err != nil || got.Password != "new password" || got.TOTPSecret != "on my phone!" {
@@ -268,10 +268,10 @@ func TestTOTP_AnUnchangedUnreadableSecretDoesNotBlockSaving(t *testing.T) {
 
 func TestTOTP_SavingWithoutChangingTheSecretKeepsTheForm(t *testing.T) {
 	app, _, _ := openRecordAt59(t, totpRecord(rfcSecret))
-	name := formEntries(app.detailView)[0]
-	formEntries(app.detailView)[6].SetText("new notes")
-	test.Tap(findButton(app.detailView.Content(), "Save"))
-	if formEntries(app.detailView)[0] != name {
+	name := formEntries(app.main.detail)[0]
+	formEntries(app.main.detail)[6].SetText("new notes")
+	test.Tap(findButton(app.main.detail.Content(), "Save"))
+	if formEntries(app.main.detail)[0] != name {
 		t.Fatal("a save that leaves the TOTP secret alone should not rebuild the form")
 	}
 	app.Lock()
@@ -285,15 +285,15 @@ func TestTOTP_ASaveFinishingAfterMovingOnDoesNotPullTheRecordBack(t *testing.T) 
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 	q := &queue{}
-	app.sessionOps.run = q.runner()
+	app.main.ops.run = q.runner()
 	bank := 1 // the list is sorted: aaa, bank
-	app.secretList.list.Select(bank)
+	app.main.list.list.Select(bank)
 
-	formEntries(app.detailView)[4].SetText(rfcSecret)
-	test.Tap(findButton(app.detailView.Content(), "Save"))
-	app.secretList.list.Select(0) // move on while the save runs
+	formEntries(app.main.detail)[4].SetText(rfcSecret)
+	test.Tap(findButton(app.main.detail.Content(), "Save"))
+	app.main.list.list.Select(0) // move on while the save runs
 	q.flush()
-	if app.detailView.current == nil || app.detailView.current.Name != "aaa" || hasLabel(app.detailView.Content(), "One-Time Code") {
+	if app.main.detail.current == nil || app.main.detail.current.Name != "aaa" || hasLabel(app.main.detail.Content(), "One-Time Code") {
 		t.Fatal("the save should not show the record again over the secret the user moved to")
 	}
 	app.Lock()

@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"fyne.io/fyne/v2/test"
-	"fyne.io/fyne/v2/widget"
 
 	"github.com/heyjdp/vlt/internal/store"
 	"github.com/heyjdp/vlt/internal/testutil"
@@ -28,7 +27,7 @@ func TestApp_SelectThenDeleteRemovesRowAndClearsSelection(t *testing.T) {
 	)
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
-	sl, dv := app.secretList, app.detailView
+	sl, dv := app.main.list, app.main.detail
 
 	sl.list.Select(0)
 	if dv.current == nil || dv.current.Name != "a-gone" {
@@ -57,7 +56,7 @@ func TestApp_SelectThenEditUpdatesFilteredRow(t *testing.T) {
 	)
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
-	sl, dv := app.secretList, app.detailView
+	sl, dv := app.main.list, app.main.detail
 
 	test.Type(sl.searchEntry, "git")
 	if len(sl.filtered) != 1 {
@@ -82,10 +81,10 @@ func TestApp_NewSecretSavedDuringSearchAppearsIfItMatches(t *testing.T) {
 	newVaultWith(t, dir, testutil.PasswordSecret("github", "x", "work"))
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
-	sl := app.secretList
+	sl := app.main.list
 
 	test.Type(sl.searchEntry, "git")
-	app.detailView.saveSecret(testutil.PasswordSecret("gitlab", "y", "work"), true, saveButton(), func() {})
+	app.main.detail.saveSecret(testutil.PasswordSecret("gitlab", "y", "work"), true, saveButton(), func() {})
 
 	if len(sl.filtered) != 2 {
 		t.Fatalf("a new matching secret should appear in the filtered view, got %d rows", len(sl.filtered))
@@ -96,7 +95,7 @@ func TestApp_NewSecretSavedDuringSearchAppearsIfItMatches(t *testing.T) {
 func TestSecretList_MatchesLegacyNamesByPath(t *testing.T) {
 	test.NewTempApp(t)
 	q := &queue{}
-	sl := NewSecretList(test.NewTempWindow(t, nil), nil, &DetailView{}, quietLog(), q.runner())
+	sl := listOver(t, nil, q.runner())
 	legacy := &store.Secret{Name: " GitHub ", Group: "work"}
 	sl.secrets = []*store.Secret{legacy}
 
@@ -125,8 +124,7 @@ func TestSecretList_DeleteDuringFirstLoadSurvivesLoad(t *testing.T) {
 	defer s.Close()
 
 	q := &queue{}
-	dv := NewDetailView(test.NewTempWindow(t, nil), s, nil, widget.NewLabel(""), quietLog(), testOps(t, q.runner()))
-	sl := NewSecretList(test.NewTempWindow(t, nil), s, dv, quietLog(), q.runner())
+	sl := listOver(t, s, q.runner())
 
 	sl.Refresh() // queued: reads the vault while "gone" still exists
 	sl.Remove(&store.Secret{Name: "gone", Group: "work"})
@@ -146,7 +144,7 @@ func TestApp_LateDeleteDoesNotClearAnotherSecretsPanel(t *testing.T) {
 	q.flush()
 	unlockQueued(t, app, q)
 	q.flush()
-	sl, dv := app.secretList, app.detailView
+	sl, dv := app.main.list, app.main.detail
 
 	sl.list.Select(0)
 	dv.deleteSecret(dv.current) // queued
@@ -169,14 +167,14 @@ func TestApp_ImportReplacingOpenSecretRefreshesItsForm(t *testing.T) {
 	newVaultWith(t, dir, testutil.PasswordSecret("token", "old", "keys"))
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
-	dv := app.detailView
+	dv := app.main.detail
 
-	app.secretList.list.Select(0)
+	app.main.list.list.Select(0)
 	replacement := testutil.FileSecret("token", "token", "eA==", "keys")
 	if err := app.session.Store().Update(context.Background(), replacement); err != nil {
 		t.Fatal(err)
 	}
-	dv.fileOps.importDone(replacement, importedFile{size: 1})
+	app.main.files.importDone(replacement, importedFile{size: 1})
 
 	if dv.current == nil || dv.current.Type != store.TypeFile {
 		t.Fatalf("the open form should be re-rendered for the imported file, got %+v", dv.current)
@@ -192,7 +190,7 @@ func TestApp_EditThatLeavesSearchClearsHighlight(t *testing.T) {
 	newVaultWith(t, dir, tagged)
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
-	sl, dv := app.secretList, app.detailView
+	sl, dv := app.main.list, app.main.detail
 
 	test.Type(sl.searchEntry, "ci") // matches by tag
 	sl.list.Select(0)
@@ -212,7 +210,7 @@ func TestApp_EditThatLeavesSearchClearsHighlight(t *testing.T) {
 
 func TestSecretList_GroupsShowOneLabelPerDirectory(t *testing.T) {
 	test.NewTempApp(t)
-	sl := NewSecretList(test.NewTempWindow(t, nil), nil, &DetailView{}, quietLog(), inlineRunner())
+	sl := listOver(t, nil, inlineRunner())
 	sl.secrets = []*store.Secret{
 		{Name: "a", Group: "Work"}, {Name: "b", Group: "personal"}, {Name: "c", Group: "work"},
 	}
@@ -251,7 +249,7 @@ func TestMatchGroup(t *testing.T) {
 
 func TestSecretList_SearchMatchesGroupBySpellingOrDirectory(t *testing.T) {
 	test.NewTempApp(t)
-	sl := NewSecretList(test.NewTempWindow(t, nil), nil, &DetailView{}, quietLog(), inlineRunner())
+	sl := listOver(t, nil, inlineRunner())
 	sl.secrets = []*store.Secret{
 		{Name: "bank", Group: "Personal Finance"}, {Name: "old", Group: "personal-finance"}, {Name: "gh", Group: "Work"},
 	}
@@ -278,8 +276,8 @@ func TestSecretList_ALoadErrorIsShownWithRetry(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	app.secretList.Refresh()
-	panel := app.secretList.Content()
+	app.main.list.Refresh()
+	panel := app.main.list.Content()
 	if !visibleText(panel, "Couldn't load the vault") || !visibleText(panel, "permission denied") {
 		t.Fatal("a failed load should say so, and why")
 	}
@@ -288,7 +286,7 @@ func TestSecretList_ALoadErrorIsShownWithRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	test.Tap(visibleButton(t, panel, "Retry"))
-	if len(app.secretList.secrets) != 1 || visibleText(panel, "Couldn't load the vault") {
+	if len(app.main.list.secrets) != 1 || visibleText(panel, "Couldn't load the vault") {
 		t.Fatal("Retry should load the vault and clear the message")
 	}
 	app.Lock()
@@ -306,8 +304,8 @@ func TestSecretList_SkippedFilesAreCountedWithDetails(t *testing.T) {
 	}
 	unlock(app)
 
-	panel := app.secretList.Content()
-	if len(app.secretList.secrets) != 1 || !visibleText(panel, "2 secret files couldn't be read") {
+	panel := app.main.list.Content()
+	if len(app.main.list.secrets) != 1 || !visibleText(panel, "2 secret files couldn't be read") {
 		t.Fatal("skipped files should be counted under the list")
 	}
 	if shownButton(panel, "Retry") != nil {
@@ -323,7 +321,7 @@ func TestSecretList_SkippedFilesAreCountedWithDetails(t *testing.T) {
 func TestSecretList_NoNoticeWhenEverythingLoads(t *testing.T) {
 	app, _ := newFlowApp(t, testutil.PasswordSecret("github", "pw", "work"))
 	unlock(app)
-	panel := app.secretList.Content()
+	panel := app.main.list.Content()
 	if shownButton(panel, "Retry") != nil || shownButton(panel, "Details…") != nil || visibleText(panel, "couldn't") {
 		t.Fatal("no notice should show when the vault loads cleanly")
 	}
@@ -344,6 +342,14 @@ func TestUnreadableText(t *testing.T) {
 	}
 }
 
+// listOver returns a secret list on its own over s (nil for a list the test
+// gives its secrets), whose loads run on run.
+func listOver(t *testing.T, s *store.Store, run runner) *SecretList {
+	t.Helper()
+	return newSecretList(&mainViewDeps{window: test.NewTempWindow(t, nil), store: s, log: quietLog(), ops: testOps(t, run)},
+		func(*store.Secret) {})
+}
+
 // newQueuedList returns a list over a vault holding one secret, whose loads
 // wait in q until flushed.
 func newQueuedList(t *testing.T, q *queue) *SecretList {
@@ -356,8 +362,7 @@ func newQueuedList(t *testing.T, q *queue) *SecretList {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	dv := NewDetailView(test.NewTempWindow(t, nil), s, nil, widget.NewLabel(""), quietLog(), testOps(t, q.runner()))
-	return NewSecretList(test.NewTempWindow(t, nil), s, dv, quietLog(), q.runner())
+	return listOver(t, s, q.runner())
 }
 
 // Nothing shows under the list until a load says something.

@@ -48,13 +48,13 @@ func TestApp_LockDropsAllReferencesToSecrets(t *testing.T) {
 	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
 	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
-	list, detail := app.secretList, app.detailView
+	list, detail := app.main.list, app.main.detail
 	list.list.Select(0) // render a form holding the secret
 
 	app.Lock()
 
-	if app.secretList != nil || app.detailView != nil || app.mainContent != nil || app.tracker != nil {
-		t.Fatal("after lock the app must not reference the list, detail panel, main view or tracker")
+	if app.main != nil {
+		t.Fatal("after lock the app must not reference the main view (list, detail panel, tracker)")
 	}
 	if list.secrets != nil || list.filtered != nil || list.selected != nil {
 		t.Fatal("the old list must drop its decrypted secrets")
@@ -94,19 +94,19 @@ func TestApp_LockEmptiesSecretsAndBlanksFormsStillReachableElsewhere(t *testing.
 	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
 	unlock(app)
 
-	loaded := app.secretList.secrets[0]
-	app.secretList.list.Select(0)
-	formEntries := containedEntries(app.detailView.Content())
+	loaded := app.main.list.secrets[0]
+	app.main.list.list.Select(0)
+	formEntries := containedEntries(app.main.detail.Content())
 	if len(formEntries) == 0 {
 		t.Fatal("expected entries in the secret form")
 	}
 	// Every entry in the form, looking inside widgets too, must be one that
 	// blankEntries can reach (it only walks containers): an entry wrapped in
 	// a widget would keep its text after the lock.
-	if all := deepEntries(app.detailView.Content()); len(all) != len(formEntries) {
+	if all := deepEntries(app.main.detail.Content()); len(all) != len(formEntries) {
 		t.Fatalf("%d entries in the form, but only %d are in plain containers", len(all), len(formEntries))
 	}
-	group := findType[*widget.SelectEntry](app.detailView.Content())
+	group := findType[*widget.SelectEntry](app.main.detail.Content())
 	if group == nil || group.Text == "" {
 		t.Fatal("expected the group selector to show the group")
 	}
@@ -140,8 +140,8 @@ func TestApp_LockWipesPendingExport(t *testing.T) {
 	unlock(app)
 
 	data := []byte("decoded file content")
-	app.detailView.fileOps.exportDecoded("n", "out.txt", data) // save dialog left open
-	app.Lock()                                                 // dismisses it without an answer
+	app.main.files.exportDecoded("n", "out.txt", data) // save dialog left open
+	app.Lock()                                         // dismisses it without an answer
 
 	if !bytes.Equal(data, make([]byte, len(data))) {
 		t.Fatal("decoded export content must be wiped when the lock dismisses its dialog")
