@@ -44,6 +44,10 @@ var ErrVaultNotFound = errors.New("vault not found")
 // copy of the same vault, which it finishes.
 var ErrVaultExists = errors.New("vault already exists")
 
+// ErrNotAFolder is returned by Exists and Create when the location is a
+// file, not a folder.
+var ErrNotAFolder = errors.New("the vault location is a file, not a folder")
+
 // ErrStaleCopy is returned by CopyTo when the target location holds an
 // unfinished copy of this vault that no longer matches it: the vault changed
 // after that copy was cut short. It matches ErrVaultExists too. Deleting
@@ -130,7 +134,8 @@ type formatMarker struct {
 // Exists reports whether location holds a vault: a wrapped key or legacy
 // sentinel, an in-progress migration, a format marker, or any secret file.
 // A location for which Exists is true must be opened, never created over.
-// A missing directory is not an error. Any other error (permission denied on
+// A missing directory is not an error; a location that is a file is
+// ErrNotAFolder. Any other error (permission denied on
 // the directory or a group directory, a server that cannot be reached) is
 // returned, because "cannot tell" must not be treated as "no vault" and lead
 // to creating one over existing secrets.
@@ -147,8 +152,13 @@ func Exists(ctx context.Context, location string, opts ...Option) (bool, error) 
 	return exists, nil
 }
 
-// existsIn is Exists for open storage.
+// existsIn is Exists for open storage. A location that is a file is
+// refused first: looking inside it fails as "not a directory" on Unix but as
+// "not found" on Windows, which would read as an empty location.
 func existsIn(fsys vaultFS) (bool, error) {
+	if info, err := fsys.Stat("."); err == nil && !info.IsDir() {
+		return false, ErrNotAFolder
+	}
 	for _, name := range []string{keyFile, migratingFile, formatFile} {
 		_, err := fsys.Stat(name)
 		if err == nil {
@@ -171,7 +181,7 @@ func existsIn(fsys vaultFS) (bool, error) {
 // Create initialises a new vault at location: it generates a random vault
 // key, stores it encrypted to passphrase in vlt.age, and writes the format
 // marker. It returns ErrVaultExists if the location already holds a vault or
-// secret files.
+// secret files, and ErrNotAFolder if it is a file.
 func Create(ctx context.Context, location, passphrase string, log *slog.Logger, opts ...Option) (*Store, error) {
 	o := buildOptions(opts)
 	fsys, loc, err := openLocation(ctx, location, o)

@@ -21,6 +21,7 @@ All notable changes to vlt are documented here. The format follows
 - CI checks its own workflow with actionlint and zizmor, and the packaging scripts with shellcheck, on every push and pull request; before, these ran only by hand or in a local hook. The packages are built only once they pass.
 
 ### Fixed
+- On Windows, a file given as the vault location was taken for an empty folder: vlt offered to create a vault there, and creating it then failed. It now shows the error screen saying the location is a file, not a folder, on every system (macOS and Linux showed the error screen, with "not a directory").
 - When the vault can't be listed (a lost connection, a permission problem), the list now says why and offers *Retry*; it used to look empty.
 - A server vault whose folder has `#`, `?` or `%` in its name, given as an `ssh://` location (with a port or a one-letter host), was saved unescaped, so vlt could not open it again. Locations are now saved in a form that reads back as themselves, including folders with leading or trailing spaces, `@[` in the path, or a folder named `~` at the server's root.
 - A host that isn't an IPv6 address but holds a colon (`[:]:vault`), or a stray `]` in a host name, was accepted; both are now refused, as is a server folder name with a control character (a NUL would make the server use another folder).

@@ -11,6 +11,8 @@ phase: 12
 area: ci
 review_finding: Go skills audit 2026-11-11, item 9
 files:
+  - internal/store/vault.go
+  - internal/store/vault_test.go
   - .github/workflows/ci.yml
   - internal/ui/operations.go
   - internal/ui/fileops.go
@@ -55,6 +57,8 @@ Three independent verifiers checked the branch (config, tests, docs):
 Residual risks on Windows, to watch in the first runs: the memguard locked-page limit above; Defender holding a file open and failing the rename in `writeFileAtomic`; timing bounds under `-race` on a slow runner; the remote/ssh tests are skipped there; and the `FromSlash` fix is only tested on Unix, where it is a no-op, until the Windows job runs.
 
 Done once the first CI run on GitHub is green on all three OSes.
+
+**First CI run (run 19, 2026-11-12):** Linux and macOS green; Windows failed one test, `TestApp_UnreadableDefaultVaultIsNotOfferedAgain`, which points the vault at a file. On Unix looking inside a file fails as "not a directory", so vlt showed its error screen; on Windows it fails as "path not found", which `store.Exists` read as an empty location, so vlt offered to create a vault there. A real Windows bug: `Exists` and `Create` now refuse a file location with `store.ErrNotAFolder` on every system (`TestStore_Exists_AFileIsNotAVaultLocation`, which fails without the fix on Unix too, since the old error wasn't `ErrNotAFolder`). Left as is: a location whose path runs *through* a file (`file\sub`) still reads as missing on Windows (Go maps `ERROR_PATH_NOT_FOUND`, which is also its ENOTDIR, to `ErrNotExist`), so vlt offers to create a vault there; creating fails at `MkdirAll` before anything is written.
 
 ## Acceptance criteria
 - [x] actionlint and zizmor clean; `make check` passes locally
