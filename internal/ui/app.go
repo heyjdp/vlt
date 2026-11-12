@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,13 +40,13 @@ type App struct {
 	pendingRelease  *update.Release
 	settings        *Settings
 	log             *slog.Logger
-	// session holds the open (or waiting) store and runs the auto-lock.
+	// session holds the open store and runs the auto-lock.
 	session  *session[*store.Store]
 	newTimer timerFactory
-	// storeOpts are passed to store.Open and store.Create. Tests use them
-	// to lower the scrypt work factor; production passes none.
-	storeOpts []store.Option
-	run       runner
+	// opener takes the vault at the chosen location to a session; it holds
+	// the Waiting vault meanwhile.
+	opener *opener
+	run    runner
 	// pick shows the file and folder choosers (Fyne's dialogs; tests
 	// answer them).
 	pick picker
@@ -56,9 +54,6 @@ type App struct {
 	// sessionOps what is done to the open vault (nil while locked).
 	ops        *operations
 	sessionOps *operations
-	// screenGen identifies the latest showUnlockScreen call; older vault
-	// checks that complete late are ignored.
-	screenGen int
 
 	// UI components
 	lockWarning  *dialog.ConfirmDialog
@@ -91,17 +86,16 @@ func newApp(fyneApp fyne.App, window fyne.Window, settings *Settings, log *slog.
 // screen starts any background work.
 func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, settings *Settings, log *slog.Logger, run runner, timers timerFactory, storeOpts ...store.Option) *App {
 	app := &App{
-		version:   version,
-		open:      fyneApp.OpenURL,
-		latest:    noUpdateCheck,
-		fyneApp:   fyneApp,
-		window:    window,
-		settings:  settings,
-		log:       log,
-		run:       run,
-		newTimer:  timers,
-		storeOpts: storeOpts,
-		pick:      fynePicker{window: window},
+		version:  version,
+		open:     fyneApp.OpenURL,
+		latest:   noUpdateCheck,
+		fyneApp:  fyneApp,
+		window:   window,
+		settings: settings,
+		log:      log,
+		run:      run,
+		newTimer: timers,
+		pick:     fynePicker{window: window},
 	}
 	app.ops = newOperations(window, run, nil, app.resetLockTimer, nil, app.pick)
 
@@ -133,6 +127,8 @@ func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, setti
 			app.Lock()
 		},
 	})
+	// storeOpts lower the scrypt work factor in tests; production passes none.
+	app.opener = newOpener(app.session, run, fyne.Do, timers, settings.LockTimeout, log, storeOpts...)
 	app.statusBar = caption("Locked")
 	app.clipboard = newClipboardClearer(fyneApp.Clipboard(), app.statusBar, settings.ClipboardTTL, timers)
 	app.showUnlockScreen()
@@ -142,46 +138,35 @@ func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, setti
 
 // showUnlockScreen displays the passphrase entry screen, or the create-vault
 // screen (passphrase entered twice) if no vault exists at the configured
-// location. Inspecting the directory runs in the background.
+// location. Inspecting the directory runs in the background. Whatever the
+// screen shown before had started is abandoned.
 func (a *App) showUnlockScreen() {
+	a.opener.Abandon()
 	a.unlockScreen, a.createScreen = nil, nil
-	a.setScreen(container.NewCenter(muted("Checking vault…")))
-
-	a.screenGen++
-	gen := a.screenGen
-	dir := a.settings.Vault().String()
 	// A location that does not parse is shown as given, with the reason.
-	text, unusable := a.settings.UnusableVault()
-	if unusable != nil {
-		dir = text
+	if text, unusable := a.settings.UnusableVault(); unusable != nil {
+		a.setScreen(a.vaultErrorContent(text, unusable))
+		return
 	}
-	background(a.run,
-		func(ctx context.Context) (bool, error) {
-			if unusable != nil {
-				return false, unusable
+	a.setScreen(container.NewCenter(muted("Checking vault…")))
+	dir := a.settings.Vault().String()
+	a.opener.Look(dir, func(exists bool, err error) {
+		switch {
+		case err != nil:
+			// Never offer to create a vault over a directory we cannot inspect.
+			a.setScreen(a.vaultErrorContent(dir, err))
+		case exists:
+			a.unlockScreen = NewUnlockScreen(a.window, dir, a.onUnlock)
+			a.setScreen(a.unlockScreen.Content())
+		default:
+			var onOpen, onServer func()
+			if _, fixed := a.settings.SetByEnv(SettingVault); !fixed {
+				onOpen, onServer = a.chooseExistingVault, a.chooseServerVault
 			}
-			return store.Exists(ctx, dir, a.storeOpts...)
-		},
-		func(exists bool, err error) {
-			if gen != a.screenGen {
-				return // superseded by a later check (vault switch, relock)
-			}
-			switch {
-			case err != nil:
-				// Never offer to create a vault over a directory we cannot inspect.
-				a.setScreen(a.vaultErrorContent(dir, err))
-			case exists:
-				a.unlockScreen = NewUnlockScreen(a.window, dir, a.onUnlock)
-				a.setScreen(a.unlockScreen.Content())
-			default:
-				var onOpen, onServer func()
-				if _, fixed := a.settings.SetByEnv(SettingVault); !fixed {
-					onOpen, onServer = a.chooseExistingVault, a.chooseServerVault
-				}
-				a.createScreen = NewCreateScreen(dir, a.onCreate, onOpen, onServer)
-				a.setScreen(a.createScreen.Content())
-			}
-		})
+			a.createScreen = NewCreateScreen(dir, a.onCreate, onOpen, onServer)
+			a.setScreen(a.createScreen.Content())
+		}
+	})
 }
 
 // setScreen shows content above the status bar.
@@ -226,60 +211,50 @@ func (a *App) vaultErrorContent(dir string, err error) fyne.CanvasObject {
 	return centeredCard(createFormWidth, objects...)
 }
 
-// openResult is the outcome of a background unlock or create.
-type openResult struct {
-	store *store.Store
-	// stillExists reports, after ErrVaultNotFound, whether leftover vault
-	// files remain (so the error is shown rather than offering to create).
-	stillExists bool
-}
-
-// onUnlock opens the existing vault in the background (one scrypt, or a
-// migration) while the unlock screen shows progress.
+// onUnlock unlocks the vault shown on the unlock screen with passphrase.
 func (a *App) onUnlock(passphrase string) {
 	screen := a.unlockScreen
-	screen.SetBusy(true)
-	dir := a.settings.Vault().String()
-	background(a.run,
-		func(ctx context.Context) (openResult, error) {
-			s, err := store.Open(ctx, dir, passphrase, a.log, a.storeOpts...)
-			if errors.Is(err, store.ErrVaultNotFound) {
-				exists, _ := store.Exists(ctx, dir, a.storeOpts...)
-				return openResult{stillExists: exists}, err
+	a.opener.Unlock(a.settings.Vault().String(), passphrase, screen.SetBusy,
+		func(o openOutcome) { a.showOutcome(o, screen.ShowError) })
+}
+
+// onCreate creates a new vault with a confirmed passphrase.
+func (a *App) onCreate(passphrase string) {
+	screen := a.createScreen
+	a.opener.Create(a.settings.Vault().String(), passphrase, screen.SetBusy,
+		func(o openOutcome) { a.showOutcome(o, screen.ShowError) })
+}
+
+// showOutcome shows what came of unlocking or creating a vault; showError
+// shows a problem on the screen the attempt started from.
+func (a *App) showOutcome(o openOutcome, showError func(string)) {
+	switch o.kind {
+	case vaultOpened:
+		a.unlocked(o.ctx, o.store)
+	case vaultWaiting:
+		a.askOpenAnyway(o.holder)
+	case waitTimedOut:
+		a.dismissDialogs()
+	case vaultGone:
+		// The vault disappeared since the screen was chosen; offer to create one.
+		a.showUnlockScreen()
+	default:
+		showError(o.problem())
+	}
+}
+
+// askOpenAnyway asks whether to open the Waiting vault although another
+// copy of vlt, holder, has it open, and passes the answer to the opener.
+func (a *App) askOpenAnyway(holder *store.LockInfo) {
+	dialog.ShowCustomConfirm("Vault Already Open", "Open Anyway", "Cancel",
+		widget.NewLabel(inUseMessage(holder)),
+		func(openAnyway bool) {
+			if openAnyway {
+				a.opener.OpenAnyway()
+			} else {
+				a.opener.Cancel()
 			}
-			if err != nil {
-				return openResult{}, err
-			}
-			return openResult{store: s}, nil
-		},
-		func(r openResult, err error) {
-			if a.unlockScreen != screen {
-				// The screen was replaced (e.g. vault switched) while scrypt ran.
-				if r.store != nil {
-					a.session.Discard(r.store)
-				}
-				return
-			}
-			screen.SetBusy(false)
-			switch {
-			case errors.Is(err, store.ErrWrongPassphrase):
-				screen.ShowError("Incorrect passphrase")
-			case errors.Is(err, store.ErrVaultNotFound) && r.stillExists:
-				// Leftovers (e.g. a stale vlt.json) but nothing to unlock.
-				screen.ShowError("No vault key or secrets found in " + dir)
-			case errors.Is(err, store.ErrVaultNotFound):
-				// The vault disappeared since the screen was chosen; offer to create one.
-				a.showUnlockScreen()
-			case errors.Is(err, store.ErrKeyMissing):
-				screen.ShowError("This vault's key file (vlt.age) is missing, so its secrets cannot be decrypted. If moving the vault here was cut short, switch back to the original vault and move it here again (if that vault changed since, delete this folder first); otherwise restore vlt.age from a backup.")
-			case isServerError(err):
-				screen.ShowError(errorMessage("", err))
-			case err != nil:
-				screen.ShowError(errorMessage("Couldn't open the vault", err))
-			default:
-				a.unlockedOrAsk(r.store, screen.SetBusy, func() bool { return a.unlockScreen == screen })
-			}
-		})
+		}, a.window)
 }
 
 // chooseServerVault asks for a vault location on an SSH server and switches
@@ -338,139 +313,20 @@ func (a *App) openExistingVault(dir string) {
 	if screen == nil {
 		return
 	}
-	screen.SetBusy(true)
-	background(a.run,
-		func(ctx context.Context) (folderCheck, error) { return checkFolder(ctx, dir) },
-		func(found folderCheck, err error) {
-			if a.createScreen != screen {
-				return // the screen changed while the folder was checked
-			}
-			screen.SetBusy(false)
-			switch {
-			case err != nil:
-				screen.ShowError(errorMessage("Couldn't look for a vault in "+dir, err))
-			case found.vault:
-				a.log.Info("opening existing vault", "dir", dir)
-				a.settings.ProposeVault(store.Location{Path: dir})
-				a.showUnlockScreen()
-			case found.inner != "":
-				screen.ShowError(fmt.Sprintf("No vault was found in %s, but %s contains one. Open that folder instead.", dir, found.inner))
-			default:
-				screen.ShowError(fmt.Sprintf("No vault was found in %s. Choose the folder that holds the vault's vlt.age and group folders.", dir))
-			}
-		})
-}
-
-// folderCheck is what checkFolder found in a folder chosen to open.
-type folderCheck struct {
-	vault bool   // the folder holds a vault
-	inner string // otherwise, a direct subfolder that holds one, if any
-}
-
-// checkFolder reports whether dir holds a vault and, if not, whether one of
-// its direct subfolders does: picking the folder above a vault is an easy
-// slip. Unreadable subfolders are skipped in that search.
-func checkFolder(ctx context.Context, dir string) (folderCheck, error) {
-	exists, err := store.Exists(ctx, dir)
-	if err != nil || exists {
-		return folderCheck{vault: exists}, err
-	}
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return folderCheck{}, nil
-	}
-	if err != nil {
-		return folderCheck{}, err
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+	a.opener.CheckFolder(dir, screen.SetBusy, func(found folderCheck, err error) {
+		switch {
+		case err != nil:
+			screen.ShowError(errorMessage("Couldn't look for a vault in "+dir, err))
+		case found.vault:
+			a.log.Info("opening existing vault", "dir", dir)
+			a.settings.ProposeVault(store.Location{Path: dir})
+			a.showUnlockScreen()
+		case found.inner != "":
+			screen.ShowError(fmt.Sprintf("No vault was found in %s, but %s contains one. Open that folder instead.", dir, found.inner))
+		default:
+			screen.ShowError(fmt.Sprintf("No vault was found in %s. Choose the folder that holds the vault's vlt.age and group folders.", dir))
 		}
-		inner := filepath.Join(dir, e.Name())
-		if ok, err := store.Exists(ctx, inner); err == nil && ok {
-			return folderCheck{inner: inner}, nil
-		}
-	}
-	return folderCheck{}, nil
-}
-
-// onCreate creates a new vault with a confirmed passphrase in the background.
-func (a *App) onCreate(passphrase string) {
-	screen := a.createScreen
-	screen.SetBusy(true)
-	dir := a.settings.Vault().String()
-	background(a.run,
-		func(ctx context.Context) (*store.Store, error) {
-			return store.Create(ctx, dir, passphrase, a.log, a.storeOpts...)
-		},
-		func(s *store.Store, err error) {
-			if a.createScreen != screen {
-				if s != nil {
-					a.session.Discard(s)
-				}
-				return
-			}
-			screen.SetBusy(false)
-			if err != nil {
-				screen.ShowError(errorMessage("Couldn't create the vault", err))
-				return
-			}
-			a.unlockedOrAsk(s, screen.SetBusy, func() bool { return a.createScreen == screen })
-		})
-}
-
-// unlockedOrAsk goes on to the main view with the opened store s, unless
-// another copy of vlt has the vault open (s.OpenElsewhere): then it asks
-// first, and on "Open Anyway" takes the lock over. current reports whether
-// the screen that started the unlock is still shown; if it is not, or the
-// user cancels, the store is discarded. Until the takeover ends the store
-// stays with the session, waiting, so the auto-lock and quitting zero its
-// key and release it.
-func (a *App) unlockedOrAsk(s *store.Store, setBusy func(bool), current func() bool) {
-	holder, elsewhere := s.OpenElsewhere()
-	if !elsewhere {
-		a.unlocked(s)
-		return
-	}
-	// No answer within the auto-lock timeout: the session closes s, as it
-	// would lock an unlocked vault.
-	a.session.Hold(s, func() {
-		a.dismissDialogs()
-		setBusy(false)
 	})
-	dialog.ShowCustomConfirm("Vault Already Open", "Open Anyway", "Cancel",
-		widget.NewLabel(inUseMessage(&holder)),
-		func(openAnyway bool) {
-			if !openAnyway || !current() {
-				if a.session.Take(s) {
-					a.session.Discard(s)
-				}
-				return
-			}
-			// s stays waiting while its lock is taken over, so the auto-lock
-			// and quitting still cover it; a Close they start waits for the
-			// takeover, then releases the lock it took.
-			if a.session.Pending() != s {
-				return // already closed (timed out, or quitting)
-			}
-			setBusy(true)
-			background(a.run,
-				func(ctx context.Context) (none, error) { return none{}, s.TakeOver(ctx) },
-				func(_ none, err error) {
-					if !a.session.Take(s) {
-						return // closed meanwhile (timed out, or quitting)
-					}
-					if !current() {
-						a.session.Discard(s)
-						return
-					}
-					setBusy(false)
-					if err != nil {
-						a.log.Warn("cannot take over the vault lock", "err", err)
-					}
-					a.unlocked(s)
-				})
-		}, a.window)
 }
 
 // inUseMessage explains a lock held by another copy of vlt; l is zero when
@@ -485,16 +341,16 @@ func inUseMessage(l *store.LockInfo) string {
 		"Open it anyway if that copy has quit or crashed, or you will not edit the same secrets."
 }
 
-// unlocked switches to the main view for an opened or newly created vault.
-// It runs on the main goroutine.
-func (a *App) unlocked(s *store.Store) {
-	// Work started with the session's context has its result dropped once
-	// the vault locks.
-	ctx := a.session.Begin(s)
+// unlocked switches to the main view for the vault s, opened or newly
+// created, on which the session has begun with context ctx. It runs on the
+// main goroutine.
+func (a *App) unlocked(ctx context.Context, s *store.Store) {
 	a.unlockScreen, a.createScreen = nil, nil
 	a.log.Info("vault unlocked", "dir", a.settings.Vault().String())
 	a.settings.CommitVault()
 
+	// Work started with the session's context has its result dropped once
+	// the vault locks.
 	a.showMainView(s, a.run.withContext(ctx))
 	if loc := s.Location(); loc.IsRemote() {
 		a.statusBar.SetText("Unlocked · vault on " + loc.Server())
@@ -660,10 +516,18 @@ func (a *App) dismissDialogs() {
 // main goroutine (window close intercept or the Quit menu item).
 func (a *App) quit() {
 	a.clipboard.Clear()
-	if !a.session.Close(quitWait) {
+	if !a.closeVaults(quitWait) {
 		a.log.Warn("quitting before the vault released its lock")
 	}
 	a.fyneApp.Quit()
+}
+
+// closeVaults lets go of the open vault and the Waiting vault, if any,
+// and waits up to wait for every vault let go of to release its lock. It
+// reports whether they all did in time.
+func (a *App) closeVaults(wait time.Duration) bool {
+	a.opener.Abandon()
+	return a.session.Close(wait)
 }
 
 // quitWait bounds how long quitting waits for a vault on a server to
