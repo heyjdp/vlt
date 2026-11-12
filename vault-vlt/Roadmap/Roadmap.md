@@ -177,6 +177,7 @@ Added 2026-11-12, from the rest of the Go skills audit. Goal: close the remainin
 ### Phase 13: Deepening, third pass
 Added 2026-11-12, from the third architecture review. Goal: the store owns its lock file, one module opens a vault, vault-wide changes report their outcome, and one module owns the main view.
 - [[F49 Store owns its lock file]]
+- [[F50 Opening a vault]]
 
 ## Tracker
 
