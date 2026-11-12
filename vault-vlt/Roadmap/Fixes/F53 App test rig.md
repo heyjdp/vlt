@@ -6,7 +6,7 @@ aliases:
 tags:
   - fix
 severity: low
-status: in-progress
+status: done
 phase: 14
 area: tests
 review_finding: "Architecture review 2026-11-12 (fourth pass), candidate A"
@@ -47,15 +47,21 @@ created: 2026-11-12
 - **`config_test.go` (about 1,050 lines) mixed two modules**: the Settings module's own tests and 18 tests of the Settings screen.
 
 ## Fix
-- **`AppDeps` (`internal/ui/app.go`).** One struct replaces the positional parameters and `newVersionedApp`: the Fyne app, window, settings, logger and version (what `main` sets), and, unexported, the seams tests replace: the runner, the timer factory, the picker, the browser and store options. `NewApp(&AppDeps{…})` fills the seams in for production and starts the start-up update check; `newApp(&AppDeps{…})` builds the same app without it. Behaviour is unchanged.
+- **`AppDeps` (`internal/ui/app.go`).** One struct replaces the positional parameters and `newVersionedApp`: the Fyne app, window, settings, logger and version (what `main` sets), and, unexported, the seams tests replace: the runner, the timer factory, the picker, the browser and store options. `NewApp(&AppDeps{…})` sets the runner (goroutines) and the timer factory (real timers) and starts the start-up update check; `newApp(&AppDeps{…})` builds the same app with the caller's runner and timers and without that check, and in both a nil picker or browser means Fyne's dialogs or `FyneApp.OpenURL`. Production passes no store options. Behaviour is unchanged, except that `NewApp` now refuses missing required fields: without `FyneApp`, `Window` or `Settings` (or with no `AppDeps`) it returns an error wrapping `ErrMissingAppDep` that names them, which `main` returns so vlt logs it and exits non-zero; a nil `Logger` (renamed from `Log`) means `slog.Default()`.
 - **One rig (`internal/ui/apprig_test.go`).** `newAppRig(t, opts…)` builds an App over an empty vault in a new folder, with work run inline, a fake clock, a scripted picker, a browser that records links and the cheap work factor, and shows its first screen. Options: `withSecrets`, `withoutVault`, `atLocation` (a prepared folder, a server, a bad location, as written), `withSettings`, `withLoadedSettings` (settings the test loads from the test app's preferences, with environment variables), `withQueuedRunner`, `withVersion`, `withFyneDialogs`, `withFailingBrowser`. It keeps the test app, window, settings, vault folder, clock, queue, picker and opened links.
 - **Verbs and queries.** `unlock`, `unlockWith`, `unlockOpening` (a held runner: only the open runs), `createConfirming`, `lock`, `hold`, `runInline`, `flush`, `runNext`, `importFile`, `selectSecret`, `search`, `openSettings`, `stayUnlocked`, `lockNow`, `releases` (the release checker's answer); `shownScreen` (checking, unlock, create, vault error, main view; it fails the test if App holds two screens at once), `locked`, `store`, `busy` and `usable` (every input of the unlock or create screen disabled with progress shown, or the reverse), `screenError`, `passphraseLeft`, `listed`, `detail`, `mainView`, `status`, `lockWarningShown`, `queued`, `prefs`.
 - **Migration.** Every App-building test uses the rig; the nine rigs and the field-swapping helpers are gone. `settingsApp` and `queuedSettings` remain as Settings-screen fixtures built on the rig (unlocked, Settings open). Tests that check App's own wiring still reach in where that is the point (`openExistingVault`, `closeVaults`, `quit`, `checkAtStartup`, the clipboard countdown, the session passed to the opener's release check).
 - **`settings_test.go`.** The 18 Settings screen tests and their fixtures moved out of `config_test.go`, with `TestPassphraseChangeFailure` (whose function is in `settings.go`); `config_test.go` keeps the Settings module's tests, the preference migration and the two App tests of when the location is saved.
-- **Decision: `AppDeps` is exported, with unexported seams.** `main` sets the exported fields and cannot reach the seams, so `NewApp` filling them in cannot be bypassed in production. The release checker stays out of it: `NewApp` sets it with the start-up check in one step (`startUpdateChecks`), and the rig's `releases` replaces it.
+- **Decision: `AppDeps` is exported, with unexported seams.** `main` sets the exported fields and cannot reach the seams, so production always gets `NewApp`'s runner and timers (and the default picker and browser); `NewApp`'s runner and timers cannot be bypassed in production. The release checker stays out of it: `NewApp` sets it with the start-up check in one step (`startUpdateChecks`), and the rig's `releases` replaces it.
 - **Decision: the rig's runner is switchable.** `hold` and `runInline` replace `setRunner`, so the app's own work, the opener's and the session's all follow one switch.
 - **Decision: the rig's vault folder is `<temp>/vault`,** so a test can delete or replace the vault without touching the temporary folder itself.
 - **Decision: the project trees stay without test files,** as before; the rig is described in DESIGN (app.go) and in README's test list.
+
+## Outcome
+Three independent verifications, each of the whole branch:
+- **Code.** The change is behaviour-preserving: the rig builds every App through `newApp`, so tests run the production wiring, and no test symbol leaks into the production code. It found that `AppDeps` left out required fields compiled and then panicked; `NewApp` now validates them (an error wrapping `ErrMissingAppDep`, naming the fields; `main` logs it and exits non-zero), a nil `Logger` means `slog.Default()`, and `Log` is renamed `Logger`. The rig now fails the test on contradictory options, an out-of-range `selectSecret` and a missing *Import File* button.
+- **Tests and tooling.** The same 290 tests before and after the migration, none weakened and several stronger (`shownScreen` fails on two screens at once; `busy` and `usable` check every input). Mutations of the code under the migrated tests each failed a test (see below); one of them, leaving the unlock screen's passphrase entry enabled while busy, went unnoticed by `main`'s tests and is caught now by `busy`. No flaky tests under `-race -count`. The one coverage dip, `newApp`'s fallback to `FyneApp.OpenURL` (the rig always injects a browser), is closed by tests that build the app through `NewApp` and check its seams and its validation errors (293 tests now); the screenshots render byte-identical to `main`'s.
+- **Documentation.** DESIGN, the `AppDeps` doc comment and this note said `NewApp` fills in every seam; they now say it sets only the runner and timers, that `newApp` falls back to Fyne's dialogs and browser, and how `NewApp` refuses missing fields.
 
 ## Acceptance criteria
 - [x] `newApp` takes one `AppDeps`; `newVersionedApp` is gone; `cmd/vlt/main.go` builds `AppDeps`; behaviour unchanged
@@ -65,7 +71,7 @@ created: 2026-11-12
 - [x] `go test -list . ./internal/ui` lists the same 290 tests before and after
 - [x] Mutation-checked on the migrated tests: busy progress, the folder check's busy screen, Stay unlocked, dropping the main view, clearing the passphrase entry, Report a Bug, a vault gone before unlock, a stale folder check, committing the location (three tests), a second move, a stale update result, the screen usable after Cancel, dismissing dialogs on lock, the list load, the server option and clearing the clipboard on lock each fail a test
 - [x] DESIGN (`AppDeps`, the rig), README (test list)
-- [ ] Independent verification
+- [x] Independent verification
 
 ## Related
 - [[Roadmap]]
