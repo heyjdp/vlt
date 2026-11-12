@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
 
 	"github.com/heyjdp/vlt/internal/store"
@@ -37,35 +36,32 @@ func TestScreenshots(t *testing.T) {
 		name string
 		v    fyne.ThemeVariant
 	}{{"dark", theme.VariantDark}, {"light", theme.VariantLight}} {
-		a := test.NewTempApp(t)
-		a.Settings().SetTheme(fixedVariant{&VltTheme{}, variant.v})
-		w := test.NewTempWindow(t, nil)
-		size := fyne.NewSize(900, 600)
-		w.Resize(size)
-
 		// The unlock screen names the vault; show it under a home folder.
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 		dir := filepath.Join(home, "Library", "Application Support", "vlt", "vault")
 		newVaultWith(t, dir, sampleSecrets()...)
-		app := newApp(a, w, settingsAt(a, dir, withLockTimeoutMs(DefaultLockTimeoutMs), withDefaultClipboardTTL),
-			quietLog(), inlineRunner(), noTimers, testKDF)
+		r := newAppRig(t, atLocation(dir), withSettings(withLockTimeoutMs(DefaultLockTimeoutMs), withDefaultClipboardTTL))
+		r.fyneApp.Settings().SetTheme(fixedVariant{&VltTheme{}, variant.v})
+		w := r.window
+		size := fyne.NewSize(900, 600)
 		w.Resize(size)
 		capture(t, w, filepath.Join(out, variant.name+"-unlock.png"))
 
-		unlock(app)
+		r.unlock()
 		w.Resize(size)
 		// A fixed clock, so the one-time code (and its countdown) is the same
 		// in every render.
-		app.main.detail.now = func() time.Time { return time.Unix(1_800_000_011, 0).UTC() }
-		for i, s := range app.main.list.filtered {
+		view := r.mainView()
+		view.detail.now = func() time.Time { return time.Unix(1_800_000_011, 0).UTC() }
+		for i, s := range view.list.filtered {
 			if s.Type == store.TypeRecord {
-				app.main.list.list.Select(i)
+				r.selectSecret(i)
 				break
 			}
 		}
 		capture(t, w, filepath.Join(out, variant.name+"-main.png"))
-		app.Lock()
+		r.lock()
 	}
 }
 

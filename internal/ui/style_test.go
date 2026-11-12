@@ -125,23 +125,20 @@ func TestListRow_ShowsNameGroupAndType(t *testing.T) {
 }
 
 func TestSecretList_CountFollowsTheSearch(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir,
+	r := newAppRig(t, withSecrets(
 		testutil.PasswordSecret("github", "x", "work"),
-		testutil.PasswordSecret("wifi", "y", "home"))
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
-	unlock(app)
+		testutil.PasswordSecret("wifi", "y", "home")))
+	r.unlock()
+	list := r.mainView().list
 
-	if got := app.main.list.count.Text; got != "2 secrets" {
+	if got := list.count.Text; got != "2 secrets" {
 		t.Fatalf("count = %q", got)
 	}
-	test.Type(app.main.list.searchEntry, "git")
-	if got := app.main.list.count.Text; got != "1 of 2 secrets" {
+	r.search("git")
+	if got := list.count.Text; got != "1 of 2 secrets" {
 		t.Fatalf("count while searching = %q", got)
 	}
-	list := app.main.list
-	app.Lock()
+	r.lock()
 	if list.count.Text != "" {
 		t.Fatalf("count still shows %q after lock", list.count.Text)
 	}

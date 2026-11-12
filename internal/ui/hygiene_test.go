@@ -14,46 +14,35 @@ import (
 // widgets or the app once they are no longer needed.
 
 func TestUnlockScreen_EntryIsClearedAfterSubmit(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	q := &queue{}
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), q.runner(), noTimers, testKDF)
-	q.flush()
-	screen := app.unlockScreen
+	r := newAppRig(t, withQueuedRunner())
 
-	test.Type(screen.entry, "wrong passphrase")
-	test.Tap(screen.unlockBtn)
-	if screen.entry.Text != "" {
+	r.unlockWith("wrong passphrase")
+	if r.passphraseLeft() != "" {
 		t.Fatal("the passphrase must be cleared from the entry as soon as it is read")
 	}
-	q.flush()
-	if screen.entry.Text != "" {
+	r.flush()
+	if r.passphraseLeft() != "" {
 		t.Fatal("a failed unlock must not restore the passphrase")
 	}
 
-	test.Type(screen.entry, "correct horse battery")
-	test.Tap(screen.unlockBtn)
-	if screen.entry.Text != "" {
+	r.unlockWith("correct horse battery")
+	if r.passphraseLeft() != "" {
 		t.Fatal("the passphrase must be cleared before the vault opens")
 	}
-	q.flush()
-	app.Lock()
-	q.flush()
+	r.flush()
+	r.lock()
+	r.flush()
 }
 
 func TestApp_LockDropsAllReferencesToSecrets(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
-	unlock(app)
-	list, detail := app.main.list, app.main.detail
+	r := newAppRig(t, withSecrets(testutil.PasswordSecret("gh", "ghp_secret", "work")))
+	r.unlock()
+	list, detail := r.mainView().list, r.mainView().detail
 	list.list.Select(0) // render a form holding the secret
 
-	app.Lock()
+	r.lock()
 
-	if app.main != nil {
+	if r.shownScreen() == screenMain {
 		t.Fatal("after lock the app must not reference the main view (list, detail panel, tracker)")
 	}
 	if list.secrets != nil || list.filtered != nil || list.selected != nil {
@@ -65,7 +54,7 @@ func TestApp_LockDropsAllReferencesToSecrets(t *testing.T) {
 }
 
 func TestSettings_PassphraseEntriesAreClearedOnEveryPath(t *testing.T) {
-	app, ss := settingsApp(t, noTimers)
+	r, ss := settingsApp(t)
 	box := ss.buildChangePassphrase()
 	current := entryWithPlaceholder(t, box, "Current passphrase")
 	newPass := entryWithPlaceholder(t, box, "New passphrase")
@@ -83,35 +72,32 @@ func TestSettings_PassphraseEntriesAreClearedOnEveryPath(t *testing.T) {
 			t.Fatalf("entry %d still holds a passphrase after a failed change", i)
 		}
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestApp_LockEmptiesSecretsAndBlanksFormsStillReachableElsewhere(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
-	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
-	unlock(app)
+	r := newAppRig(t, withSecrets(testutil.PasswordSecret("gh", "ghp_secret", "work")))
+	w := r.window
+	r.unlock()
 
-	loaded := app.main.list.secrets[0]
-	app.main.list.list.Select(0)
-	formEntries := containedEntries(app.main.detail.Content())
+	loaded := r.listed()[0]
+	r.selectSecret(0)
+	formEntries := containedEntries(r.detail())
 	if len(formEntries) == 0 {
 		t.Fatal("expected entries in the secret form")
 	}
 	// Every entry in the form, looking inside widgets too, must be one that
 	// blankEntries can reach (it only walks containers): an entry wrapped in
 	// a widget would keep its text after the lock.
-	if all := deepEntries(app.main.detail.Content()); len(all) != len(formEntries) {
+	if all := deepEntries(r.detail()); len(all) != len(formEntries) {
 		t.Fatalf("%d entries in the form, but only %d are in plain containers", len(all), len(formEntries))
 	}
-	group := findType[*widget.SelectEntry](app.main.detail.Content())
+	group := findType[*widget.SelectEntry](r.detail())
 	if group == nil || group.Text == "" {
 		t.Fatal("expected the group selector to show the group")
 	}
 
-	app.Lock()
+	r.lock()
 
 	// Fyne's renderer cache, or a closure in a cached widget, may still
 	// point at these; they must no longer hold the secret.
@@ -132,16 +118,12 @@ func TestApp_LockEmptiesSecretsAndBlanksFormsStillReachableElsewhere(t *testing.
 }
 
 func TestApp_LockWipesPendingExport(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir), quietLog(), inlineRunner(), noTimers, testKDF)
-	pickerOf(app) // its save dialog is never answered
-	unlock(app)
+	r := newAppRig(t) // the scripted save dialog is never answered
+	r.unlock()
 
 	data := []byte("decoded file content")
-	app.main.files.exportDecoded("n", "out.txt", data) // save dialog left open
-	app.Lock()                                         // dismisses it without an answer
+	r.mainView().files.exportDecoded("n", "out.txt", data) // save dialog left open
+	r.lock()                                               // dismisses it without an answer
 
 	if !bytes.Equal(data, make([]byte, len(data))) {
 		t.Fatal("decoded export content must be wiped when the lock dismisses its dialog")

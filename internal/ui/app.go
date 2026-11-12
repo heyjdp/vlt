@@ -64,35 +64,110 @@ type App struct {
 	statusBar *widget.Label
 }
 
-// NewApp creates the main application controller. version is the build's
-// version, shown in the About dialog.
-func NewApp(fyneApp fyne.App, window fyne.Window, settings *Settings, log *slog.Logger, version string) *App {
-	app := newVersionedApp(version, fyneApp, window, settings, log, goroutineRunner(), realTimers)
+// AppDeps is what an App is built from. main sets the exported fields:
+// FyneApp, Window and Settings are required, Logger and Version optional.
+// The unexported fields are the seams tests replace through newApp; main
+// cannot set them, so NewApp sets the runner and the timers for
+// production and newApp falls back to Fyne's dialogs and browser when the
+// picker and browser are nil.
+type AppDeps struct {
+	// FyneApp is the running Fyne app (its clipboard, preferences,
+	// browser). Required.
+	FyneApp fyne.App
+	// Window is the app's one window. Required.
+	Window fyne.Window
+	// Settings holds the vault location and the other settings. Required.
+	Settings *Settings
+	// Logger receives the app's structured log; nil means slog.Default().
+	Logger *slog.Logger
+	// Version is the build's version (main.version), shown in About and
+	// compared with releases; "" is a development build.
+	Version string
+
+	// run runs blocking vault work off the main goroutine (NewApp sets
+	// goroutineRunner; tests run it inline or queue it).
+	run runner
+	// timers starts the auto-lock and clipboard timers (NewApp sets
+	// realTimers; tests fire them by hand).
+	timers timerFactory
+	// pick shows the file and folder choosers; nil means Fyne's dialogs.
+	pick picker
+	// open opens a link in the browser; nil means FyneApp.OpenURL.
+	open func(*url.URL) error
+	// storeOpts are passed to store.Open and store.Create (tests lower the
+	// scrypt work factor; production passes none).
+	storeOpts []store.Option
+}
+
+// ErrMissingAppDep is returned, wrapped, by NewApp when a required AppDeps
+// field is not set.
+var ErrMissingAppDep = errors.New("missing app dependency")
+
+// NewApp creates the main application controller from deps, running
+// vault work on goroutines and the auto-lock on real timers, shows the
+// first screen and starts the start-up update check if the user turned it
+// on. It returns an error wrapping ErrMissingAppDep, naming the fields,
+// when deps is nil or FyneApp, Window or Settings is not set; a nil
+// Logger is replaced by slog.Default().
+func NewApp(deps *AppDeps) (*App, error) {
+	if err := checkAppDeps(deps); err != nil {
+		return nil, err
+	}
+	production := *deps
+	production.run, production.timers = goroutineRunner(), realTimers
+	if production.Logger == nil {
+		production.Logger = slog.Default()
+	}
+	app := newApp(&production)
 	app.startUpdateChecks(update.NewChecker().Latest)
-	return app
+	return app, nil
 }
 
-// newApp creates the controller with an explicit runner, timer factory and
-// store options (tests run work inline, fire timers by hand, and use a cheap
-// scrypt work factor).
-func newApp(fyneApp fyne.App, window fyne.Window, settings *Settings, log *slog.Logger, run runner, timers timerFactory, storeOpts ...store.Option) *App {
-	return newVersionedApp("", fyneApp, window, settings, log, run, timers, storeOpts...)
+// checkAppDeps reports the required AppDeps fields deps leaves unset.
+func checkAppDeps(deps *AppDeps) error {
+	if deps == nil {
+		return fmt.Errorf("ui.NewApp: %w: no AppDeps", ErrMissingAppDep)
+	}
+	var missing []string
+	if deps.FyneApp == nil {
+		missing = append(missing, "FyneApp")
+	}
+	if deps.Window == nil {
+		missing = append(missing, "Window")
+	}
+	if deps.Settings == nil {
+		missing = append(missing, "Settings")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("ui.NewApp: %w: %s", ErrMissingAppDep, strings.Join(missing, ", "))
+	}
+	return nil
 }
 
-// newVersionedApp is newApp with the build's version, set before the first
-// screen starts any background work.
-func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, settings *Settings, log *slog.Logger, run runner, timers timerFactory, storeOpts ...store.Option) *App {
+// newApp creates the controller from deps, whose FyneApp, Window,
+// Settings, Logger, run and timers must be set, and shows the first
+// screen; a nil pick or open falls back to Fyne's dialogs or
+// FyneApp.OpenURL. Its release checker never reaches the network until
+// startUpdateChecks sets one (NewApp does).
+func newApp(deps *AppDeps) *App {
+	window, settings, run, timers := deps.Window, deps.Settings, deps.run, deps.timers
 	app := &App{
-		version:  version,
-		open:     fyneApp.OpenURL,
+		version:  deps.Version,
+		open:     deps.open,
 		latest:   noUpdateCheck,
-		fyneApp:  fyneApp,
+		fyneApp:  deps.FyneApp,
 		window:   window,
 		settings: settings,
-		log:      log,
+		log:      deps.Logger,
 		run:      run,
 		newTimer: timers,
-		pick:     fynePicker{window: window},
+		pick:     deps.pick,
+	}
+	if app.open == nil {
+		app.open = deps.FyneApp.OpenURL
+	}
+	if app.pick == nil {
+		app.pick = fynePicker{window: window}
 	}
 	app.ops = newOperations(window, run, nil, app.resetLockTimer, nil, nil, app.pick)
 
@@ -124,10 +199,9 @@ func newVersionedApp(version string, fyneApp fyne.App, window fyne.Window, setti
 			app.Lock()
 		},
 	})
-	// storeOpts lower the scrypt work factor in tests; production passes none.
-	app.opener = newOpener(app.session, run, fyne.Do, timers, settings.LockTimeout, log, storeOpts...)
+	app.opener = newOpener(app.session, run, fyne.Do, timers, settings.LockTimeout, app.log, deps.storeOpts...)
 	app.statusBar = caption("Locked")
-	app.clipboard = newClipboardClearer(fyneApp.Clipboard(), app.statusBar, settings.ClipboardTTL, timers)
+	app.clipboard = newClipboardClearer(app.fyneApp.Clipboard(), app.statusBar, settings.ClipboardTTL, timers)
 	app.showUnlockScreen()
 
 	return app

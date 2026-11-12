@@ -96,6 +96,17 @@ func (q *queue) flush() {
 	}
 }
 
+// runNext runs the first piece of work q holds.
+func runNext(t *testing.T, q *queue) {
+	t.Helper()
+	if len(q.pending) == 0 {
+		t.Fatal("no work queued")
+	}
+	next := q.pending[0]
+	q.pending = q.pending[1:]
+	next()
+}
+
 // fakeTimer is a stoppableTimer that only fires when a test says so.
 type fakeTimer struct {
 	d       time.Duration
@@ -136,9 +147,6 @@ func (c *fakeClock) running() []*fakeTimer {
 	return live
 }
 
-// noTimers is a timer factory whose timers never fire.
-func noTimers(d time.Duration, f func()) stoppableTimer { return &fakeTimer{d: d, f: f} }
-
 // newVaultWith creates a vault in dir holding secrets, with a cheap work
 // factor and testPassphrase.
 func newVaultWith(t *testing.T, dir string, secrets ...*store.Secret) {
@@ -152,25 +160,6 @@ func newVaultWith(t *testing.T, dir string, secrets ...*store.Secret) {
 		if err := s.Create(context.Background(), sec); err != nil {
 			t.Fatalf("Create %q: %v", sec.Name, err)
 		}
-	}
-}
-
-// unlock types testPassphrase into the unlock screen and submits it.
-func unlock(app *App) {
-	test.Type(app.unlockScreen.entry, testPassphrase)
-	test.Tap(app.unlockScreen.unlockBtn)
-}
-
-// unlockQueued unlocks with a queued runner and runs the open, leaving the
-// initial list load queued.
-func unlockQueued(t *testing.T, app *App, q *queue) {
-	t.Helper()
-	unlock(app)
-	open := q.pending[0]
-	q.pending = q.pending[1:]
-	open()
-	if app.main == nil {
-		t.Fatal("expected the main view after the open completes")
 	}
 }
 
@@ -416,29 +405,6 @@ func (p *scriptedPicker) answerSave(t *testing.T, w fyne.URIWriteCloser, err err
 	p.saves = p.saves[1:]
 	req.answer(w, err)
 	return req.name
-}
-
-// pickerOf returns app's scripted picker, giving it one (for the app and
-// any open session) the first time.
-func pickerOf(app *App) *scriptedPicker {
-	if p, ok := app.pick.(*scriptedPicker); ok {
-		return p
-	}
-	p := &scriptedPicker{}
-	app.pick, app.ops.pick = p, p
-	if app.main != nil {
-		app.main.ops.pick = p
-	}
-	return p
-}
-
-// importFile imports r through the main view's Import File button and the
-// file chooser.
-func importFile(t *testing.T, app *App, r fyne.URIReadCloser) {
-	t.Helper()
-	p := pickerOf(app)
-	test.Tap(findButton(app.main.content(), "Import File"))
-	p.answerFile(t, r, nil)
 }
 
 // closeWait bounds a session Close that a test expects to succeed. Close

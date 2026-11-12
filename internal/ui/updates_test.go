@@ -14,29 +14,6 @@ import (
 	"github.com/heyjdp/vlt/internal/update"
 )
 
-// fakeLatest replaces the app's release checker with one that answers rel
-// or err, and returns how many times it was asked.
-func fakeLatest(app *App, rel update.Release, err error) *int {
-	calls := 0
-	app.latest = func(context.Context) (update.Release, error) {
-		calls++
-		return rel, err
-	}
-	return &calls
-}
-
-// updateApp is a locked app at version, with a vault and a fake browser.
-func updateApp(t *testing.T, version string, opts ...func(*Settings)) (*App, fyne.Window, *[]string) {
-	t.Helper()
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	w := test.NewTempWindow(t, nil)
-	app := newApp(a, w, settingsAt(a, dir, opts...), quietLog(), inlineRunner(), noTimers, testKDF)
-	app.version = version
-	return app, w, openedURLs(app)
-}
-
 // checkForUpdatesMenu runs Help → Check for Updates….
 func checkForUpdatesMenu(t *testing.T, w fyne.Window) {
 	t.Helper()
@@ -69,8 +46,9 @@ func dialogText(t *testing.T, w fyne.Window) string {
 }
 
 func TestCheckForUpdates_OffersANewerReleaseAndOpensItsPage(t *testing.T) {
-	app, w, opened := updateApp(t, "v0.1.0")
-	fakeLatest(app, update.Release{Tag: "v0.1.1", Notes: "TOTP codes"}, nil)
+	r := newAppRig(t, withVersion("v0.1.0"))
+	w := r.window
+	r.releases(update.Release{Tag: "v0.1.1", Notes: "TOTP codes"}, nil)
 
 	checkForUpdatesMenu(t, w)
 	text := dialogText(t, w)
@@ -80,52 +58,56 @@ func TestCheckForUpdates_OffersANewerReleaseAndOpensItsPage(t *testing.T) {
 		}
 	}
 	test.Tap(dialogButton(t, w, "Open Release Page"))
-	if len(*opened) != 1 || (*opened)[0] != "https://github.com/heyjdp/vlt/releases/tag/v0.1.1" {
-		t.Fatalf("opened %v", *opened)
+	if len(r.opened) != 1 || r.opened[0] != "https://github.com/heyjdp/vlt/releases/tag/v0.1.1" {
+		t.Fatalf("opened %v", r.opened)
 	}
 }
 
 func TestCheckForUpdates_CloseOpensNothing(t *testing.T) {
-	app, w, opened := updateApp(t, "v0.1.0")
-	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
+	r := newAppRig(t, withVersion("v0.1.0"))
+	w := r.window
+	r.releases(update.Release{Tag: "v0.1.1"}, nil)
 
 	checkForUpdatesMenu(t, w)
 	test.Tap(dialogButton(t, w, "Close"))
-	if len(*opened) != 0 || w.Canvas().Overlays().Top() != nil {
-		t.Fatalf("Close should just close the dialog; opened %v", *opened)
+	if len(r.opened) != 0 || w.Canvas().Overlays().Top() != nil {
+		t.Fatalf("Close should just close the dialog; opened %v", r.opened)
 	}
 }
 
 func TestCheckForUpdates_SaysWhenUpToDate(t *testing.T) {
-	app, w, opened := updateApp(t, "v0.1.1-2-gabc1234")
-	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
+	r := newAppRig(t, withVersion("v0.1.1-2-gabc1234"))
+	w := r.window
+	r.releases(update.Release{Tag: "v0.1.1"}, nil)
 
 	checkForUpdatesMenu(t, w)
 	if text := dialogText(t, w); !strings.Contains(text, "You have vlt v0.1.1-2-gabc1234. The latest release is v0.1.1.") {
 		t.Fatalf("dialog says %q", text)
 	}
-	if findButton(w.Canvas().Overlays().Top(), "Open Release Page") != nil || len(*opened) != 0 {
+	if findButton(w.Canvas().Overlays().Top(), "Open Release Page") != nil || len(r.opened) != 0 {
 		t.Fatal("an up-to-date build should not offer a release")
 	}
 }
 
 func TestCheckForUpdates_ADevelopmentBuildIsShownTheLatestRelease(t *testing.T) {
-	app, w, opened := updateApp(t, "")
-	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
+	r := newAppRig(t, withVersion(""))
+	w := r.window
+	r.releases(update.Release{Tag: "v0.1.1"}, nil)
 
 	checkForUpdatesMenu(t, w)
 	if text := dialogText(t, w); !strings.Contains(text, "development build (dev)") || !strings.Contains(text, "vlt v0.1.1") {
 		t.Fatalf("dialog says %q", text)
 	}
 	test.Tap(dialogButton(t, w, "Open Release Page"))
-	if len(*opened) != 1 || (*opened)[0] != "https://github.com/heyjdp/vlt/releases/tag/v0.1.1" {
-		t.Fatalf("opened %v", *opened)
+	if len(r.opened) != 1 || r.opened[0] != "https://github.com/heyjdp/vlt/releases/tag/v0.1.1" {
+		t.Fatalf("opened %v", r.opened)
 	}
 }
 
 func TestCheckForUpdates_AFailureIsReportedPlainly(t *testing.T) {
-	app, w, _ := updateApp(t, "v0.1.0")
-	fakeLatest(app, update.Release{}, fmt.Errorf("update.Latest: %w", update.ErrRateLimited))
+	r := newAppRig(t, withVersion("v0.1.0"))
+	w := r.window
+	r.releases(update.Release{}, fmt.Errorf("update.Latest: %w", update.ErrRateLimited))
 
 	checkForUpdatesMenu(t, w)
 	text := dialogText(t, w)
@@ -135,17 +117,18 @@ func TestCheckForUpdates_AFailureIsReportedPlainly(t *testing.T) {
 }
 
 func TestCheckForUpdates_TestAppsNeverReachTheNetwork(t *testing.T) {
-	app, _, _ := updateApp(t, "v0.1.0")
-	if _, err := app.latest(context.Background()); !errors.Is(err, errNoUpdateCheck) {
+	r := newAppRig(t, withVersion("v0.1.0"))
+	if _, err := r.app.latest(context.Background()); !errors.Is(err, errNoUpdateCheck) {
 		t.Fatalf("latest = %v; only NewApp may set the real checker", err)
 	}
 }
 
 func TestCheckAtStartup_IsOffUnlessTurnedOn(t *testing.T) {
-	app, w, _ := updateApp(t, "v0.1.0")
-	calls := fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
+	r := newAppRig(t, withVersion("v0.1.0"))
+	w := r.window
+	calls := r.releases(update.Release{Tag: "v0.1.1"}, nil)
 
-	app.checkAtStartup()
+	r.app.checkAtStartup()
 	if *calls != 0 || w.Canvas().Overlays().Top() != nil {
 		t.Fatal("the startup check must not run unless turned on")
 	}
@@ -161,85 +144,87 @@ func releaseDialogText(t *testing.T, w fyne.Window) string {
 }
 
 func TestCheckAtStartup_WaitsForTheUnlockThenTellsAboutEachNewReleaseOnce(t *testing.T) {
-	app, w, _ := updateApp(t, "v0.1.0", withUpdateChecks)
-	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
+	r := newAppRig(t, withVersion("v0.1.0"), withSettings(withUpdateChecks))
+	w := r.window
+	r.releases(update.Release{Tag: "v0.1.1"}, nil)
 
-	app.checkAtStartup()
+	r.app.checkAtStartup()
 	if w.Canvas().Overlays().Top() != nil {
 		t.Fatal("the notice must not cover the passphrase entry")
 	}
-	unlock(app)
+	r.unlock()
 	if !strings.Contains(releaseDialogText(t, w), "vlt v0.1.1 is available") {
 		t.Fatal("a newer release should be announced once the vault is unlocked")
 	}
 	test.Tap(dialogButton(t, w, "Close"))
-	app.Lock()
+	r.lock()
 
-	app.checkAtStartup() // the next start
-	unlock(app)
+	r.app.checkAtStartup() // the next start
+	r.unlock()
 	if w.Canvas().Overlays().Top() != nil {
 		t.Fatal("the same release should not be announced twice")
 	}
 
 	// A withdrawn release: GitHub's latest goes back to an older tag that
 	// is still newer than this build. It was covered by the announcement.
-	app.Lock()
-	app.version = "v0.0.9"
-	fakeLatest(app, update.Release{Tag: "v0.1.0"}, nil)
-	app.checkAtStartup()
-	unlock(app)
+	r.lock()
+	r.app.version = "v0.0.9"
+	r.releases(update.Release{Tag: "v0.1.0"}, nil)
+	r.app.checkAtStartup()
+	r.unlock()
 	if w.Canvas().Overlays().Top() != nil {
 		t.Fatal("an older release than the last announced should not be announced")
 	}
 
-	app.Lock()
-	fakeLatest(app, update.Release{Tag: "v0.1.2"}, nil)
-	app.checkAtStartup()
-	unlock(app)
+	r.lock()
+	r.releases(update.Release{Tag: "v0.1.2"}, nil)
+	r.app.checkAtStartup()
+	r.unlock()
 	if !strings.Contains(releaseDialogText(t, w), "vlt v0.1.2 is available") {
 		t.Fatal("a later release should be announced too")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestCheckAtStartup_AnnouncesAtOnceWhenAlreadyUnlocked(t *testing.T) {
-	app, w, _ := updateApp(t, "v0.1.0", withUpdateChecks)
-	q := &queue{}
-	setRunner(app, q.runner())
-	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
+	r := newAppRig(t, withVersion("v0.1.0"), withSettings(withUpdateChecks))
+	w := r.window
+	r.hold()
+	r.releases(update.Release{Tag: "v0.1.1"}, nil)
 
-	app.checkAtStartup()
-	setRunner(app, inlineRunner())
-	unlock(app)
-	q.flush() // the check finishes after the unlock (a slow network)
+	r.app.checkAtStartup()
+	r.runInline()
+	r.unlock()
+	r.flush() // the check finishes after the unlock (a slow network)
 	if !strings.Contains(releaseDialogText(t, w), "vlt v0.1.1 is available") {
 		t.Fatal("a check finishing after the unlock should announce straight away")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestCheckAtStartup_SaysNothingAfterAManualCheck(t *testing.T) {
-	app, w, _ := updateApp(t, "v0.1.0", withUpdateChecks)
-	q := &queue{}
-	setRunner(app, q.runner())
-	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
+	r := newAppRig(t, withVersion("v0.1.0"), withSettings(withUpdateChecks))
+	w := r.window
+	r.hold()
+	r.releases(update.Release{Tag: "v0.1.1"}, nil)
 
-	app.checkAtStartup()
+	r.app.checkAtStartup()
 	checkForUpdatesMenu(t, w)
-	q.flush()
+	r.flush()
 	test.Tap(dialogButton(t, w, "Close")) // the manual check's answer
-	setRunner(app, inlineRunner())
-	unlock(app)
+	r.runInline()
+	r.unlock()
 	if w.Canvas().Overlays().Top() != nil {
 		t.Fatal("the start-up check should not repeat what the manual check showed")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestStartUpdateChecks_SetsTheCheckerThenChecks(t *testing.T) {
-	app, w, _ := updateApp(t, "v0.1.0", withUpdateChecks)
+	r := newAppRig(t, withVersion("v0.1.0"), withSettings(withUpdateChecks))
+	w := r.window
 	calls := 0
-	app.startUpdateChecks(func(context.Context) (update.Release, error) {
+	r.app.startUpdateChecks(func(context.Context) (update.Release, error) {
 		calls++
 		return update.Release{Tag: "v0.1.1"}, nil
 	})
@@ -253,39 +238,34 @@ func TestStartUpdateChecks_SetsTheCheckerThenChecks(t *testing.T) {
 }
 
 func TestCheckForUpdates_AResultAfterALockIsDropped(t *testing.T) {
-	app, w, _ := updateApp(t, "v0.1.0")
-	unlock(app)
-	q := &queue{}
-	setRunner(app, q.runner())
-	calls := fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
+	r := newAppRig(t, withVersion("v0.1.0"))
+	w := r.window
+	r.unlock()
+	r.hold()
+	calls := r.releases(update.Release{Tag: "v0.1.1"}, nil)
 
 	checkForUpdatesMenu(t, w)
 	checkForUpdatesMenu(t, w) // a second request while one runs is ignored
-	if len(q.pending) != 1 {
-		t.Fatalf("%d checks queued, want 1", len(q.pending))
+	if r.queued() != 1 {
+		t.Fatalf("%d checks queued, want 1", r.queued())
 	}
-	app.Lock()
-	q.flush()
+	r.lock()
+	r.flush()
 	if *calls != 1 || w.Canvas().Overlays().Top() != nil {
 		t.Fatal("a result arriving after the lock should not be shown over the unlock screen")
 	}
 	checkForUpdatesMenu(t, w)
-	q.flush()
+	r.flush()
 	if !strings.Contains(dialogText(t, w), "v0.1.1 is available") {
 		t.Fatal("a new check should run once the last one finished")
 	}
 }
 
 func TestCheckForUpdates_AnsweringTheDialogCountsAsActivity(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	w := test.NewTempWindow(t, nil)
-	clock := &fakeClock{}
-	app := newApp(a, w, settingsAt(a, dir, withLockTimeoutMs(DefaultLockTimeoutMs)), quietLog(), inlineRunner(), clock.factory, testKDF)
-	app.version = "v0.1.0"
-	fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
-	unlock(app)
+	r := newAppRig(t, withVersion("v0.1.0"), withSettings(withLockTimeoutMs(DefaultLockTimeoutMs)))
+	w, clock := r.window, r.clock
+	r.releases(update.Release{Tag: "v0.1.1"}, nil)
+	r.unlock()
 
 	checkForUpdatesMenu(t, w)
 	before := len(clock.timers)
@@ -293,7 +273,7 @@ func TestCheckForUpdates_AnsweringTheDialogCountsAsActivity(t *testing.T) {
 	if len(clock.timers) == before {
 		t.Fatal("closing the dialog should restart the auto-lock countdown")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestCheckAtStartup_IsSilentWhenUpToDateUnknownOrFailing(t *testing.T) {
@@ -307,13 +287,14 @@ func TestCheckAtStartup_IsSilentWhenUpToDateUnknownOrFailing(t *testing.T) {
 		{"offline", "v0.1.0", update.Release{}, errors.New("dial tcp: no route to host")},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			app, w, _ := updateApp(t, tt.version, withUpdateChecks)
-			calls := fakeLatest(app, tt.rel, tt.err)
-			app.checkAtStartup()
+			r := newAppRig(t, withVersion(tt.version), withSettings(withUpdateChecks))
+			w := r.window
+			calls := r.releases(tt.rel, tt.err)
+			r.app.checkAtStartup()
 			if *calls != 1 || w.Canvas().Overlays().Top() != nil {
 				t.Fatalf("calls = %d; the startup check should show nothing", *calls)
 			}
-			if app.fyneApp.Preferences().String(prefUpdateNotified) != "" {
+			if r.prefs().String(prefUpdateNotified) != "" {
 				t.Fatal("nothing was announced, so nothing should be recorded")
 			}
 		})
@@ -334,26 +315,26 @@ func updateCheck(t *testing.T, ss *SettingsScreen) *widget.Check {
 }
 
 func TestSettings_ShowsTheSavedUpdateChoice(t *testing.T) {
-	app, ss := settingsApp(t, noTimers, withUpdateChecks)
+	r, ss := settingsApp(t, withSettings(withUpdateChecks))
 	if !updateCheck(t, ss).Checked {
 		t.Fatal("the box should show the saved choice")
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestSettings_UpdateCheckIsSavedAndCheckNowChecks(t *testing.T) {
-	app, ss := settingsApp(t, noTimers)
-	calls := fakeLatest(app, update.Release{Tag: "v0.1.1"}, nil)
+	r, ss := settingsApp(t)
+	calls := r.releases(update.Release{Tag: "v0.1.1"}, nil)
 
 	check := updateCheck(t, ss)
 	if check.Checked {
 		t.Fatal("the startup check should be off by default")
 	}
 	check.SetChecked(true)
-	if !app.settings.CheckUpdates() || !app.fyneApp.Preferences().Bool(prefCheckUpdates) {
+	if !r.settings.CheckUpdates() || !r.prefs().Bool(prefCheckUpdates) {
 		t.Fatal("turning the startup check on should be saved")
 	}
-	if !LoadSettings(app.fyneApp.Preferences(), env(nil), "/default", quietLog()).CheckUpdates() {
+	if !LoadSettings(r.prefs(), env(nil), "/default", quietLog()).CheckUpdates() {
 		t.Fatal("the saved choice should be loaded on the next start")
 	}
 
@@ -362,15 +343,8 @@ func TestSettings_UpdateCheckIsSavedAndCheckNowChecks(t *testing.T) {
 		t.Fatalf("Check Now asked %d times", *calls)
 	}
 	check.SetChecked(false)
-	if app.fyneApp.Preferences().Bool(prefCheckUpdates) {
+	if r.prefs().Bool(prefCheckUpdates) {
 		t.Fatal("turning it off should be saved")
 	}
-	app.Lock()
-}
-
-// setRunner makes the app run its background work, including the update
-// checks its operations start, on r.
-func setRunner(app *App, r runner) {
-	app.run = r
-	app.ops.run = r
+	r.lock()
 }

@@ -132,37 +132,32 @@ func TestClipboard_NonPositiveTTLUsesDefault(t *testing.T) {
 }
 
 func TestApp_LockClearsCopiedSecret(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir, withDefaultClipboardTTL), quietLog(), inlineRunner(), noTimers, testKDF)
-	unlock(app)
+	r := newAppRig(t, withSecrets(testutil.PasswordSecret("gh", "ghp_secret", "work")), withSettings(withDefaultClipboardTTL))
+	clip := r.fyneApp.Clipboard()
+	r.unlock()
 
-	app.main.detail.copyValue("ghp_secret")
-	if a.Clipboard().Content() != "ghp_secret" {
+	r.mainView().detail.copyValue("ghp_secret")
+	if clip.Content() != "ghp_secret" {
 		t.Fatal("copy did not reach the clipboard")
 	}
-	app.Lock()
+	r.lock()
 
-	if a.Clipboard().Content() != "" {
+	if clip.Content() != "" {
 		t.Fatal("locking must clear a secret vlt copied")
 	}
 }
 
 func TestApp_ClipboardTTLChangeAppliesToNextCopy(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir)
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir, withDefaultClipboardTTL), quietLog(), inlineRunner(), noTimers, testKDF)
-	unlock(app)
+	r := newAppRig(t, withSettings(withDefaultClipboardTTL))
+	r.unlock()
 
-	app.settings.SetClipboardTTL(5 * time.Second) // Settings slider
-	app.main.detail.copyValue("x")
+	r.settings.SetClipboardTTL(5 * time.Second) // Settings slider
+	r.mainView().detail.copyValue("x")
 
-	if app.clipboard.remaining != 5 {
-		t.Fatalf("new TTL should apply to the next copy, countdown is %ds", app.clipboard.remaining)
+	if got := r.app.clipboard.remaining; got != 5 {
+		t.Fatalf("new TTL should apply to the next copy, countdown is %ds", got)
 	}
-	app.Lock()
+	r.lock()
 }
 
 func TestClipboard_EmptyReadIsTreatedAsOurs(t *testing.T) {
@@ -187,16 +182,13 @@ func TestClipboard_EmptyValueIsNotCopied(t *testing.T) {
 }
 
 func TestApp_QuitClearsCopiedSecret(t *testing.T) {
-	a := test.NewTempApp(t)
-	dir := t.TempDir()
-	newVaultWith(t, dir, testutil.PasswordSecret("gh", "ghp_secret", "work"))
-	app := newApp(a, test.NewTempWindow(t, nil), settingsAt(a, dir, withDefaultClipboardTTL), quietLog(), inlineRunner(), noTimers, testKDF)
-	unlock(app)
+	r := newAppRig(t, withSecrets(testutil.PasswordSecret("gh", "ghp_secret", "work")), withSettings(withDefaultClipboardTTL))
+	r.unlock()
 
-	app.main.detail.copyValue("ghp_secret")
-	app.quit()
+	r.mainView().detail.copyValue("ghp_secret")
+	r.app.quit()
 
-	if a.Clipboard().Content() != "" {
+	if r.fyneApp.Clipboard().Content() != "" {
 		t.Fatal("quitting must clear a secret vlt copied")
 	}
 }
