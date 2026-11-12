@@ -561,8 +561,6 @@ func (r *remoteFS) WriteFileExclusive(name string, data []byte) error {
 // that file), but never leave a partial file.
 func (r *remoteFS) SyncDir(string) error { return nil }
 
-func (r *remoteFS) Local() bool { return false }
-
 // Close ends the session. Later operations fail.
 func (r *remoteFS) Close() error {
 	r.mu.Lock()

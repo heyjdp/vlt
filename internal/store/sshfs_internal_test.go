@@ -451,13 +451,20 @@ func TestRemoteStore_ContentsKeepsNameOrderWithManyFiles(t *testing.T) {
 	}
 }
 
-func TestRemoteStore_CloseReleasesTheLock(t *testing.T) {
+// A remote Close, like a local one, has released the lock and ended the
+// connection when it returns: whether Close may block its caller is the
+// caller's to decide (the UI's session runs it on another goroutine).
+func TestRemoteStore_CloseReleasesTheLockBeforeReturning(t *testing.T) {
 	s, _, dir := openRemoteVault(t)
 	if _, err := os.Stat(filepath.Join(dir, lockFile)); err != nil {
 		t.Fatalf("lock not written: %v", err)
 	}
 	s.Close()
-	<-s.Closed()
+	select {
+	case <-s.Closed():
+	default:
+		t.Fatal("Close returned before releasing the lock and the connection")
+	}
 	if _, err := os.Stat(filepath.Join(dir, lockFile)); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("a remote Close must release the lock: %v", err)
 	}

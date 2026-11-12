@@ -33,8 +33,6 @@ type vaultFS interface {
 	// SyncDir makes a preceding rename or removal in a directory durable,
 	// where the storage supports it.
 	SyncDir(name string) error
-	// Local reports whether the storage is this computer's file system.
-	Local() bool
 	Close() error
 }
 
@@ -107,7 +105,6 @@ func (l localFS) WriteFileExclusive(name string, data []byte) error {
 
 func (l localFS) SyncDir(name string) error { return syncDir(l.abs(name)) }
 
-func (localFS) Local() bool  { return true }
 func (localFS) Close() error { return nil }
 
 // String names the directory in messages.

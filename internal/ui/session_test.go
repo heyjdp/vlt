@@ -62,8 +62,9 @@ func queuedSession(timeout time.Duration) (*session[*store.Store], *fakeClock, *
 // the lock released when End returns.
 func inline(f func()) { f() }
 
-// slowStore stands in for a vault on a server: Close zeroes the key at once
-// but the lock is released only when release is called.
+// slowStore stands in for a store whose release is still running (a slow
+// server, say): Close returns, but Closed reports the lock released only
+// when release is called.
 type slowStore struct {
 	closedAt int // how many Close calls
 	zeroed   int // how many ZeroKey calls

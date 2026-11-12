@@ -9,9 +9,11 @@ import (
 
 // sessionStore is what a session needs of an open vault: zeroing its key
 // (ZeroKey, which must not block), closing it (Close, which releases its
-// lock file and connection and may block on the vault's storage: a local
-// vault on a network folder that stops answering), and a channel closed
-// once Close has finished. *store.Store satisfies it; tests also use
+// lock file and connection and may block on the vault's storage: a network
+// folder or a server that stops answering, or a takeover of its lock still
+// running), and a channel closed once Close has finished. The session is
+// the one place that keeps Close from blocking its caller: it runs every
+// Close through spawn. *store.Store satisfies it; tests also use
 // stores that never finish.
 type sessionStore interface {
 	comparable
