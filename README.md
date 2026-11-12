@@ -287,7 +287,7 @@ The test suite covers:
   - *Memory hygiene*: passphrase entries cleared on read; lock empties secrets, blanks forms and wipes a pending export
   - *End-to-end flows through the real dialogs*: delete confirmation (Yes and No), import with group selection and replace (Yes and No), an import refused over a differently named secret or a file that can't be read, passphrase change then re-unlock, switch vault, *Browse…* in Settings, export to a file (file choosers scripted)
 
-Crypto, store, totp and update tests run in parallel (`t.Parallel()`). Most ui tests run serially, because `fyne/test` replaces the process-global current app. Every test uses `t.TempDir()` for filesystem isolation, and CI runs the whole suite under the race detector.
+Crypto, store, totp and update tests run in parallel (`t.Parallel()`). Most ui tests run serially, because `fyne/test` replaces the process-global current app. Every test uses `t.TempDir()` for filesystem isolation, and CI runs the whole suite under the race detector, in a random order (`-shuffle=on`), on Linux, macOS and Windows. Tests that need Unix file modes, symlinks, folder permissions that bind the current user, or a shell script standing in for `ssh` skip on Windows (or as root) and say why.
 
 ## Linting and Static Analysis
 
@@ -311,7 +311,7 @@ make workflow-lint
 make check
 ```
 
-`make check` only checks; it changes no file (`make fmt` formats). It runs `go vet`, golangci-lint, `go mod tidy -diff` and `go mod verify`, the release-notes script's tests, actionlint, zizmor and shellcheck, the tests under the race detector (`-timeout 10m`, as CI), and govulncheck. Without `GH_TOKEN` set, zizmor skips its online audits (impostor commits, known-vulnerable actions); CI runs them.
+`make check` only checks; it changes no file (`make fmt` formats). It runs `go vet`, golangci-lint, `go mod tidy -diff` and `go mod verify`, the release-notes script's tests, actionlint, zizmor and shellcheck, the tests under the race detector in a random order (`-shuffle=on -timeout 10m`, as CI), and govulncheck. Without `GH_TOKEN` set, zizmor skips its online audits (impostor commits, known-vulnerable actions); CI runs them.
 
 The lefthook hooks (`lefthook install`) run golangci-lint (including the formatting check), shellcheck, actionlint and zizmor on the staged files they apply to, and detect-secrets, before each commit, and golangci-lint, the race-detector tests and govulncheck before each push. Like `make check`, they never rewrite a file.
 
@@ -324,7 +324,7 @@ The linter set (`.golangci.yml`) is golangci-lint's `standard` set plus `bodyclo
 `.github/workflows/ci.yml` runs on pushes and pull requests to `main`, on `v*` tags, and every Monday (so a newly published vulnerability is reported even when nothing changed; GitHub turns the weekly run off after 60 days without activity in the repository, and *Actions → CI → Enable workflow* turns it back on):
 - **lint** — golangci-lint (pinned), which also checks formatting, and the tests of `packaging/release-notes.sh`; on a tag, also checks that `CHANGELOG.md` has a dated section for it
 - **workflow-lint** — actionlint (pinned; it also runs shellcheck on every `run:` block), zizmor (pinned, through `zizmorcore/zizmor-action`, which installs it from a hash-pinned wheel; with the read-only job token for its online audits; findings become annotations), and shellcheck on `packaging/`'s scripts
-- **test** — `go mod tidy -diff` and `go mod verify` (go.mod and go.sum are tidy and match the module proxy), `go vet` and `go test -race` on Linux (the UI tests are headless)
+- **test** — on Linux, macOS and Windows: `go vet` and `go test -race -shuffle=on -timeout 10m` (the UI tests are headless; the random order catches a test that relies on another). On Linux only: `go mod tidy -diff` and `go mod verify` (go.mod and go.sum are tidy and match the module proxy), and coverage, whose total is in the job summary and whose profile is a `coverage` artifact
 - **vuln** — `govulncheck` (pinned)
 - **build** — native builds on Linux, macOS and Windows with cgo enabled, since Fyne cannot be cross-compiled with `CGO_ENABLED=0`
 - **package-macos**, **package-linux** — on pushes to `main` and tags, once lint, workflow-lint, test and vuln pass: `vlt.app` (zipped) and the AppImage, uploaded as workflow artifacts. These jobs don't use the Go cache, so a shipped package is always built from scratch

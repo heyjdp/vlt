@@ -307,7 +307,7 @@ vlt/
 
 ## Build & Distribution
 
-Fyne needs cgo, so vlt is built natively on each target OS (CI uses Linux, macOS and Windows runners). CI also packages a macOS app on a macOS runner and a Linux AppImage on Ubuntu 22.04, and publishes both as a GitHub release for `v*` tags.
+Fyne needs cgo, so vlt is built natively on each target OS (CI uses Linux, macOS and Windows runners), and CI runs the tests, under the race detector, on each of the three. CI also packages a macOS app on a macOS runner and a Linux AppImage on Ubuntu 22.04, and publishes both as a GitHub release for `v*` tags.
 
 ```bash
 go build -trimpath -ldflags="-s -w" -o vlt ./cmd/vlt

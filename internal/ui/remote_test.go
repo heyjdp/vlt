@@ -335,7 +335,7 @@ func TestApp_QuitReleasesTheLock(t *testing.T) {
 	if lockHolder(t, dir) == "" {
 		t.Fatal("expected a lock while unlocked")
 	}
-	app.session.Close(time.Second) // what quit does before exiting
+	app.session.Close(closeWait) // what quit does before exiting
 	if got := lockHolder(t, dir); got != "" {
 		t.Fatalf("quitting while unlocked must remove vlt.lock, held by %q", got)
 	}
@@ -407,7 +407,7 @@ func releasedInTheBackground(t *testing.T, app *App, q *queue, dir, holder strin
 			t.Fatalf("the store let go should have released its lock, held by %q", got)
 		}
 	}
-	if !app.session.Close(time.Second) {
+	if !app.session.Close(closeWait) {
 		t.Fatal("quitting should find every store released")
 	}
 	if app.session.Store() != nil {
@@ -514,7 +514,7 @@ func TestApp_QuitDuringATakeoverWaitsForTheStoresRelease(t *testing.T) {
 	if got := lockHolder(t, dir); got != "" {
 		t.Fatalf("the lock taken over should be released, held by %q", got)
 	}
-	if !app.session.Close(time.Second) {
+	if !app.session.Close(closeWait) {
 		t.Fatal("quitting should then find every store released")
 	}
 }

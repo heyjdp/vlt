@@ -18,6 +18,7 @@ All notable changes to vlt are documented here. The format follows
 - Error messages no longer show internal prefixes such as "store.CopyTo" or "store.Update: write:". Each says what couldn't be done and why in plain words ("Couldn't move the vault: can't create the folder /Volumes/usb/vault: permission denied"), keeping the file's path (for a vault on a server too) and what the server said.
 - Saving a secret whose file another copy of vlt has since given to a differently named secret now names that secret.
 - The auto-lock and clipboard sliders in Settings take effect when you let go of them (or on a tap or key press), not while dragging.
+- CI runs the tests on macOS and Windows too, not only on Linux, in a random order; before, those systems were only built.
 
 ### Fixed
 - When the vault can't be listed (a lost connection, a permission problem), the list now says why and offers *Retry*; it used to look empty.
@@ -29,6 +30,7 @@ All notable changes to vlt are documented here. The format follows
 - A vault location set by `VLT_VAULT_DIR`, or saved by an older version, is shown in the form vlt saves (`me@nas:/srv/vault` for `ssh://me@nas/srv/vault`), like one chosen in Settings, and the error screen no longer offers *Use the Vault on This Computer* when the location already is that vault, written another way.
 - Moving a vault that has another vault in a folder inside it (a backup copy, say) copied that vault's key file into the new location without the rest of it, as if it were a secret. The vault inside is now left where it is.
 - A vault kept in a folder inside your vault is no longer counted under the list as a secret file that couldn't be read.
+- On Windows, a folder chosen with *Browse…* (Settings) or *Open Existing Vault…* was written with forward slashes (`C:/Users/me/vault`); it now uses the usual backslashes, as does the path in an error about a failed export.
 - Importing a file whose name is taken by a secret file that can't be read now says so and suggests renaming the file; it showed a decryption error.
 - *Move Vault* could be started again while the vault was still being copied, and *Switch Vault* or *Change Passphrase* could run in the middle of a copy, leaving a half-copied vault, or a copy with the old passphrase's key. While one of the three runs, the others now wait: the button is disabled and the status bar asks you to wait.
 - A move that stopped part-way (the vault locked, or the connection dropped) left the new folder with the vault key and only some secrets, so switching there opened what looked like the vault with secrets missing, and moving there again said "vault already exists". The vault key is now copied last: an unfinished copy has none, and unlocking it says so. Moving the vault to the same place again finishes the copy, without copying again what is already there. If the vault changed since, vlt says so and asks you to delete that folder and move again (it used to say "vault already exists"), and a vault another copy of vlt creates there meanwhile is never overwritten.

@@ -113,7 +113,7 @@ What are you doing?
 |------|---------|-------------|
 | **dlv** (Delve) | Interactive debugger | Investigating control flow, inspecting goroutines |
 | **pprof** | CPU, memory, goroutine profiler | Performance bottlenecks, memory leaks |
-| **go test -race** | Data race detector | All tests in CI; mandatory |
+| **go test -race** | Data race detector | All tests in CI, on Linux, macOS and Windows; mandatory |
 | **go test -trace** | Execution tracer | Goroutine scheduling and latency analysis |
 | **benchstat** | Statistical benchmark comparison | Verifying performance changes |
 | **fyne/test** | Fyne widget unit testing (no display) | GUI component correctness |
@@ -327,7 +327,7 @@ test:
     go test ./...
 
 test-race:
-    go test -race -timeout 10m ./...
+    go test -race -shuffle=on -timeout 10m ./...
 
 test-cover:
     go test -coverprofile=coverage.out ./...
@@ -434,7 +434,7 @@ pre-push:
     lint:
       run: golangci-lint run ./...
     test-race:
-      run: go test -race -timeout 10m ./...
+      run: go test -race -shuffle=on -timeout 10m ./...
     govulncheck:
       run: govulncheck ./...
 ```
@@ -920,7 +920,7 @@ The pipeline is `.github/workflows/ci.yml`; README.md's *Continuous integration*
 
 - **lint** — golangci-lint (pinned; also checks formatting) and `packaging/release-notes-test.sh`
 - **workflow-lint** — actionlint (which shellchecks every `run:` block), zizmor (online audits, annotations only), shellcheck on `packaging/`
-- **test** — `go mod tidy -diff`, `go mod verify`, `go vet`, `go test -race -timeout 10m` on Linux
+- **test** — matrix on ubuntu, macOS and Windows (`fail-fast: false`): `go vet`, `go test -race -shuffle=on -timeout 10m`; on Linux only, `go mod tidy -diff`, `go mod verify` and coverage. Tests that cannot run on an OS skip with `t.Skip(reason)`
 - **vuln** — govulncheck (pinned), also weekly
 - **build** — native cgo builds on Linux, macOS and Windows (Fyne cannot cross-compile with `CGO_ENABLED=0`)
 - **package-macos**, **package-linux**, **release** — on pushes to `main` and `v*` tags, after the checks pass
